@@ -39,4 +39,4 @@ if __name__ == "__main__":
     print(self_attention(encodings_matrix))
 
     # creates context aware embeddings as output 
-    # Encoder only model
+    # Encoder only 
