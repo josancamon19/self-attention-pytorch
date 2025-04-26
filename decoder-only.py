@@ -1,7 +1,11 @@
+from datetime import date
 import math
+import time
 import torch
 from torch import nn
 import torch.nn.functional as F
+import os
+from io import open
 
 
 class PositionalEncoding(nn.Module):
@@ -136,7 +140,7 @@ class TransformerModel(nn.Transformer):
         # token ids → embeddings, then scale
         src = self.input_emb(src) * math.sqrt(self.ninp)
         # add positional encodings
-        src = self.pos_encoder(src)
+        src = self.pos_encoder(src)  # WHY?
         # run through the transformer encoder
         output = self.encoder(src, mask=self.src_mask)
         # project back to vocabulary size and return log-probs
@@ -144,4 +148,84 @@ class TransformerModel(nn.Transformer):
         return F.log_softmax(output, dim=-1)
 
 
-### -------
+### ------- TRAINING --------- ###
+
+
+class Dictionary(object):
+    def __init__(self):
+        self.word2idx = {}
+        self.idx2word = []
+
+    def add_word(self, word):
+        if word not in self.word2idx:
+            self.idx2word.append(word)
+            self.word2idx[word] = len(self.idx2word) - 1
+        return self.word2idx[word]
+
+    def __len__(self):
+        return len(self.idx2word)
+
+
+class Corpus(object):
+    def __init__(self, path):
+        self.dictionary = Dictionary()
+        self.train = self.tokenize(os.path.join(path, "train.txt"))
+        self.valid = self.tokenize(os.path.join(path, "valid.txt"))
+        self.test = self.tokenize(os.path.join(path, "test.txt"))
+
+    def tokenize(self, path):
+        """Tokenizes a text file."""
+        print(f"Tokenizing {path}")
+        assert os.path.exists(path)
+        # Add words to the dictionary
+        with open(path, "r", encoding="utf8") as f:
+            for line in f:
+                words = line.split() + ["<eos>"]
+                for word in words:
+                    self.dictionary.add_word(word)
+
+        # Tokenize file content
+        with open(path, "r", encoding="utf8") as f:
+            idss = []
+            for line in f:
+                words = line.split() + ["<eos>"]
+                ids = []
+                for word in words:
+                    ids.append(self.dictionary.word2idx[word])
+                idss.append(torch.tensor(ids).type(torch.int64))
+            ids = torch.cat(idss)
+
+        return ids
+
+
+# Set the random seed manually for reproducibility.
+torch.manual_seed(42)
+device = torch.device("mps")  # cpu, cuda?
+corpus = Corpus("./wikitext-2")
+
+
+def batchify(data, bsz):
+    # Work out how cleanly we can divide the dataset into bsz parts.
+    nbatch = data.size(0) // bsz
+    # Trim off any extra elements that wouldn't cleanly fit (remainders).
+    data = data.narrow(0, 0, nbatch * bsz)
+    # Evenly divide the data across the bsz batches.
+    data = data.view(bsz, -1).t().contiguous()
+    return data.to(device)
+
+
+eval_batch_size = 10
+train_data = batchify(corpus.train, 20)
+val_data = batchify(corpus.valid, eval_batch_size)
+test_data = batchify(corpus.test, eval_batch_size)
+
+ntokens = len(corpus.dictionary)
+
+criterion = nn.NLLLoss()
+bptt = 35  # sequence length
+lr = 20
+log_interval = 200
+clip = 0.25
+dry_run = True
+epochs = 40
+
