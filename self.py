@@ -1,7 +1,7 @@
 import math
-import torch  ## torch let's us create tensors and also provides helper functions
-import torch.nn as nn  ## torch.nn gives us nn.module() and nn.Linear()
-import torch.nn.functional as F  # This gives us the softmax()
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 
 class SelfAttention(nn.Module):
@@ -9,7 +9,7 @@ class SelfAttention(nn.Module):
         # d_model = n word embedding values per token ~ size of weight matrices
 
         super().__init__()
-        # why attention paper doesn't use bias?
+        # why attention paper doesn't use bias, fuck around and find out?
         self.W_q = nn.Linear(d_model, d_model, bias=False)
         self.W_k = nn.Linear(d_model, d_model, bias=False)
         self.W_v = nn.Linear(d_model, d_model, bias=False)
@@ -37,3 +37,6 @@ if __name__ == "__main__":
     encodings_matrix = torch.tensor([[1.16, 0.23], [0.23, 0.34], [0.34, 0.45]])
     self_attention = SelfAttention()
     print(self_attention(encodings_matrix))
+
+    # creates context aware embeddings as output 
+    # Encoder only model
