@@ -1,0 +1,76 @@
+import math
+import torch
+from torch import nn
+import torch.nn.functional as F
+
+
+class PositionalEncoding(nn.Module):
+    """
+    Gives the model a sense of *order*.
+
+    Embeddings alone only tell the network **what** word it is looking at, not
+    **where** it is in the sentence.  PositionalEncoding produces a vector
+    “stamp” for every position (1st word, 2nd word, …) and simply *adds* that
+    stamp to the normal token embedding.  Because the stamp is made from smooth
+    sine/cosine waves of many different frequencies, every position ends up
+    with a unique pattern that the model can later decode.
+
+    Parameters
+    ----------
+    d_model : int
+        Size of each embedding vector (must match the embedding layer so we can
+        add them together).
+    dropout : float, default 0.1
+        Dropout applied right after the positional information is added.
+    max_len : int, default 5000
+        Longest sequence length we expect to feed the model.
+
+    Example
+    -------
+    >>> pos_enc = PositionalEncoding(d_model=512)
+    >>> out = pos_enc(token_embeddings)  # same shape as input, but now position-aware
+    """
+
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        # Create a (max_len x d_model) matrix with positional “wave” values
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float32).unsqueeze(1)
+
+        # Waves of different frequencies: low freq in the first dims, high freq later
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
+        )
+        pe[:, 0::2] = torch.sin(position * div_term)  # even indices:  sin
+        pe[:, 1::2] = torch.cos(position * div_term)  # odd  indices:  cos
+
+        # Shape becomes (max_len, 1, d_model) so we can broadcast over batches
+        pe = pe.unsqueeze(0).transpose(0, 1)
+
+        # Register as buffer → saved with the model but not a trainable parameter
+        self.register_buffer("pe", pe)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Add positional information to the token embeddings.
+
+        Parameters
+        ----------
+        x : Tensor
+            Shape ``[seq_len, batch_size, d_model]``.
+
+        Returns
+        -------
+        Tensor
+            Same shape as the input, but with positional data mixed in.
+        """
+        x = x + self.pe[: x.size(0)]
+        return self.dropout(x)
+
+
+
+
+
+### -------
