@@ -68,8 +68,3 @@ if __name__ == "__main__":
     # mask = torch.tril(torch.ones(3, 3))
     mha = MultiHeadAttention(d_model=2, num_heads=3)
     print(mha(encodings_q, encodings_k, encodings_v))
-
-
-# - understand properly this class (smth is odd)
-# - expand on encoder decoder only
-# - can fully use it? can expand with cursor, and train it? and make it generate?
