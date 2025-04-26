@@ -289,3 +289,70 @@ def train(model, epoch):
         if dry_run:
             break
 
+
+def evaluate(model, data_source):
+    # Turn on evaluation mode which disables dropout.
+    model.eval()
+    total_loss = 0.0
+    ntokens = len(corpus.dictionary)
+    with torch.no_grad():
+        for i in range(0, data_source.size(0) - 1, bptt):
+            data, targets = get_batch(data_source, i)
+            output = model(data)
+            output = output.view(-1, ntokens)
+            total_loss += len(data) * criterion(output, targets).item()
+    return total_loss / (len(data_source) - 1)
+
+
+def run():
+    global lr  # Make sure we are modifying the global learning-rate variable
+
+    model = TransformerModel(ntokens, 200, 2, 200, 2, 0.2).to(device)
+    # Loop over epochs.
+    best_val_loss = None
+
+    try:
+        for epoch in range(1, epochs + 1):
+            epoch_start_time = time.time()
+
+            train(model, epoch)
+
+            # Evaluate on the validation set
+            val_loss = evaluate(model, val_data)
+
+            print("-" * 89)
+            print(
+                "| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | "
+                "valid ppl {:8.2f}".format(
+                    epoch,
+                    (time.time() - epoch_start_time),
+                    val_loss,
+                    math.exp(val_loss),
+                )
+            )
+            print("-" * 89)
+            # Save the model if the validation loss is the best we've seen so far.
+            if not best_val_loss or val_loss < best_val_loss:
+                with open("model.pt", "wb") as f:
+                    torch.save(model, f)
+                best_val_loss = val_loss
+            else:
+                # Anneal the learning rate if no improvement has been seen in the validation dataset.
+                lr /= 4.0
+    except KeyboardInterrupt:
+        print("-" * 89)
+        print("Exiting from training early")
+
+    # Load the best saved model.
+    with open("model.pt", "rb") as f:
+        model = torch.load(f)
+
+    # Run on test data.
+    test_loss = evaluate(model, test_data)
+    print("=" * 89)
+    print(
+        "| End of training | test loss {:5.2f} | test ppl {:8.2f}".format(
+            test_loss, math.exp(test_loss)
+        )
+    )
+    print("=" * 89)
