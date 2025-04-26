@@ -70,7 +70,78 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 
+class TransformerModel(nn.Transformer):
+    def __init__(
+        self,
+        ntoken: int,
+        ninp: int,
+        nhead: int,
+        nhid: int,
+        nlayers: int,
+        dropout: float = 0.5,
+    ):
+        """
+        ntoken : how many different words/characters the model knows (vocabulary size)
+        ninp   : length of the vector that represents each token (embedding size)
+        nhead  : how many parallel attention 'views' to look at the data (attention heads)
+        nhid   : size of the hidden feed-forward layer inside every transformer block
+        nlayers: how many transformer blocks to stack on top of each other
+        dropout: random % of neurons to turn off while training to avoid over-fitting
+        """
+        super().__init__(
+            d_model=ninp,
+            nhead=nhead,
+            dim_feedforward=nhid,
+            num_encoder_layers=nlayers,
+        )
 
+        # will hold the causal mask that hides “future” tokens
+        self.src_mask = None
+
+        # adds information about token order
+        self.pos_encoder = PositionalEncoding(ninp, dropout)
+
+        # looks up an `ninp`-dimensional vector for every token id
+        self.input_emb = nn.Embedding(ntoken, ninp)
+
+        self.ninp = ninp  # keep around for scaling
+
+        # turns encoder output back into vocabulary logits
+        self.decoder = nn.Linear(ninp, ntoken)
+
+        self.init_weights()
+
+    def _generate_square_subsequent_mask(self, sz: int):
+        # lower-triangular 0/1 matrix → log() makes upper triangle ‑inf
+        return torch.log(torch.tril(torch.ones(sz, sz)))
+
+    def init_weights(self):
+        # small random weights & zero bias to start
+        initrange = 0.1
+        nn.init.uniform_(self.input_emb.weight, -initrange, initrange)
+        nn.init.zeros_(self.decoder.bias)
+        nn.init.uniform_(self.decoder.weight, -initrange, initrange)
+
+    def forward(self, src, has_mask: bool = True):
+        # build (or clear) the causal mask
+        if has_mask:
+            device = src.device
+            if self.src_mask is None or self.src_mask.size(0) != len(src):
+                self.src_mask = self._generate_square_subsequent_mask(len(src)).to(
+                    device
+                )
+        else:
+            self.src_mask = None
+
+        # token ids → embeddings, then scale
+        src = self.input_emb(src) * math.sqrt(self.ninp)
+        # add positional encodings
+        src = self.pos_encoder(src)
+        # run through the transformer encoder
+        output = self.encoder(src, mask=self.src_mask)
+        # project back to vocabulary size and return log-probs
+        output = self.decoder(output)
+        return F.log_softmax(output, dim=-1)
 
 
 ### -------
