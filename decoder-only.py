@@ -356,3 +356,51 @@ def run():
         )
     )
     print("=" * 89)
+
+
+
+def generate():
+    import pickle  # local import to keep global namespace clean
+
+    # --------------------------------------------------------------------- #
+    # 1. Load model – try the new default, fall back to the legacy path.
+    # --------------------------------------------------------------------- #
+    try:
+        with open("model.pt", "rb") as f:
+            model = torch.load(f, map_location=device)  # weights_only=True (default)
+    except pickle.UnpicklingError:
+        # Allow-list the model class if it is available in the current script
+        if "TransformerModel" in globals():
+            torch.serialization.add_safe_globals([globals()["TransformerModel"]])
+        # Retry with legacy behaviour
+        with open("model.pt", "rb") as f:
+            model = torch.load(f, map_location=device, weights_only=False)
+
+    model.eval()
+
+    corpus = Corpus("./wikitext-2")
+    ntokens = len(corpus.dictionary)
+
+    input = torch.randint(ntokens, (1, 1), dtype=torch.long).to(device)
+    temperature = 1.0
+    log_interval = 100
+    words = 300
+    with open("generated.txt", "w") as outf:
+        with torch.no_grad():  # no tracking history
+            for i in range(words):
+                output = model(input, False)
+                word_weights = output[-1].squeeze().div(temperature).exp().cpu()
+                word_idx = torch.multinomial(word_weights, 1)[0]
+                word_tensor = torch.Tensor([[word_idx]]).long().to(device)
+                input = torch.cat([input, word_tensor], 0)
+
+                word = corpus.dictionary.idx2word[word_idx]
+
+                outf.write(word + ("\n" if i % 20 == 19 else " "))
+
+                if i % log_interval == 0:
+                    print("| Generated {}/{} words".format(i, words))
+
+
+if __name__ == "__main__":
+    generate()
