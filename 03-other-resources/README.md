@@ -18,7 +18,7 @@ https://www.kaggle.com/code/auxeno/transformers-from-scratch-dl?scriptVersionId=
 - Input embedding: input is tokenized (each token/word is converted into vectors)
 - Positional encoding: provide TF with position of each token (in LSTM's this information is known by default, not in TF)
 - Multi-Head self-attention: each token looks at all other tokens to improve it's context understanding moving the vector to a different space, multi-head, means each head learns different relationships, syntax/semantics/verbs. In decoders, it'd only look backward words.
-  - During training it learns where to look for information (attention patterns)
+  - During training it learns where to look for information (attention pattern ~ grid K*Q*V)
 - Add & Norm / Residual: add the original input tokens to the Attention layer output, helps preventing vanishing gradient problem.
 - Feed forward: Learns patterns from attention layer, fluffy and cat are adjective/noun.
 - Output Linear+softmax (it depends):
