@@ -1,11 +1,5 @@
-### Attention in PyTorch
+### Transformer Architecture
 
-Refreshing exercise, offset forgetting.
+- https://proceedings.neurips.cc/paper_files/paper/2017/file/3f5ee243547dee91fbd053c1c4a845aa-Paper.pdf
 
-
-- Self Attention ~ self.py
-- Masked Self Attention ~ masked.py
-- Multi Head Attention ~ multi-head.py
-
-
-decoder-only, contains a full example of data/model-arch/training/generation. 
+![architecture](transformer-architecture.png)
