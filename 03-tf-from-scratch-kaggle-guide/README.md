@@ -151,6 +151,8 @@ V = [
 
 > **The final result is:** we mutate/move each token around the semantic space based on the other tokens it needs to attend to, having a deeper meaning of its representation in the whole input.
 
+<br>
+<br>
 
 ### FAQ
 - Single vs Multi Head Attention: the above logic is a single head, each head learns different patterns, and is the parallelization of training. Head 1: Learns syntax relationships (subject-verb), Head 2: Learns semantic relationships (adjective-noun) ... Head n.
