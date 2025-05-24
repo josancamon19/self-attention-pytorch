@@ -151,7 +151,39 @@ V = [
 
 > **The final result is:** we mutate/move each token around the semantic space based on the other tokens it needs to attend to, having a deeper meaning of its representation in the whole input.
 
-Multi head in this formula? each question template is a head?
-whats dk for
-why transpose
-self attention vs attention again? fucking forgot
+
+### FAQ
+- Single vs Multi Head Attention: the above logic is a single head, each head learns different patterns, and is the parallelization of training. Head 1: Learns syntax relationships (subject-verb), Head 2: Learns semantic relationships (adjective-noun) ... Head n.
+  - During training each head focuses on smth different
+  - Syntactic Heads, Semantic Heads, Positional Heads.
+- Self-Attention vs Cross Attention
+  - Self: The sequence "attends to itself", each word attens all other words in input
+  - Cross: Q comes from one sequence, K/V from another. Encoder <> Decoder architecture
+    - The decoder (K/V) attends the encoder outputs (Q).
+- What's `dK`?
+  ```python
+  # Model hyperparameters
+  d_model = 512      # Total embedding dimension
+  num_heads = 8      # Number of attention heads
+
+  # Each head gets a portion of the total dimension
+  dk = d_model // num_heads = 512 // 8 = 64
+
+  # So each head works with 64-dimensional Q, K, V vectors
+  ```
+  - So dk is simply the size of each query/key vector - determines how much information each vector can encode.
+- What the /√dk means
+  - `Q @ K^T` dot product can be very large, large attention scores, causes extreme softmax, which means vanishing gradients.
+- Why ^T of K?
+  ```python
+  # Shapes:
+  Q: (sequence_length, d_k)  # e.g., (4, 64)
+  K: (sequence_length, d_k)  # e.g., (4, 64)
+
+  # Trying Q @ K (without transpose):
+  (4, 64) @ (4, 64)  # can't dot product this
+  ```
+  - Makes dimensions compatible
+  - Computes all pairwise similarities in 1 op
+- What do multiple attention layers do, how do they stack on each other
+- How to determine how many heads and layers
