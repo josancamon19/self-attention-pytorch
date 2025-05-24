@@ -162,6 +162,21 @@ V = [
   - Self: The sequence "attends to itself", each word attens all other words in input
   - Cross: Q comes from one sequence, K/V from another. Encoder <> Decoder architecture
     - The decoder (K/V) attends the encoder outputs (Q).
+- How to determine `embedding_dim`, and `num_heads`?
+  - **Embedding dim**
+    - This is the big decision in the architecture
+    - larger dim, more complex patterns, more expensive, slower training
+    - input complexity (sentiment ~ 128-256, language modeling 512-1024, gpt-3/4 ~ 12288)
+  - **num_heads** and **head_dim**
+    - if embedding size = 512, num_heads=n, head_dim=512/n
+    - more heads, more perspectives, but each head is simpler
+    - fewer heads, less perspectives, but each head is richer
+    - each head receives a slice of the input vector
+- Why not sending the whole embedding input into each head?
+  - all heads would learn similar patterns, we want them to specialize
+  - [ ] My question here is, then when creating the embeddings, a portion of it represents different things, can that be interpreted?
+  - compute just grows absurdly, exponentially.
+  - It was tried is not better, MQA Google, GQA Llama 2
 - What's `dK`?
   ```python
   # Model hyperparameters
@@ -189,3 +204,38 @@ V = [
   - Computes all pairwise similarities in 1 op
 - What do multiple attention layers do, how do they stack on each other
 - How to determine how many heads and layers
+
+
+### Residual Layers (Add & Norm)
+- **Add**:
+  - `MultiHeadAttention(pos_enc_input) + pos_enc_input`
+  - each layer outputs the same tokens, but with it's learned changes, modified vector space, we add that to the original embeddings.
+  - why?
+    - vanishing gradient problem on deep nn
+    - but also don't make huge changes right away (stabilization)
+    - helps preserve information, original input is not completely changed.
+  - so it's like adding the new insights into the initial token embedding
+  - worst case safety: if a layer learns nothing, output as close to original
+  - adding vectors means combining information?
+    - it depends, if they have same semantic space, if not related/diff dim, no.
+    - The model learns to make outputs that work well with the layer
+- **Norm**:
+  - `nn.LayerNorm`, layer($add_result)
+  - After Multi-Head Attention, each token could be:
+    ```python
+    token_1 = [0.001, 0.002, 0.003]    # Tiny numbers
+    token_2 = [1000, 2000, 3000]       # Huge numbers  
+    token_3 = [-500, 800, -200]        # Mixed scales
+    ```
+  - Unstable traninig, huge gradients some, other tiny ones, activations functions to extremes, model doesn't find good learning rates.
+  - Allows to stack multiple layers reliably
+
+
+### Next steps
+- [ ] Finish notebook
+- [ ] Ask claude to judge your knowledge on this repo, each step, each line, explain up to the most foundational level
+- [ ] implement and reimplement
+- [ ] how to train in different data, and make it bigger, require GPU, 100M params
+- [ ] from scratch to a decoder only, from scratch as well + walk through each layer as above.
+- [ ] implement again
+- [ ] SFT on it
