@@ -27,13 +27,18 @@ tokenized_text["Token"] = tokenizer.convert_ids_to_tokens(tokenizer(text)["input
 # print(pd.DataFrame(tokenized_text).T)
 
 
-def tokenize_input(input_text: str, add_logs: bool = False):
+def tokenize_input(
+    input_text: str,
+    add_logs: bool = False,
+    max_length: int = 100,
+    return_tensors: str | None = "pt",
+):
     input_sequence = tokenizer.encode_plus(
         input_text,
-        return_tensors="pt",  # pytorch tensors instead of list
+        return_tensors=return_tensors,  # pytorch tensors instead of list
         padding="max_length",
         truncation=True,
-        max_length=100,
+        max_length=max_length,
     )["input_ids"]
 
     # encode_plus is same as encode, but adds:
