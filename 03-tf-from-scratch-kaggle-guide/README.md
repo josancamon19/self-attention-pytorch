@@ -25,7 +25,7 @@ Yea, LSTM's already had an attention component, here are the differences:
 
 ### Encoder Architecture
 
-![encoder](encoder.png)
+![encoder](images/encoder.png)
 
 - **Input embedding:** input is tokenized (each token/word is converted into vectors)
 - **Positional encoding:** provide the transformer with position of each token (in LSTM's this information is known by default cause the proces is sequential, not in Transformers)
@@ -94,6 +94,7 @@ The model discovers that:
 - Adjectives should attend to what they modify
 - Verbs should attend to their arguments
 
+
 **Walkthrough of Part 1:**
 ```python
 "The car is red"
@@ -154,6 +155,7 @@ Once we have `Part1/√dk`, we apply `softmax` to get a weighted sum of % of att
 
 `attention_weights` **meaning:** "I want 40% of *car* info, 20% of *red* info, 30% of *is* info, 10% of *the* info"
 
+![pattern](images/attention-pattern.png)
 
 2.3. **Dot Product V**
 - Takes `attention_weights`, for each token checks how much information each want about every other, retrieves it from `V` and updates itself, moving it's semantic meaning depending.
@@ -224,7 +226,7 @@ V = [
 <br>
 
 ### Residual Layers (Add & Norm)
-![residual](residual.png)
+![residual](images/residual.png)
 - **Add**:
   - `MultiHeadAttention(pos_enc_input) + pos_enc_input`
   - each layer outputs the same tokens, but with it's learned changes, modified vector space, we add that to the original embeddings.
@@ -250,7 +252,7 @@ V = [
 
 
 ### Position Wise FFN
-![ffn_pos_wise](ffn_pos_wise.png)
+![ffn_pos_wise](images/ffn_pos_wise.png)
 - So attention gave us a new representation for each token, having moved the embedding space and having paid attention to each other token correspondingly. We found patterns accross tokens and put the information in it
 - Attention gave linear relationships between tokens, **but**, the magic of nn's is in their non-linearity, ffn give us this non linearity, which means more complex patterns.
 - The ffn now takes those vectors, and understand what each token (after attention mod) means further.
@@ -284,7 +286,9 @@ V = [
 
 ### Next steps
 - [ ] Ask claude to judge your knowledge on this repo, each step, each line, explain up to the most foundational level
-- [ ] What are the loss functions at each? there are so many parameters, how does it manage to based on loss, understand all of this? is just ridiculous
+- [ ] Dimensionality changes over the whole input output confuse me a lot
+- [ ] What are the loss functions at each? there are so many parameters, how does it manage to based on loss, understand all of this? is just ridiculous, a single loss function can determine
+- [ ] Embeddings? if it's learned, then what's original information? only tokenized sequence?
 - [ ] How did people come up with this, is too good, to many things need to work
 - [ ] Transformer.params() tells how many params has
 - [ ] Further understand positional encoding, and source code in depth
