@@ -231,9 +231,42 @@ V = [
   - Allows to stack multiple layers reliably
 
 
+### Position Wise FFN
+- So attention provides a new representation for each token, having moved the embedding space and having paid attention to each other token correspondingly. We found patterns accross tokens and put the information in it
+- Attention gave linear relationships between tokens, magic of nn's is in their non-linearity, ffn give us this non linearity, which means more complex patterns.
+- The ffn now takes those vectors, and understand what each token (after attention mod) means further.
+- what complex meanings emerge after the vector modifications.
+  - finding idioms, physical structures, attention heads give us semantic understanding, ffn finds patterns that emerge from semanticness.
+
+### FAQ
+- On first principles what linear and **non-linearity** means?
+  - A function is linear if: f(ax + by) = af(x) + bf(y)
+    - predictable proportional behavior, scale input by 2, output scales by 2, add 2 inputs, outputs add
+  - Linear functions can scale (stretch/shrink), rotate, project, combine (weighted sums), cannot create curves, make "if-then" decisions, separate complex patterns.
+  - Basically all our attention operations are linear, `@` and `*` and `sqrt`
+  - Why is FFN non linear?
+    - example
+      ```python
+      def ffn(x):
+        x = linear1(x)        # Linear: expand dimensions
+        x = GELU(x)           # NON-LINEAR: the magic happens here!
+        x = linear2(x)        # Linear: compress back
+        return x
+      ```
+  - ok but why a non-linear func (curves is clear), but decision boundaries, regions, complex patterns, how does this translates?
+    - I think I got it 
+      - try to think in a 512 dim space, it's hard, but try. In here geometric regions correspond to semantic spaces.
+    - so if you make a line separation, there's just so many rules you can make, color | animals, but not deeper at idioms, or real reference to animals.
+    - a subtle change in the inputs will have a much different representation, non-linear :)
+  - x^2, or e^x are those non linear? yes, [use logic above to prove it] why don't we use them then?
+    - x^2 is always postive, no negative info, gradient issues, dx/dd=2x, at x=0, gradient=0, dead neurons, large x explodes, has no off states, only 0.
+    - e^x, explodes, always positive, huge gradients
+  - but, we could in theory use them, and they could represent complex patterns, they are just not as good.
+
 ### Next steps
 - [ ] Finish notebook
 - [ ] Ask claude to judge your knowledge on this repo, each step, each line, explain up to the most foundational level
+- [ ] What are the loss functions at each?
 - [ ] implement and reimplement
 - [ ] how to train in different data, and make it bigger, require GPU, 100M params
 - [ ] from scratch to a decoder only, from scratch as well + walk through each layer as above.
