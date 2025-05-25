@@ -44,14 +44,15 @@ class TokenEmbedding(nn.Module):
         return self.token_embedding(tokenized_sentence)
 
 
-def embed(input_sequence: torch.Tensor):
+def embed(input_sequence: torch.Tensor, add_logs: bool = False):
     token_embedding = TokenEmbedding(config).to(config.device)
     embedding_output = token_embedding(input_sequence)
-    print("Shape of output:", embedding_output.size())
+    if add_logs:
+        print("embed:Shape of output:", embedding_output.size())
     return embedding_output
 
 
 if __name__ == "__main__":
     text = "Hi, this is a test"
     input_sequence = tokenize_input(text)
-    embed(input_sequence)
+    embed(input_sequence, True)

@@ -1,4 +1,9 @@
 import torch.nn as nn
+from _1_tokenization import tokenize_input
+from _2_embedding import embed, config
+from _3_positional_encoding import add_positional_encoding
+from _4_attention import MultiHeadAttention
+from _5_residual import residual
 
 
 class FeedForward(nn.Module):
@@ -19,9 +24,23 @@ class FeedForward(nn.Module):
         # give the model a larger space to work with, finding more complex patterns
         x = self.linear_1(x)
         # non-linearity, finding more complex patterns
-        x = self.gelu(x)    
+        x = self.gelu(x)
         # compress back to original space, compressing insights
         x = self.linear_2(x)
         # dropout, to prevent overfitting
         x = self.dropout(x)
         return x
+
+
+if __name__ == "__main__":
+    text = "Hi, this is a test"
+    input_sequence = tokenize_input(text)
+    embedding_output = embed(input_sequence)
+    pos_enc_output = add_positional_encoding(embedding_output)
+
+    multihead_attn = MultiHeadAttention(config).to(config.device)
+    attn_output = multihead_attn(pos_enc_output)
+    residual_output = residual(pos_enc_output, attn_output)
+    feed_forward = FeedForward(config).to(config.device)
+    ffn_output = feed_forward(residual_output)
+    print("Shape of output:", ffn_output.size())

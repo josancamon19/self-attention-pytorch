@@ -19,15 +19,15 @@ tokenized_text["Numerical Token"] = tokenizer(text)["input_ids"]
 tokenized_text["Token"] = tokenizer.convert_ids_to_tokens(tokenizer(text)["input_ids"])
 # print(tokenized_text)
 # {'Numerical Token': [101, 19204, 6026, 3793, 2003, 1037, 4563, 4145, 1999, 17953, 2361, 1012, 102], 'Token': ['[CLS]', 'token', '##izing', 'text', 'is', 'a', 'core', 'concept', 'in', 'nl', '##p', '.', '[SEP]']}
-print("Tokenizer has a vocabulary size of", tokenizer.vocab_size, "words.")
-print(
-    "Tokenizer has a maximum sequence length of", tokenizer.model_max_length, "tokens."
-)
-print("\nOur text to tokenize:", text, "\n")
-print(pd.DataFrame(tokenized_text).T)
+# print("Tokenizer has a vocabulary size of", tokenizer.vocab_size, "words.")
+# print(
+#     "Tokenizer has a maximum sequence length of", tokenizer.model_max_length, "tokens."
+# )
+# print("\nOur text to tokenize:", text, "\n")
+# print(pd.DataFrame(tokenized_text).T)
 
 
-def tokenize_input(input_text: str):
+def tokenize_input(input_text: str, add_logs: bool = False):
     input_sequence = tokenizer.encode_plus(
         input_text,
         return_tensors="pt",  # pytorch tensors instead of list
@@ -40,8 +40,9 @@ def tokenize_input(input_text: str):
     # - Adds special tokens (like [CLS] and [SEP] for BERT)
     # - Handles padding, truncation, and attention masks
 
-    print(input_sequence)
-    print("\nShape of output:", input_sequence.shape)
+    if add_logs:
+        print(input_sequence)
+        print("\nShape of output:", input_sequence.shape)
     return input_sequence
 
 
@@ -49,4 +50,4 @@ if __name__ == "__main__":
     sample_text = "We're going to reduce the maximum sequence length to 100 tokens, \
 so we'll use a longer string here for demonstration purposes. We're not going to \
 reach the full 100 tokens, so we'll pad our sequence with 0s."
-    tokenize_input(sample_text)
+    tokenize_input(sample_text, True)
