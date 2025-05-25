@@ -1,4 +1,4 @@
-## Transformers From Scratch Kaggle Notebook
+# Transformers From Scratch Kaggle Notebook
 
 Source: https://www.kaggle.com/code/auxeno/transformers-from-scratch-dl
 \+ Bunch of conversations with Sonnet4.
@@ -23,7 +23,7 @@ Yea, LSTM's already had an attention component, here are the differences:
 | Memory Bottleneck | Fixed-size encoder summary vector   | Direct access to all positions       |
 | Parallelization   | Limited due to sequential nature    | Highly parallelizable                |
 
-### Encoder Architecture
+## Encoder Architecture
 
 ![encoder](images/encoder.png)
 
@@ -213,8 +213,7 @@ V = [
     - fewer heads, less perspectives, but each head is richer
     - each head receives a slice of each token in the input sequence.
 - Why not **sending the whole embedding input into each head?**
-  - all heads would learn similar patterns, we want them to specialize
-  - [ ] My question here is, then when creating the embeddings, a portion of it represents different things, can that be *interpreted*, like 1/8th contains x information, the other 1/8th, etc?
+  - all heads would learn similar patterns, we want them to specialize contains x information, the other 1/8th, etc?
   - compute just grows absurdly, exponentially. (512*64, to 512*512)
   - It was tried is not better, MQA Google, GQA Llama 2
 
@@ -284,14 +283,64 @@ V = [
   - e^x, explodes, always positive, huge gradients
 - but, we could in theory use them, and they could represent complex patterns, they are just not as good.
 
+<br>
+<br>
+
+
+### Training
+- How are the transformer weights initialized? (optimal strategies)
+- Key ideas on making training stable, 12+layers, not corrupted
+- How does backpropagation work through each layer, specially the attention mechanism?
+- What is the actual loss function and how does it drive learning?
+- How does a single loss function coordinate learning across all these complex components?
+- How do the weight matrices W_Q, W_K, W_V actually learn their "templates"?
+- What drives them to specialize in query/key/value roles?
+- How do they discover what patterns to look for?
+- How do attention heads actually specialize during training?
+- What forces different heads to learn different patterns?
+- Can we predict or control what each head will learn?
+- How does information actually flow through the transformer?
+- What information is preserved vs. transformed at each layer?
+- How do early vs. late layers differ in their function?
+- What is the computational complexity and memory usage?
+- Detailed analysis of O(n²) attention complexity
+- Memory bottlenecks during training vs. inference
+
+
+<br>
+
+### Inference
+
+<br>
+
+### Why of Architectural Decisions
+- Why do these specific architectural choices work so well?
+- Why this particular combination of attention + FFN + residuals?
+- What happens if you change the order of operations?
+- How do you determine optimal model size for a given task?
+- The relationship between data size, model parameters, and performance
+- When do you get diminishing returns from scaling?
+
+- What are the theoretical limitations of the attention mechanism?
+- What types of patterns can/cannot be learned?
+- Why does performance degrade with very long sequences?
+- How does the transformer architecture relate to other computational models?
+- Connections to database queries, memory systems, etc.
+- What makes it fundamentally different from CNNs/RNNs?
+<br>
+
+## Decoder Architecture
+- Explain the differences at each step, in the diagram, in training, and so on.
+
 ### Next steps
-- [ ] Ask claude to judge your knowledge on this repo, each step, each line, explain up to the most foundational level
-- [ ] Dimensionality changes over the whole input output confuse me a lot
-- [ ] What are the loss functions at each? there are so many parameters, how does it manage to based on loss, understand all of this? is just ridiculous, a single loss function can determine
+- [ ] Test yourself on the repo, notes, codebase.
+- [ ] Dimensionality changes over the whole input output confuse me a lot.
 - [ ] Embeddings? if it's learned, then what's original information? only tokenized sequence?
-- [ ] How did people come up with this, is too good, to many things need to work
-- [ ] Transformer.params() tells how many params has
+- [ ] When creating the embeddings, a portion of it represents different things, can that be *interpreted*, like 1/8th
 - [ ] Further understand positional encoding, and source code in depth
+- [ ] Transformer.params() tells how many params has at each layer.
+
+
 - [ ] implement and reimplement
 - [ ] Try different classifier heads
 - [ ] how to train in different data, and make it bigger, require GPU, 100M params
