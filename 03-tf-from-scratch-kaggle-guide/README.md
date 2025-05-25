@@ -264,10 +264,11 @@ V = [
   - but, we could in theory use them, and they could represent complex patterns, they are just not as good.
 
 ### Next steps
-- [ ] Finish notebook
 - [ ] Ask claude to judge your knowledge on this repo, each step, each line, explain up to the most foundational level
-- [ ] What are the loss functions at each?
+- [ ] What are the loss functions at each? there are so many parameters, how does it manage to based on loss, understand all of this?
+- [ ] Transformer.params() tells how many params has
 - [ ] implement and reimplement
+- [ ] Try different classifier heads
 - [ ] how to train in different data, and make it bigger, require GPU, 100M params
 - [ ] from scratch to a decoder only, from scratch as well + walk through each layer as above.
 - [ ] implement again
