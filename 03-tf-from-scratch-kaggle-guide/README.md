@@ -194,36 +194,6 @@ V = [
 <br>
 <br>
 
-### FAQ
-- **Single vs Multi Head Attention:** the above logic is a single head, each head learns different patterns, and is the parallelization of training. Head 1: Learns syntax relationships (subject-verb), Head 2: Learns semantic relationships (adjective-noun) ... Head n.
-  - During training each head focuses on smth different
-  - Syntactic Heads, Semantic Heads, Positional Heads.
-- **Self-Attention vs Cross Attention:**
-  - Self: The sequence "attends to itself", each word attens all other words in input
-  - Cross: Q comes from one sequence, K/V from another. Encoder <> Decoder architecture
-    - The decoder (K/V) attends the encoder outputs (Q).
-- How to determine `embedding_dim`, and `num_heads`?
-  - **Embedding dim**
-    - This is the big decision in the architecture
-    - larger dim, more complex patterns, more expensive, slower training
-    - input complexity (sentiment ~ 128-256, language modeling 512-1024, gpt-3/4 ~ 12288)
-  - **num_heads** and **head_dim**
-    - if embedding size = 512, num_heads=n, head_dim=512/n
-    - more heads, more perspectives, but each head is simpler
-    - fewer heads, less perspectives, but each head is richer
-    - each head receives a slice of each token in the input sequence.
-- Why not **sending the whole embedding input into each head?**
-  - all heads would learn similar patterns, we want them to specialize contains x information, the other 1/8th, etc?
-  - compute just grows absurdly, exponentially. (512*64, to 512*512)
-  - It was tried is not better, MQA Google, GQA Llama 2
-
-- What do multiple attention layers do, how do they stack on each other
-- How to determine how many heads and layers
-
-
-<br>
-<br>
-
 ### Residual Layers (Add & Norm)
 ![residual](images/residual.png)
 - **Add**:
@@ -286,6 +256,65 @@ V = [
 <br>
 <br>
 
+### FAQ
+- **Single vs Multi Head Attention:** the above logic is a single head, each head learns different patterns, and is the parallelization of training. Head 1: Learns syntax relationships (subject-verb), Head 2: Learns semantic relationships (adjective-noun) ... Head n.
+  - During training each head focuses on smth different
+  - Syntactic Heads, Semantic Heads, Positional Heads.
+- **Self-Attention vs Cross Attention:**
+  - Self: The sequence "attends to itself", each word attens all other words in input
+  - Cross: Q comes from one sequence, K/V from another. Encoder <> Decoder architecture
+    - The decoder (K/V) attends the encoder outputs (Q).
+- How to determine `embedding_dim`, and `num_heads`?
+  - **Embedding dim**
+    - This is the big decision in the architecture
+    - larger dim, more complex patterns, more expensive, slower training
+    - input complexity (sentiment ~ 128-256, language modeling 512-1024, gpt-3/4 ~ 12288)
+  - **num_heads** and **head_dim**
+    - if embedding size = 512, num_heads=n, head_dim=512/n
+    - more heads, more perspectives, but each head is simpler
+    - fewer heads, less perspectives, but each head is richer
+    - each head receives a slice of each token in the input sequence.
+- Why not **sending the whole embedding input into each head?**
+  - all heads would learn similar patterns, we want them to specialize contains x information, the other 1/8th, etc?
+  - compute just grows absurdly, exponentially. (512*64, to 512*512)
+  - It was tried is not better, MQA Google, GQA Llama 2
+- What's the **loss function**, what's the source of truth?
+  - `tokenizer` is the only source of truth we have, embeddings are params, attention Q,K,V and W_O are params, FFN are params.
+  - **Encoder only** = we have labels, so is just a normal classifier output, prob of every option
+    - What if we want to get a **sequence embeddings model**? (no classifier head)
+    `MLM` and `NSP` (BERT), Contrastive Learning (compare 2 similar inputs, cosine similarity loss).
+  - **Decoder only** = output log prob of the whole vocabulary (all possible tokens), how likely each token is to be the next one, we have the whole input sequence, so we can compare (self-supervised-learning).
+  - **Encoder <> Decoder** = we have labels, supervised learning, for translation, summarization, so it's again log prob vs ground truth.
+- **Why does this work at all?**
+  - gradient flows through everything, all updates based on final loss
+  - each component job emerges
+    - Embeddings: Learn to represent tokens in a useful space
+    - Q, K, V: Learn to find relevant relationships between tokens
+    - FFN: Learn to transform and combine information
+    - Classifier: Learn to map final representations to predictions
+  - Scale (tokens, params, compute) + simple objective
+  - Enough learning capacity (params), enough data, a clear objecive, gradient descent.
+- How do we **merge multiple attention heads** outputs?
+  - Example
+    ```python
+    head_1 = [0.2, 0.8, 0.1, 0.9]  # Maybe focuses on syntax
+    head_2 = [0.7, 0.3, 0.6, 0.2]  # Maybe focuses on semantics  
+    Head_3 = [0.1, 0.5, 0.8, 0.4]  # Maybe focuses on position
+    ```
+  - concatenate, put outputs side by side, in a single vector.
+  - add a linear layer that combines all, learns to take 30% from h1 (syntax), 50% h2 (semantics), and so on
+  - Basically learns the optimal mixing rations depending on word/context, **mix the different types of attention learned**
+- What do multiple attention layers do, how do they stack on each other?
+  - 1 complete encoder block: (mha - residual - ffn - residual), gpt 3 has 96 blocks.
+  - 1 attention layer, means the mha layer in the block.
+  - how many to stack together?
+    - empirical scalling laws, chinchilla slcaling laws, common existing sizes
+    - bigger, more learnings, harder to train, if dataset is small, risk overfitting.
+
+
+<br>
+<br>
+
 
 ### Training
 - How are the transformer weights initialized? (optimal strategies)
@@ -333,13 +362,12 @@ V = [
 - Explain the differences at each step, in the diagram, in training, and so on.
 
 ### Next steps
-- [ ] Get to the whiteboard and explain it to yourself and others.
 - [ ] Dimensionality changes over the whole input output confuse me a lot.
-- [ ] Embeddings? if it's learned, then what's original information? only tokenized sequence?
 - [ ] When creating the embeddings, a portion of it represents different things, can that be *interpreted*, like 1/8th
 - [ ] Further understand positional encoding, and source code in depth
 - [ ] Transformer.params() tells how many params has at each layer.
 
+<br>
 
 - [ ] implement and reimplement
 - [ ] Try different classifier heads
@@ -347,54 +375,3 @@ V = [
 - [ ] from scratch to a decoder only, from scratch as well + walk through each layer as above.
 - [ ] implement again
 - [ ] SFT on it
-
-
-<br>
-
-### Testing as a Learning tool
-
-#### `1`
-1. Walk through the attention formula Attention(Q,K,V) = softmax(QK^T/√d_k)V step by step. Explain what each matrix multiplication represents, why we divide by √d_k, and what the final output means in terms of information flow.
-
-2. Trace a single token's journey through your transformer implementation from tokenization to final classification. At each step (embedding → positional encoding → attention → residual → FFN → classifier), explain what information is being added, transformed, or preserved, and why each step is necessary.
-
-3. Your implementation uses multiple attention heads, each with embed_dim // num_heads dimensions. Explain why we split dimensions, how different heads can specialize during training, and what happens in the final output linear layer.
-
-4. Your positional encoding uses sin/cos functions with different frequencies. Explain why transformers need positional information at all (vs RNNs), why this mathematical approach works, and what would happen if you removed positional encoding.
-
-5. Your encoder uses x = x + self.attention(hidden_state). Explain the mathematical and practical reasons for residual connections, how they affect gradient flow during backpropagation, and why they're especially critical in deep transformer architectures.
-
-6. Attention operations (Q@K^T, softmax, @V) are mostly linear, while FFN introduces non-linearity. Explain what types of patterns each can learn, why both are necessary, and give examples of what the model couldn't learn with only attention or only FFN.
-
-7. Your implementation is encoder-only with a classifier head. Compare this to decoder-only (like GPT) and encoder-decoder (like T5) architectures. Explain when you'd use each, how attention masking differs, and why your choice fits the classification task.
-
-8. Analyze the dimensionality flow in your implementation: token indices → embeddings → attention → FFN → classification. Explain how you'd decide on embedding_dimensions, num_heads, and num_encoder_layers for different tasks and computational budgets.
-
-9. During training, a single classification loss must coordinate learning across embedding matrices, attention weights (W_Q, W_K, W_V), FFN parameters, and layer norms. Explain how gradients flow back through your architecture and what each component learns to optimize the final objective.
-
-10. Your attention mechanism has O(n²) complexity in sequence length. Explain where this comes from mathematically, why it becomes a bottleneck for long sequences, and what trade-offs you'd consider when scaling to longer inputs or larger models.
-
-`feedback`
-- Overall Assessment: 5.4/10, I'd swear I did min 7.
-- Strengths: You have good intuition about the big picture and understand key concepts like attention flow, residuals, and architectural differences.
-- Weaknesses: Lack precision in mathematical details, confused about information flow specifics, and need deeper understanding of training dynamics.
-
-`suggestions`
-- Matrix projection mechanics
-  - what it means geometrically, rotating/stretching vectors emphasizing features
-  - action: implement the code for it in numpy
-- Variance scaling in Attention (√d_k)
-  - code random Q,K matrices, compute QK^T, with/out scaling, and see softmax changes
-- Layer Normalization vs Batch Normalization
-  - Understand math behind each
-  - Implement in Transformer, and see how they affect training
-- Positional encoding maths
-  - check sin/cos patterns for each position, and it's distinguishable patterns
-- Gradient flow through attention
-  - Manually compute gradients for a 2-token attention example
-- What Attention Heads Actually Learn
-  - Use attention visualization tools on your trained model to see what patterns emerge.
-- FFN's Role in Feature Learning
-  - visualize ffn activations to see what patternsit learns
-- Training without classification head
-  - Implement a simple contrastive loss and train your transformer to create good sentence embeddings.
