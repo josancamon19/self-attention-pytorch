@@ -1,7 +1,9 @@
+import pandas as pd
 import torch
 import numpy as np
 import sys
 import os
+from torch.utils.data import DataLoader
 
 sys.path.append(
     os.path.abspath(
@@ -13,7 +15,63 @@ from _0_tokenization import tokenize_input, tokenizer  # type: ignore  # noqa: F
 from _1_config import Config  # type: ignore  # noqa: F401
 from _9_transformer import Transformer  # type: ignore  # noqa: F401
 from _10_dataloader import TextDataset  # type: ignore  # noqa: F401
-from _10_inference import load_model, predict  # type: ignore  # noqa: F401
+from _11_inference import load_model, predict  # type: ignore  # noqa: F401
+
+
+def get_model_config_and_data_loaders(
+    train_path: str,
+    test_path: str,
+    max_tokens: int = 100,
+    embedding_dimensions: int = 128,
+    num_attention_heads: int = 8,
+    hidden_dropout_prob: float = 0.3,
+    num_encoder_layers: int = 2,
+    batch_size: int = 64,
+    smaller_dataset: bool = False,
+) -> tuple[Config, DataLoader, DataLoader]:
+    #
+    if smaller_dataset:
+        train_df = pd.read_csv(train_path)[:1000]
+        test_df = pd.read_csv(test_path)[:200]
+    else:
+        train_df = pd.read_csv(train_path)
+        test_df = pd.read_csv(test_path)
+    
+
+    config = {
+        "vocab_size": tokenizer.vocab_size,
+        "embedding_dimensions": embedding_dimensions,
+        "max_tokens": max_tokens,
+        "num_attention_heads": num_attention_heads,
+        "hidden_dropout_prob": hidden_dropout_prob,
+        "intermediate_size": embedding_dimensions * 4,
+        "num_encoder_layers": num_encoder_layers,
+        "device": "cpu" if not torch.cuda.is_available() else "cuda",
+    }
+    config = Config(config)
+
+    def _tokenize(row, max_length):
+        return tokenize_input(row["text"], max_length=max_length, return_tensors=None)
+
+    train_df["tokenized"] = train_df.apply(
+        lambda row: _tokenize(row, config.max_tokens), axis=1
+    )
+    test_df["tokenized"] = test_df.apply(
+        lambda row: _tokenize(row, config.max_tokens), axis=1
+    )
+
+    print("Train [rows, cols]:", train_df.shape)
+    print("Val [rows, cols]:", test_df.shape)
+    print()
+    print(train_df.head())
+
+    train_dataset = TextDataset(train_df["tokenized"], train_df["Y"])
+    test_dataset = TextDataset(test_df["tokenized"], test_df["Y"])
+
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+    return config, train_dataloader, val_dataloader
 
 
 def train(
@@ -37,19 +95,11 @@ def train(
             model.train()
             optimizer.zero_grad()
             outputs = model(inputs)
-            loss = loss_function(outputs.squeeze(), targets)
+            loss = loss_function(outputs.squeeze(-1), targets)
             loss.backward()
             optimizer.step()
-            # Exception has occurred: ValueError
-            # Using a target size (torch.Size([1])) that is different to the input size (torch.Size([])) is deprecated. Please ensure they have the same size.
-            #   File "/Users/joancabezas/Downloads/projects/ai-research/transformers/03-tf-from-scratch-kaggle-guide/_12_separate_exercise.py", line 69, in train
-            #     loss = loss_function(outputs.squeeze(), targets)
-            #            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-            #   File "/Users/joancabezas/Downloads/projects/ai-research/transformers/03-tf-from-scratch-kaggle-guide/_12_separate_exercise.py", line 124, in <module>
-            #     train()
-            # ValueError: Using a target size (torch.Size([1])) that is different to the input size (torch.Size([])) is deprecated. Please ensure they have the same size.
 
-            train_predictions = outputs.squeeze().detach().cpu() > 0.5
+            train_predictions = outputs.squeeze(-1).detach().cpu() > 0.5
             train_accuracy = (
                 (train_predictions == targets.cpu()).type(torch.float).mean().item()
             )
@@ -63,10 +113,10 @@ def train(
                         val_targets = val_targets.to(config.device)
 
                         val_outputs = model(val_inputs)
-                        val_loss = loss_function(val_outputs.squeeze(), val_targets)
+                        val_loss = loss_function(val_outputs.squeeze(-1), val_targets)
                         val_losses.append(val_loss.item())
                         # TODO: what this 2 lines do?
-                        val_predictions = val_outputs.squeeze().detach().cpu() > 0.5
+                        val_predictions = val_outputs.squeeze(-1).detach().cpu() > 0.5
                         val_accuracy = (
                             (val_predictions == val_targets.cpu())
                             .type(torch.float)
@@ -95,3 +145,19 @@ def train(
                     print(
                         f"New best model saved with validation accuracy: {val_accuracy:.3f}"
                     )
+
+
+def double_check_inference(
+    config: Config,
+    model_path: str,
+    input_key: str,
+    label_key: str,
+    train_dataset_path: str,
+):
+    model = load_model(config, model_path)
+    df = pd.read_csv(train_dataset_path)
+    sample_df = df.sample(n=10, random_state=42)
+    for _, row in sample_df.iterrows():
+        text = row[input_key]
+        prediction = predict(text, config, model)
+        print(f"Text: {text}, Prediction: {prediction} | Expected: {row[label_key]}")
