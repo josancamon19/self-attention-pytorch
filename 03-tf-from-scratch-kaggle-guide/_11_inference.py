@@ -36,15 +36,17 @@ def predict(text, model=None, debug=False):
 
         prediction = output.squeeze().item() > 0.5
 
-    return "positive" if prediction else "negative"
+    return "negative" if prediction else "positive"
 
 
 # Example usage
 if __name__ == "__main__":
     model = load_model()
     texts = [
-        "Our Deeds are the Reason of this #earthquake May ALLAH Forgive us all",
-        "I love fruits",
+        "Our Deeds are the Reason of this #earthquake May ALLAH Forgive us all",  # 1
+        "Just got sent this photo from Ruby #Alaska as smoke from #wildfires pours into a school",  # 1
+        "I love fruits",  # 0
+        "London is cool ;)",  # 0
     ]
 
     for text in texts:
