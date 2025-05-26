@@ -1,2 +1,3 @@
 */__pycache__
-03-tf-from-scratch-kaggle-guide/best_model.pt
+*/best_model*.pt
+.DS_Store
