@@ -1,11 +1,14 @@
-import pandas as pd
 from sklearn.model_selection import train_test_split
-from _1_tokenization import tokenize_input
-from _2_embedding import config
-from torch.utils.data import Dataset, DataLoader
-import torch
-from _9_transformer import Transformer
+from torch.utils.data import DataLoader
+import pandas as pd
 import numpy as np
+import torch
+
+from _0_tokenization import tokenize_input
+from _1_config import config
+from _9_transformer import Transformer
+from _10_dataloader import TextDataset
+
 
 train_path, test_path = (
     "03-tf-from-scratch-kaggle-guide/data/train.csv",
@@ -31,28 +34,13 @@ print(train_df.head())
 X_train, y_train = train_df["tokenized"], train_df["target"]
 X_val, y_val = val_df["tokenized"], val_df["target"]
 
-
-class TextDataset(Dataset):
-    def __init__(self, x_dataframe, y_dataframe):
-        self.x_dataframe = x_dataframe
-        self.y_dataframe = y_dataframe
-
-    def __len__(self):
-        return len(self.x_dataframe)
-
-    def __getitem__(self, idx):
-        x = self.x_dataframe.iloc[idx]  # Get the 'tokenized' data
-        y = self.y_dataframe.iloc[idx]  # Get the 'target' data
-        return torch.LongTensor(x), torch.tensor(y, dtype=torch.float32)
-
-
 # Create both datasets
 train_dataset = TextDataset(X_train, y_train)
 val_dataset = TextDataset(X_val, y_val)
 
 # Create the DataLoaders
 train_dataloader = DataLoader(
-    train_dataset, batch_size=64, shuffle=True
+    train_dataset[:100], batch_size=64, shuffle=True
 )  # Shuffle for random sampling without replacement
 val_dataloader = DataLoader(val_dataset, batch_size=64, shuffle=True)
 

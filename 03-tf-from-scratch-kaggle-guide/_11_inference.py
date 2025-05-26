@@ -1,10 +1,12 @@
 import torch
-from _1_tokenization import tokenize_input
-from _2_embedding import config
+from _0_tokenization import tokenize_input
 from _9_transformer import Transformer
 
 
-def load_model(model_path="03-tf-from-scratch-kaggle-guide/best_model.pt"):
+def load_model(
+    config,
+    model_path="03-tf-from-scratch-kaggle-guide/best_model.pt",
+):
     """Load the trained model."""
     checkpoint = torch.load(model_path, map_location=config.device, weights_only=False)
     model = Transformer(config).to(config.device)
@@ -13,7 +15,7 @@ def load_model(model_path="03-tf-from-scratch-kaggle-guide/best_model.pt"):
     return model
 
 
-def predict(text, model=None, debug=False):
+def predict(text, config, model=None, debug=False):
     if model is None:
         model = load_model()
 
@@ -40,7 +42,9 @@ def predict(text, model=None, debug=False):
 
 
 if __name__ == "__main__":
-    model = load_model()
+    from _1_config import config
+
+    model = load_model(config)
     texts = [
         "Our Deeds are the Reason of this #earthquake May ALLAH Forgive us all",  # 1
         "Just got sent this photo from Ruby #Alaska as smoke from #wildfires pours into a school",  # 1
@@ -49,5 +53,5 @@ if __name__ == "__main__":
     ]
 
     for text in texts:
-        result = predict(text, model)
+        result = predict(text, config, model)
         print(f"'{text}' -> {result}")
