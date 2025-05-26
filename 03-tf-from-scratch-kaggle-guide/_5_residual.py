@@ -1,6 +1,7 @@
 import torch.nn as nn
-from _1_tokenization import tokenize_input
-from _2_embedding import embed, config
+from _0_tokenization import tokenize_input
+from _1_config import config
+from _2_embedding import embed
 from _3_positional_encoding import add_positional_encoding
 from _4_attention import MultiHeadAttention
 

@@ -39,7 +39,6 @@ def predict(text, model=None, debug=False):
     return "negative" if prediction else "positive"
 
 
-# Example usage
 if __name__ == "__main__":
     model = load_model()
     texts = [

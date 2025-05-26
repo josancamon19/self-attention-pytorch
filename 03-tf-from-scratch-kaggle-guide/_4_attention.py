@@ -2,8 +2,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from _1_tokenization import tokenize_input
-from _2_embedding import embed, config
+from _0_tokenization import tokenize_input
+from _1_config import config
+from _2_embedding import embed
 from _3_positional_encoding import add_positional_encoding
 
 
@@ -49,12 +50,12 @@ class MultiHeadAttention(nn.Module):
         # x here, is simply the output of each head, concatenated together
         x = self.output_linear(x)
         # combines all head ouptuts, to have a rich understanding, optimally mixing info
-        
+
         # # Maybe it learns:
         # - "Combine 30% syntax + 50% semantics + 20% position"
         # - "For nouns, emphasize semantic info more"
         # - "For verbs, emphasize syntax patterns more"
-        
+
         # referred as `W_O`, or output projection matrix.
         return x
 

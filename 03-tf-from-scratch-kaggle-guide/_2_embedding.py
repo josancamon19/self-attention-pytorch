@@ -2,33 +2,10 @@ import torch
 import torch.nn as nn
 from transformers import AutoTokenizer
 
-from _1_tokenization import tokenize_input
+from _0_tokenization import tokenize_input
+from _1_config import config
 
 tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-
-
-class Config:
-    def __init__(self, config_dict):
-        self.__dict__.update(config_dict)
-
-
-# Setting parameters for our model
-config = {  # We get the vocabulary size used by our tokenizer
-    "vocab_size": tokenizer.vocab_size,
-    "embedding_dimensions": 128,
-    # We're only going to use a maximum of 100 tokens per input sequence
-    "max_tokens": 100,
-    # Number of attention heads to be used
-    "num_attention_heads": 8,
-    # Dropout on feed-forward network
-    "hidden_dropout_prob": 0.3,
-    # Number of neurons in the intermediate hidden layer (quadruple the number of emb dims)
-    "intermediate_size": 128 * 4,
-    # How many encoder blocks to use in our architecture
-    "num_encoder_layers": 2,
-    "device": "cpu",
-}
-config = Config(config)
 
 
 class TokenEmbedding(nn.Module):
