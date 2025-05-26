@@ -40,7 +40,7 @@ val_dataset = TextDataset(X_val, y_val)
 
 # Create the DataLoaders
 train_dataloader = DataLoader(
-    train_dataset[:100], batch_size=64, shuffle=True
+    train_dataset, batch_size=64, shuffle=True
 )  # Shuffle for random sampling without replacement
 val_dataloader = DataLoader(val_dataset, batch_size=64, shuffle=True)
 

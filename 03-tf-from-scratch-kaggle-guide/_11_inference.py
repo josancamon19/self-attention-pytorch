@@ -3,10 +3,7 @@ from _0_tokenization import tokenize_input
 from _9_transformer import Transformer
 
 
-def load_model(
-    config,
-    model_path="03-tf-from-scratch-kaggle-guide/best_model.pt",
-):
+def load_model(config, model_path):
     """Load the trained model."""
     checkpoint = torch.load(model_path, map_location=config.device, weights_only=False)
     model = Transformer(config).to(config.device)
@@ -44,7 +41,7 @@ def predict(text, config, model=None, debug=False):
 if __name__ == "__main__":
     from _1_config import config
 
-    model = load_model(config)
+    model = load_model(config, "03-tf-from-scratch-kaggle-guide/best_model.pt")
     texts = [
         "Our Deeds are the Reason of this #earthquake May ALLAH Forgive us all",  # 1
         "Just got sent this photo from Ruby #Alaska as smoke from #wildfires pours into a school",  # 1
