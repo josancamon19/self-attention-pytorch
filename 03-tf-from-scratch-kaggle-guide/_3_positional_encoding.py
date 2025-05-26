@@ -18,8 +18,9 @@
 import torch
 import torch.nn as nn
 
-from _2_embedding import config, embed
-from _1_tokenization import tokenize_input
+from _0_tokenization import tokenize_input
+from _1_config import config
+from _2_embedding import embed
 
 
 class PositionalEncoding(nn.Module):
