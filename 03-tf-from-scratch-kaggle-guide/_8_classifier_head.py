@@ -9,14 +9,15 @@ class ClassifierHead(nn.Module):
         super().__init__()
         self.flatten = nn.Flatten()
         self.linear1 = nn.Linear(
-            config.max_tokens * config.embedding_dimensions,
+            config.embedding_dimensions,  # config.max_tokens *
             2 * config.embedding_dimensions,
         )
         self.relu = nn.ReLU()
         self.linear2 = nn.Linear(2 * config.embedding_dimensions, 1)
 
     def forward(self, x):
-        x = self.flatten(x)
+        # x = self.flatten(x)
+        x = x.mean(dim=1)
         x = self.relu(self.linear1(x))
         x = self.linear2(x)
         return torch.sigmoid(x)  # Sigmoid activation for binary classification
