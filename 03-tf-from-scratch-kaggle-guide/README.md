@@ -27,15 +27,15 @@ Yea, LSTM's already had an attention component, here are the differences:
 
 ![encoder](images/encoder.png)
 
-- **Input embedding:** input is tokenized (each token/word is converted into vectors)
+- **Input embedding:** input is tokenized (int) (each token/word is converted into vectors), then a dict of token: embedding vectirs is made
 - **Positional encoding:** provide the transformer with position of each token (in LSTM's this information is known by default cause the proces is sequential, not in Transformers)
 - **Multi-Head self-attention:** each token looks at all other tokens to improve it's context understanding moving the vector to a different space, multi-head, means each head learns different relationships, syntax/semantics/verbs. In decoder-only, word n, would only look at prev words [0, n-1].
-  - During training it learns where to look for information (attention pattern ~ grid Q,K,V)
-- **Add & Norm / Residual:** add the original input tokens to the Attention layer output, helps preventing vanishing gradient problem.
-- **Feed forward pos wise:** Learns complex patterns out of Attention Layer, each token is processed individually, which means pos is kept.
+  - During training it learns where to look for information with `W_Q`, `W_K`, `W_V`.
+- **Add & Norm / Residual:** add the original input tokens to the Attention layer output, helps preventing vanishing gradient problem + normalization.
+- **Feed forward pos wise:** Learns complex patterns out of Attention Layer, each token is processed individually, which means pos is kept. (Thanks to non-linearity)
 - Output **Linear+softmax** (it depends):
   - Wouldn't be needed if you want a model that takes an input and outputs the embeddings, as we already have the semantic understanding.
-  - If the task is classsification, probabilities depend on # of options.
+  - If the task is classsification, output neurons depend on # of options.
   - Linear layer: translates encoder understanding into the expected output
   - Softmax: simply converts into a weighted sum.
 
@@ -257,7 +257,7 @@ V = [
 <br>
 
 ### FAQ
-- **Single vs Multi Head Attention:** the above logic is a single head, each head learns different patterns, and is the parallelization of training. Head 1: Learns syntax relationships (subject-verb), Head 2: Learns semantic relationships (adjective-noun) ... Head n.
+- **Single vs Multi Head Attention:** each head learns different patterns, and is the parallelization of training. Head 1: Learns syntax relationships (subject-verb), Head 2: Learns semantic relationships (adjective-noun) ... Head n.
   - During training each head focuses on smth different
   - Syntactic Heads, Semantic Heads, Positional Heads.
 - **Self-Attention vs Cross Attention:**
@@ -273,9 +273,12 @@ V = [
     - if embedding size = 512, num_heads=n, head_dim=512/n
     - more heads, more perspectives, but each head is simpler
     - fewer heads, less perspectives, but each head is richer
-    - each head receives a slice of each token in the input sequence.
-- Why not **sending the whole embedding input into each head?**
-  - all heads would learn similar patterns, we want them to specialize contains x information, the other 1/8th, etc?
+    - each head receives a *slice of each input token*.
+- Is it actually slicing each embedding token?
+  - Not really!!, `self.q = nn.Linear(embed_dim, head_dim)`, input dim is `embed_dim`, `W_Q` receives the whole thing, but we then are projecting `X * W_Q` to get `Q`, and this one is actually of a smaller size, cause `head_dim` output is embed_dim/n_heads.
+  - We take each token embedding and project it to W_Q, X*W_Q, and that way we get Q, which has 1/8th dimensionality reduction!!
+- Why not **having Q,K,V** of size `embed_dim*embed_dim`, instead of `embed_dim*1/n_heads`?
+  - all heads would learn similar patterns, we want them to specialize contains x information, each head's projection learns different patterns of language
   - compute just grows absurdly, exponentially. (512*64, to 512*512)
   - It was tried is not better, MQA Google, GQA Llama 2
 - What's the **loss function**, what's the source of truth?
@@ -289,7 +292,7 @@ V = [
   - gradient flows through everything, all updates based on final loss
   - each component job emerges
     - Embeddings: Learn to represent tokens in a useful space
-    - Q, K, V: Learn to find relevant relationships between tokens
+    - `W_Q`, `W_K`, `W_V`: Learn to find relevant relationships between tokens
     - FFN: Learn to transform and combine information
     - Classifier: Learn to map final representations to predictions
   - Scale (tokens, params, compute) + simple objective
