@@ -123,10 +123,10 @@ def _get_custom_tokenizer():
 
     # tokenizer.add_special_tokens({"additional_special_tokens": special_tokens})
     # TODO: Adding special tokens causes issues with Embedding matrix, why?
-# TODO: is batch size too big? what's going on?
-# TODO: why is train accuracy 0.031, then validation 0.912, wtf
-# TODO: how big the model has to be? should train in gpu?
-# TODO: play with hyperparameters
+    # TODO: is batch size too big? what's going on?
+    # TODO: why is train accuracy 0.031, then validation 0.912, wtf
+    # TODO: how big the model has to be? should train in gpu?
+    # TODO: play with hyperparameters
 
     return tokenizer, max_tokens
 
