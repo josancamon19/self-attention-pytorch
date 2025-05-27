@@ -1,3 +1,4 @@
+from typing import Tuple
 import pandas as pd
 import json
 
@@ -105,7 +106,7 @@ def _compute_max_length(
     return max_length
 
 
-def _get_custom_tokenizer():
+def _get_custom_tokenizer() -> tuple[AutoTokenizer, int]:
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
     max_tokens = 420  # 4.2x the previous one will be a lot, prob can't train here.
@@ -121,9 +122,10 @@ def _get_custom_tokenizer():
     for season in seasons:
         special_tokens.append(f"[SEASON:{season}]")
 
-    # tokenizer.add_special_tokens({"additional_special_tokens": special_tokens})
-    # TODO: Adding special tokens causes issues with Embedding matrix, why?
-    # TODO: is batch size too big? what's going on?
+    # print(f"vocab size before: {tokenizer.vocab_size}")
+    tokenizer.add_special_tokens({"additional_special_tokens": special_tokens})
+    # print(f"vocab size after: {len(tokenizer)}")
+    
     # TODO: why is train accuracy 0.031, then validation 0.912, wtf
     # TODO: how big the model has to be? should train in gpu?
     # TODO: play with hyperparameters
@@ -164,3 +166,21 @@ if __name__ == "__main__":
         n_epochs=10,
         name_model="best_model_2",
     )
+
+    # first run
+    # Epoch 1/10 Step 0       Train Loss: 0.72        Train Accuracy: 0.078
+    #                         Val Loss: 0.35          Val Accuracy: 0.912
+    # New best model saved with validation accuracy: 0.912
+    # Epoch 1/10 Step 20      Train Loss: 0.27        Train Accuracy: 0.938
+    #                         Val Loss: 0.39          Val Accuracy: 0.912
+    # Epoch 1/10 Step 40      Train Loss: 0.25        Train Accuracy: 0.938
+    #                         Val Loss: 0.32          Val Accuracy: 0.912
+    # Epoch 1/10 Step 60      Train Loss: 0.14        Train Accuracy: 0.969
+    #                         Val Loss: 0.34          Val Accuracy: 0.912
+    
+    # data imbalance? the model now is simply predicting the majority?
+    # learning rate too high, makes the model answer always the majority class
+    # check if the data is mostly truthful or deceptive
+    # different loss function? 
+    # validation accuracy not changing at all, is prob predicting always the same thing.
+    # each step is taking way longer now, 400 tokens is just plenty for this laptop

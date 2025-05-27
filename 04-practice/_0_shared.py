@@ -41,7 +41,8 @@ def get_model_config_and_data_loaders(
         test_df = pd.read_csv(test_path)
 
     config = {
-        "vocab_size": tokenizer.vocab_size,
+        # instead of .vocab_size when using special tokens
+        "vocab_size": len(custom_tokenizer or tokenizer),
         "embedding_dimensions": embedding_dimensions,
         "max_tokens": max_tokens,
         "num_attention_heads": num_attention_heads,
