@@ -56,6 +56,8 @@ $
   - Information transformation, emphasize some aspects, deemphasize others.
   - Learning more foundational details, by reducing n-dim, projecting it to a smaller space, the model must figure out what's actually crucial features.
   - Represented below as `X*W_Q`, projecting input X into the query weight matrix.
+  - Check [projection.py](_4_projection.py) for an exercise with deeper understanding
+  - [ ] A linear algebra notebook will be added soon covering most important operations
 - **Dot Product:** Similarity Measure, similar directions = similar meaning, represented as `@`
 
 <br>
