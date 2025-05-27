@@ -13,6 +13,7 @@ if __name__ == "__main__":
         num_encoder_layers=2,
         batch_size=64,
         smaller_dataset=False,
+        y_label="Y",
     )
 
     model = Transformer(config).to(config.device)  # noqa: F405
