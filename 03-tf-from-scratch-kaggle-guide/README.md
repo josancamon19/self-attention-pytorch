@@ -52,13 +52,19 @@ $
 
 **Concepts:**
 - **Projecting a vector:** map vector from n dim to n-m dim.
-  - dimensionality reduction (compressing information)
-  - Information transformation, emphasize some aspects, deemphasize others.
-  - Learning more foundational details, by reducing n-dim, projecting it to a smaller space, the model must figure out what's actually crucial features.
-  - Represented below as `X*W_Q`, projecting input X into the query weight matrix.
+  - This is just __matmul__, matrix multiplication
+  - This causes dimensionality transformation (generally reduction, or compressing information)
+  - Information transformation = as X is changing it's dimension space, it's moving it's meaning to this space, generally being forced to compress it's features.
+  - `X*Y` projected, means X is being moved into the `Y` dimensionality space.
+  - I'll represent it below as `X*W_Q`, projecting input X into the query weight matrix.
+    - `X` is being transformed by `W_Q`, or `X` is being projected into the Query space.
+    - Analogy `W_Q`=lens, `X`=scene, `Q`=photo, lens never change, but photo is the scene via the lens used.
   - Check [projection.py](_4_projection.py) for an exercise with deeper understanding
-  - [ ] A linear algebra notebook will be added soon covering most important operations
 - **Dot Product:** Similarity Measure, similar directions = similar meaning, represented as `@`
+
+<br>
+
+- [ ] A linear algebra notebook will be added soon covering most important operations
 
 <br>
 
@@ -368,8 +374,6 @@ V = [
 
 ### Next steps
 - [ ] Dimensionality changes over the whole input output confuse me a lot.
-- [ ] When creating the embeddings, a portion of it represents different things, can that be *interpreted*, like 1/8th
-- [ ] Further understand positional encoding, and source code in depth
 - [ ] Transformer.params() tells how many params has at each layer.
 
 <br>
