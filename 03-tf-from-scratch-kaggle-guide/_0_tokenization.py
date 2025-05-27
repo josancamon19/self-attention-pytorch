@@ -32,7 +32,13 @@ def tokenize_input(
     add_logs: bool = False,
     max_length: int = 100,
     return_tensors: str | None = "pt",
+    custom_tokenizer: AutoTokenizer | None = None,
 ):
+    if custom_tokenizer is None:
+        tokenizer = AutoTokenizer.from_pretrained(model_ckpt)
+    else:
+        tokenizer = custom_tokenizer
+
     input_sequence = tokenizer.encode_plus(
         input_text,
         return_tensors=return_tensors,  # pytorch tensors instead of list

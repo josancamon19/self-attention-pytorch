@@ -4,6 +4,7 @@ import numpy as np
 import sys
 import os
 from torch.utils.data import DataLoader
+from transformers import AutoTokenizer
 
 sys.path.append(
     os.path.abspath(
@@ -22,6 +23,8 @@ def get_model_config_and_data_loaders(
     train_path: str,
     test_path: str,
     max_tokens: int = 100,
+    custom_tokenizer: AutoTokenizer | None = None,
+    y_label: str = "label",
     embedding_dimensions: int = 128,
     num_attention_heads: int = 8,
     hidden_dropout_prob: float = 0.3,
@@ -36,7 +39,6 @@ def get_model_config_and_data_loaders(
     else:
         train_df = pd.read_csv(train_path)
         test_df = pd.read_csv(test_path)
-    
 
     config = {
         "vocab_size": tokenizer.vocab_size,
@@ -51,7 +53,12 @@ def get_model_config_and_data_loaders(
     config = Config(config)
 
     def _tokenize(row, max_length):
-        return tokenize_input(row["text"], max_length=max_length, return_tensors=None)
+        return tokenize_input(
+            row["text"],
+            max_length=max_length,
+            return_tensors=None,
+            custom_tokenizer=custom_tokenizer,
+        )
 
     train_df["tokenized"] = train_df.apply(
         lambda row: _tokenize(row, config.max_tokens), axis=1
@@ -65,8 +72,8 @@ def get_model_config_and_data_loaders(
     print()
     print(train_df.head())
 
-    train_dataset = TextDataset(train_df["tokenized"], train_df["Y"])
-    test_dataset = TextDataset(test_df["tokenized"], test_df["Y"])
+    train_dataset = TextDataset(train_df["tokenized"], train_df[y_label])
+    test_dataset = TextDataset(test_df["tokenized"], test_df[y_label])
 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)

@@ -1,5 +1,7 @@
 import pandas as pd
 import json
+
+from transformers import AutoTokenizer
 from _0_shared import *  # noqa: F403, F401
 import torch
 
@@ -81,35 +83,80 @@ def parse_dataset(df: pd.DataFrame) -> pd.DataFrame:
             rows.append(
                 (
                     f"[SCORE:{score}] [SCORE_DELTA:{score_delta}] [SEASON:{season}] {sender_name} to {receiver_name}: {message}",
-                    sender_label,
+                    int(sender_label),  # 0,1
                 )
             )
-            break
     return pd.DataFrame(rows, columns=["text", "label"])
 
 
+def _compute_max_length(
+    tokenizer: AutoTokenizer,
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+) -> int:
+    max_length = 0
+    full_data = pd.concat([train_df, test_df])
+    for index, row in full_data.iterrows():
+        tokenized = tokenizer.encode(row["text"])
+        if len(tokenized) > max_length:
+            max_length = len(tokenized)
+
+    print(f"Max length: {max_length}")
+    return max_length
+
+
+def _get_custom_tokenizer():
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+
+    max_tokens = 420  # 4.2x the previous one will be a lot, prob can't train here.
+    # max_length = _compute_max_length(tokenizer, train_df, test_df)
+
+    special_tokens = []
+    for score in range(19):
+        special_tokens.append(f"[SCORE:{score}]")
+    for delta in range(-18, 19):
+        special_tokens.append(f"[SCORE_DELTA:{delta}]")
+
+    seasons = ["Spring", "Fall", "Winter"]
+    for season in seasons:
+        special_tokens.append(f"[SEASON:{season}]")
+
+    # tokenizer.add_special_tokens({"additional_special_tokens": special_tokens})
+    # TODO: Adding special tokens causes issues with Embedding matrix, why?
+
+    return tokenizer, max_tokens
+
+
 if __name__ == "__main__":
-    train_df = load_dataset("04-practice/_2_data/test.jsonl")
-    test_df = load_dataset("04-practice/_2_data/test.jsonl")
+    base_path = "04-practice/_2_data/"
+    train_df = load_dataset(f"{base_path}/train.jsonl")
+    test_df = load_dataset(f"{base_path}/test.jsonl")
 
     train_df = parse_dataset(train_df)
     test_df = parse_dataset(test_df)
+    train_df.to_csv(f"{base_path}/train.csv", index=False)
+    test_df.to_csv(f"{base_path}/test.csv", index=False)
 
-    print("Train [rows, cols]:", train_df.shape)
-    print("Val [rows, cols]:", test_df.shape)
-    print()
-    print(train_df.head())
+    tokenizer, max_tokens = _get_custom_tokenizer()
 
-    # TODO: determine max_length param, to check tokens
-    # TODO: implement tokenizer again, add special tokens
-    # special_tokens = ['[SCORE:0]', '[SCORE:1]', ..., '[WINNING]', '[LOSING]', ...]
-    # Create all score tokens (0-18), delta, season, sender / receiver?
-    # TODO: set up config
-    # TODO: set up Transformer, classifier output?
-    # TODO: BCELoss expects probabilities, but your classifier outputs logits
-    # Hint: Either:
-    # - Use a different loss function that expects raw logits
-    # - Or add sigmoid activation to your classifier output
-    # Think about which is more standard for classification
-    # TODO: train
-    
+    config, train_dataloader, val_dataloader = get_model_config_and_data_loaders(  # noqa: F405
+        train_path=f"{base_path}/train.csv",
+        test_path=f"{base_path}/test.csv",
+        max_tokens=max_tokens,
+        custom_tokenizer=tokenizer,
+        y_label="label",
+    )
+    model = Transformer(config).to(config.device)  # noqa: F405
+    loss_function = torch.nn.BCELoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+    train(  # noqa: F405
+        config,
+        model,
+        loss_function,
+        optimizer,
+        train_dataloader,
+        val_dataloader,
+        n_epochs=10,
+        name_model="best_model_2",
+    )
