@@ -378,32 +378,33 @@ V = [
     - bigger, more learnings, harder to train, if dataset is small, risk overfitting.
 - **Dimensionality changes are confusing**:
   > This will not make it clearer, but it's an attempt. Maybe I'll understand it when I go through this later. 
+  - Initializing variables
+    - **batch_size**: inputs to be processed in paralle through the network (a single backpropagation turn is made for 1 batch). Let's assume is `1` for now.
+    - **embedding_dimension**: key parameter of the architecture, let's set it to `128`.
+    - **vocab_size:** tokenizer vocabulary size, lookup of input: integer. let's set it to `30000`
+    - **max_length**: how many tokens can your model receive as input, bigger, more computation, let's set it to `100` (this also refers to input_sequence_length, we just pad/trim) 
+    - **num_heads:** purpose of exercise. `8`.
   - input string sequence
-  - **tokenizer** converts to a list of integers `[sequence_length]`
-  - **batch_size** is just processing inputs in parallel through the network (a single backpropagation turn is made)
-  - now we have `[batch_size, sequence_length]`
-  
-  - **Embedding** layer shape: `[tokenizer_vocab_size, embedding_dim]` this is a lookup table, not a matmul, so output here is `[batch_size, sequence_length, embedding_dim]`, we just add the embedding dimension
-  - **pos_encoding** layer shape: `[max_token_length, 1, embedding_dim]`, this is just  modifying our token embeddings to give them a position signal. So output remains the same as above. `[batch_size, sequence_length, embedding_dim]`
-  - **head_dim** = embedding_dim/num_heads
+  - **tokenizer** batch is converted to a list of integers of max_length `[1, 100]`
+  - **Embedding** layer shape: `[30000, 128]` this is a lookup table, not a matmul, so output here is `[1, 100, 128]`, we just add the embedding dimension
+  - **pos_encoding** layer shape: `[100, 1 (no related to batch), 128]`, this is just  modifying our token embeddings with a sum to give them a position wave signal. So output remains the same as above. `[1, 100, 128]`
+  - **head_dim** = embedding_dim/num_heads = 128/8 = `16`
   - **Attention:**
-    - `W_Q/W_K/W_V` shape: `[head_dim, embedding_dim]`
-    - After taking `pos_encoding_output @ W_Q/K/V`, we get `Q,K,V`
-      - or `[batch_size, sequence_length, embedding_dim]` @ `[batch_size, head_dim, embedding_dim]`
-    - So `Q,K,V` shape is: `[batch_size, sequence_length, head_dim]`
-    - `K^T` = .transpose(1,2), switches e.g. from [1, 6, 16] to [1, 16, 6]
+    - `W_Q/W_K/W_V` shape: `[head_dim, embedding_dim]` `[16, 128]`
+    - After taking `pos_encoding_output @ W_Q/W_K/W_V`, we get `Q,K,V`
+      - Each operation being of shape: `[1, 100, 128] @ [16, 128].T`
+    - So `Q,K,V` shape is: `[1, 100, 16]`
+    - `K^T` = .transpose(1,2), switches e.g. from `[1, 100, 16]` to `[1, 16, 100]`
     - Q * K^T 
-      - `[batch_size, sequence_length, head_dim]` * `[batch_size, head_dim, sequence_length]`
-      - = `[batch_size, sequence_length, sequence_length]`
+      - `[1, 100, 16]` * `[1, 16, 100]` = `[1, 100, 100]`
       - here we do `softmax` and get `attention_weights`
-    - **attention_weights** `* V` shape is:  `[batch_size, sequence_length, sequence_length]` * `[batch_size, sequence_length, head_dim]` = `[batch_size, sequence_length, head_dim]`
-    - `W_O` = input is concat of each head output at `-1` dim = `[batch_size, sequence_length, concatenate (head_dim, num_heads times)]`
-      - refreshing: `head_dim` is `embedding_dim/num_heads`
-      - Final output is `[batch_size, sequence_length, embed_dim]`
-  - residual layer doens't change dimensions
-  - FFN
-  - Final classifier output
-  - each layer has now implemented `.get_dimensions()`
+    - **attention_weights** `* V` shape is:  `[1, 100, 100]` * `[1, 100, 16]` = `[1, 100, 16]`
+    - `W_O` = input is concat of each head output at `-1` dim = `[1, 100, 16+16+16+16+16+16+16+16]`
+      - Final output is `[1, 100, 128]`
+  - **residual layer** doens't change dimensions.
+  - **FFN pos wise**: just a linear classifier, usually hidden layer has `*4` embedding_dim, then shrinks back to embedding_dim. Output is still `[1, 100, 128]`
+  - **Final classifier** output: scales `*4` again, but output layer has the # of options to be classified, e.g. positive | negative, 2 options, making a probability distribution, you take the neuron with the highest score, that's your output.
+  - Use `Transformer.get_dimensions()` to get the traces.
 <br>
 - [ ] understand the logic on matmul/dot on n dimensions > 2
 
