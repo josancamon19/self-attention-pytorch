@@ -41,7 +41,7 @@ def predict(text, config, model=None, debug=False):
 if __name__ == "__main__":
     from _1_config import config
 
-    model = load_model(config, "03-tf-from-scratch-kaggle-guide/best_model.pt")
+    model = load_model(config, "02-transformers-from-scratch/best_model.pt")
     texts = [
         "Our Deeds are the Reason of this #earthquake May ALLAH Forgive us all",  # 1
         "Just got sent this photo from Ruby #Alaska as smoke from #wildfires pours into a school",  # 1

@@ -6,8 +6,8 @@ from _0_shared import *  # noqa: F403, F401
 
 if __name__ == "__main__":
     config, train_dataloader, val_dataloader = get_model_config_and_data_loaders(  # noqa: F405
-        train_path="04-practice/_1_data/train.csv",
-        test_path="04-practice/_1_data/test.csv",
+        train_path="03-practice/_1_data/train.csv",
+        test_path="03-practice/_1_data/test.csv",
         max_tokens=100,
         embedding_dimensions=128,
         num_attention_heads=8,
@@ -19,6 +19,8 @@ if __name__ == "__main__":
     )
 
     model = Transformer(config).to(config.device)  # noqa: F405
+    print(model.get_dimensions())
+    breakpoint()
     loss_function = torch.nn.BCELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 

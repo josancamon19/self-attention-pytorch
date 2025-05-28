@@ -11,8 +11,8 @@ from _10_dataloader import TextDataset
 
 
 train_path, test_path = (
-    "03-tf-from-scratch-kaggle-guide/data/train.csv",
-    "03-tf-from-scratch-kaggle-guide/data/test.csv",
+    "02-transformers-from-scratch/data/train.csv",
+    "02-transformers-from-scratch/data/test.csv",
 )
 df = pd.read_csv(train_path, index_col=0, usecols=["id", "text", "target"])
 train_df, val_df = train_test_split(df, test_size=0.2, random_state=42)
@@ -147,7 +147,7 @@ def train():
                             "epoch": epoch,
                             "step": i,
                         },
-                        "03-tf-from-scratch-kaggle-guide/best_model.pt",
+                        "02-transformers-from-scratch/best_model.pt",
                     )
                     print(
                         f"New best model saved with validation accuracy: {val_accuracy:.3f}"

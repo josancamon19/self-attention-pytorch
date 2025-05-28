@@ -8,7 +8,7 @@ from transformers import AutoTokenizer
 
 sys.path.append(
     os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "../03-tf-from-scratch-kaggle-guide")
+        os.path.join(os.path.dirname(__file__), "../02-transformers-from-scratch")
     )
 )
 

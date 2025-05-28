@@ -2,7 +2,7 @@
 ### Testing as a Learning tool
 https://pmc.ncbi.nlm.nih.gov/articles/PMC6920642/
 
-> based on @03-tf-from-scratch-kaggle-guide help me learn by doing "testing as a learning tool", generate 10 questions that can test my foundational knowledge of this that and show if I have a knowledge tree of understanding. Be very thoughtful on what matters, be brief.
+> based on @02-transformers-from-scratch help me learn by doing "testing as a learning tool", generate 10 questions that can test my foundational knowledge of this that and show if I have a knowledge tree of understanding. Be very thoughtful on what matters, be brief.
 
 <br>
 

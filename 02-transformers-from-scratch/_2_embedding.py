@@ -19,10 +19,16 @@ class TokenEmbedding(nn.Module):
 
     def forward(self, tokenized_sentence):
         return self.token_embedding(tokenized_sentence)
+    
+    def get_dimensions(self):
+        # (vocab_size, embedding_dim)
+        return self.token_embedding.weight.size()
 
 
 def embed(input_sequence: torch.Tensor, add_logs: bool = False):
     token_embedding = TokenEmbedding(config).to(config.device)
+    print(f"Token embedding dimensions: {token_embedding.get_dimensions()}")
+    return
     embedding_output = token_embedding(input_sequence)
     if add_logs:
         print("embed:Shape of output:", embedding_output.size())

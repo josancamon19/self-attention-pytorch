@@ -21,3 +21,9 @@ class ClassifierHead(nn.Module):
         x = self.relu(self.linear1(x))
         x = self.linear2(x)
         return torch.sigmoid(x)  # Sigmoid activation for binary classification
+
+    def get_dimensions(self):
+        return [
+            self.linear1.weight.size(),
+            self.linear2.weight.size(),
+        ]
