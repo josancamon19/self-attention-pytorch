@@ -1,8 +1,9 @@
 # Transformers From Scratch Kaggle Notebook
 
-Starting: https://www.kaggle.com/code/auxeno/transformers-from-scratch-dl
-Then just finding loopholes in understanding and asking claude.
-Also went through https://jalammar.github.io/illustrated-transformer/ here, specially to understand better pos encoding, but didn't learn anything new.
+- Starting: https://www.kaggle.com/code/auxeno/transformers-from-scratch-dl
+- Then just finding loopholes in understanding and asking claude.
+- Also went through https://jalammar.github.io/illustrated-transformer/ here, specially to understand better pos encoding, but didn't learn anything new.
+- "Hands on LLM OReilly" - has ton's of great content, no great exp for positional encoding.
 
 ### Basics
 - Before Transformers, you did LSTM's (RNN), for processing sequential data.
@@ -384,6 +385,17 @@ Quoting my explanation above:
 <br>
 
 ### Inference
+
+<br>
+
+<br>
+
+### Interpretability and Visualizing
+- Take a model, and view/interpret what each head is learning about language
+- Tried inspectus and bertviz [_12_interpretability.py](_12_interpretability.py)
+- What's Q "asking", K "providing", V "representing"?
+- How's W_O mixing each head
+- What complex patterns is FFN learning, can neurons be traced? 
 
 <br>
 
