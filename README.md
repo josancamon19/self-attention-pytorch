@@ -4,7 +4,33 @@
 
 [Goal and resources](https://docs.google.com/document/d/1W6N9xQ3Giz7lK243EkP5GBJQu9cSSzHr-P5A7oRb7Eo/edit?usp=sharing).
 
-Each word here was thought, not generated.
+Each word here was thought, not generated. 
+
+### Table of Contents
+
+- [Mastering Transformers](#mastering-transformers)
+    - [Table of Contents](#table-of-contents)
+    - [Basics](#basics)
+      - [Transformer's vs LSTM's](#transformers-vs-lstms)
+  - [Encoder Architecture](#encoder-architecture)
+      - [Each Section Briefly Explained](#each-section-briefly-explained)
+    - [Transformer Attention Details](#transformer-attention-details)
+      - [Basics of Q,K,V Matrices](#basics-of-qkv-matrices)
+      - [Formula Part 1](#formula-part-1)
+      - [Formula Part 2](#formula-part-2)
+    - [Residual Layers (Add \& Norm)](#residual-layers-add--norm)
+    - [Position Wise FFN](#position-wise-ffn)
+    - [FAQ](#faq)
+    - [Positional Encoding \& Embeddings](#positional-encoding--embeddings)
+  - [Training](#training)
+    - [Inference](#inference)
+    - [Interpretability and Visualizing](#interpretability-and-visualizing)
+    - [Why of Architectural Decisions](#why-of-architectural-decisions)
+  - [Decoder Architecture](#decoder-architecture)
+    - [Next steps](#next-steps)
+
+
+
 
 ### Basics
 - **Before Transformers**, you used LSTM's (RNN's) for processing sequential data.
@@ -70,7 +96,7 @@ $
 
 <br>
 
-**Basics of Q,K,V Matrices**
+#### Basics of Q,K,V Matrices
 - **Query (Q):** "What am I looking for?"
 - **Key (K):** "What can I be matched against?"
 - **Value (V):** "What actual information do I contain?"
@@ -92,7 +118,7 @@ Prefix `W`, refers to weights (trainable parameters).
 
 **V**: "As `V_$word`, this is the information I'll contribute when someone pays attention to me". e.g. `W_V` learns to extract the most useful information from each token - semantic meaning, grammatical role, contextual features, etc.
 
-**Formula Part 1:**
+#### Formula Part 1
 
 $(Q K^\top)$    - `Q @ K^T`
 
@@ -143,7 +169,7 @@ attention_scores = [
 <br>
 
 
-**Formula Part 2**
+#### Formula Part 2
 
 $
 \mathrm{softmax}\left(\frac{Part 1}{\sqrt{d_k}}\right) V
@@ -242,21 +268,22 @@ V = [
   - Unstable traninig, huge gradients some, other tiny ones, activations functions to extremes, model doesn't find good learning rates.
   - Allows to stack multiple layers reliably
 
+<br>
 
 ### Position Wise FFN
 ![ffn_pos_wise](images/ffn_pos_wise.png)
-- So attention gave us a new representation for each token, having moved the embedding space and having paid attention to each other token correspondingly. We found patterns accross tokens and put the information in it
+- So attention gave us a new representation for each token, having moved it's embedding space position and having paid attention to each other token correspondingly. We found patterns accross tokens and put the information in it.
 - Attention gave linear relationships between tokens, **but**, the magic of nn's is in their non-linearity, ffn give us this non linearity, which means more complex patterns.
-- The ffn now takes those vectors, and understand what each token (after attention mod) means further.
+- The ffn now takes those vectors, and understand what each token (after attention modified them) means further.
 - what complex meanings emerge after the vector modifications.
   - finding idioms, physical structures, attention heads give us semantic understanding, ffn finds patterns that emerge from semanticness.
 
 **So, wtf is Linearity**
 - A function is linear if: f(ax + by) = af(x) + bf(y)
-  - predictable proportional behavior, scale input by 2, output scales by 2, add 2 inputs, outp   uts add
+  - predictable proportional behavior, scale input by 2, output scales by 2, add 2 inputs.
 - Linear functions can scale (stretch/shrink), rotate, project, combine (weighted sums), cannot create curves, make "if-then" decisions, separate complex patterns.
 - Basically all our attention operations are linear, `@` and `*` and `sqrt`
-- Why is FFN non linear?
+- Why is `FFN` non linear?
   - example
     ```python
     def ffn(x):
@@ -265,15 +292,15 @@ V = [
       x = linear2(x)        # Linear: compress back
       return x
     ```
-- some used non linear functions are GELU, RELU, Tanh, Sigmoid.
+- some used non linear functions are `GELU`, `RELU`, `Tanh`, `Sigmoid`.
 - ok but why a non-linear func (curves is clear), but decision boundaries, regions, complex patterns, how does this translates?
-  - I think I got it 
-    - try to think in a 512 dim space, it's hard, but try. In here geometric regions correspond to semantic spaces.
+  - **I think I got it**
+    - try to think in a 512 dim space, it's hard, but try. In here geometric regions correspond to semantic spaces. Correspond to if/then decisions.
   - so if you make a line separation, there's just so many rules you can make, color | animals, but not deeper at idioms, or real reference to animals.
   - a subtle change in the inputs will have a much different representation, non-linear \:)
-- x^2, or e^x are those non linear? yes, [use logic above to prove it] why don't we use them then?
-  - x^2 is always postive, no negative info, gradient issues, dx/dd=2x, at x=0, gradient=0, dead neurons, large x explodes, has no off states, only 0.
-  - e^x, explodes, always positive, huge gradients
+- `x^2`, or `e^x` are those non linear? yes, [use logic above to prove it] why don't we use them then?
+  - `x^2` is always postive, no negative info, gradient issues, `dx/dd=2x`, at `x=0`, gradient=0, dead neurons, large x explodes, has no off states, only 0.
+  - `e^x`, explodes, always positive, huge gradients
 - but, we could in theory use them, and they could represent complex patterns, they are just not as good.
 
 <br>
@@ -325,7 +352,11 @@ V = [
     ```python
     head_1 = [0.2, 0.8, 0.1, 0.9]  # Maybe focuses on syntax
     head_2 = [0.7, 0.3, 0.6, 0.2]  # Maybe focuses on semantics  
-    Head_3 = [0.1, 0.5, 0.8, 0.4]  # Maybe focuses on position
+    head_3 = [0.1, 0.5, 0.8, 0.4]  # Maybe focuses on position
+    # concat = [head_1, head_2, head_3] # (1x12)
+    # linear_layer_shape = 12x4
+    # output of concat @ linear_layer = (1x4)
+    # effectively combining the multiple heads outputs
     ```
   - concatenate, put outputs side by side, in a single vector.
   - add a linear layer that combines all, learns to take 30% from h1 (syntax), 50% h2 (semantics), and so on
@@ -334,7 +365,8 @@ V = [
   - 1 complete encoder block: (mha - residual - ffn - residual), gpt 3 has 96 blocks.
   - 1 attention layer, means the mha layer in the block.
   - how many to stack together?
-    - empirical scalling laws, chinchilla slcaling laws, common existing sizes
+    - empirical scalling laws, chinchilla scaling laws, common existing sizes
+    - [ ] Further writing about this is required
     - bigger, more learnings, harder to train, if dataset is small, risk overfitting.
 
 
