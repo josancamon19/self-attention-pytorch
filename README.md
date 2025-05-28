@@ -1,64 +1,68 @@
 # Mastering Transformers
 
+> Mastering Transformers in 60 days, and becoming an AI Researcher.
+
+[Goal and resources](https://docs.google.com/document/d/1W6N9xQ3Giz7lK243EkP5GBJQu9cSSzHr-P5A7oRb7Eo/edit?usp=sharing).
+
+Each word here was thought, not generated.
 
 ### Basics
-- Before Transformers, you did LSTM's (RNN), for processing sequential data.
-- LSTMs forget on long sequences + training is sequential, not parallelizable
-- Transformers solve this, highly scalable/parallel, each "Head" goes independent
-- There are 3 types, Encoder, Decoder, Encoder<>Decoder
-- Encoder Only = inputs into rich numerical representations (embeddings), attends to tokens at n-i and at n+1, so the whole input sequence. Creates a network with deep understanding of the sequential data, then you can either use that to create embeddings of inputs, or add a classifier head (MLP) that can do sentiment analysis for example.
-- Decoder Only = Next Token Prediction, attends previous tokens only, not the ones further (masking).
-- Encoder + Decoder = 1) generates embeddings representations (no classifier layer), 2) autoregressively outputs tokens. Used in Translation, Summarization, STT, MultiModal.
+- **Before Transformers**, you used LSTM's (RNN's) for processing sequential data.
+- issue with **LSTMs**: They forget on long sequences + training is sequential, not parallelizable, hard to scale. (Though, [RWKV](https://wiki.rwkv.com/) is starting to solve this)
+- **Transformers** solved this, being highly scalable/parallel, each "Attention Head" process separately, as well as each input token.
+- **Attention:** How much each token/word in the input needs to "pay attention" to each other, like how much the meaning of token n changes based on all other tokens in the sequence.
+- 3 types of Transformers architectures, Encoder, Decoder, Encoder<>Decoder.
+- **Encoder Only** = n token pays attention to n-1 and n+1 (all the input tokens), output can be a simple classifier layer on top. Used on tasks where language input classificationis needed. (Not generation)
+- **Decoder Only** = n token only pays attention to n-1 tokens, previous ones, "autoregressive generation", GPT like.
+- **Encoder <> Decoder** = Encoder generates part of attention (lookup table), Decoder uses it to map it's inputs into a transformed output. Used in Translation, Summarization, STT, MultiModal.
 
 <br>
 
-#### Transformer's vs LSTM's (Attention)
-Yea, LSTM's already had an attention component, here are the differences:
-| Aspect            | LSTM Attention                      | Transformer Self-Attention           |
-| ----------------- | ----------------------------------- | ------------------------------------ |
-| Processing Order  | Sequential (word-by-word)           | Parallel (all words simultaneously)  |
-| Dependencies      | Each step depends on previous steps | All positions computed independently |
-| Memory Bottleneck | Fixed-size encoder summary vector   | Direct access to all positions       |
-| Parallelization   | Limited due to sequential nature    | Highly parallelizable                |
+#### Transformer's vs LSTM's
+- Section requires better understanding of LSTM's vs Transformers
+- Specially LSTM's attention.
+
+<br>
+<br>
 
 ## Encoder Architecture
 
 ![encoder](images/encoder.png)
 
-- **Input embedding:** input is tokenized (int) (each token/word is converted into vectors), then a dict of token: embedding vectirs is made
-- **Positional encoding:** provide the attention layer with position of each token (in LSTM's this information is known by default cause the proces is sequential, not in Transformers attention), is not because row order can't be traced, but attention is computed in parallel and only from embeddings, we need to insert the position in the embedding, so attention can understand, noun comes before subject, or things like that.
-- **Multi-Head self-attention:** each token looks at all other tokens to improve it's context understanding moving the vector to a different space, multi-head, means each head learns different relationships, syntax/semantics/verbs. In decoder-only, word n, would only look at prev words [0, n-1].
-  - During training it learns where to look for information with `W_Q`, `W_K`, `W_V`.
-- **Add & Norm / Residual:** add the original input tokens to the Attention layer output, helps preventing vanishing gradient problem + normalization.
-- **Feed forward pos wise:** Learns complex patterns out of Attention Layer, each token is processed individually, which means pos is kept. (Thanks to non-linearity)
-- Output **Linear+softmax** (it depends):
-  - Wouldn't be needed if you want a model that takes an input and outputs the embeddings, as we already have the semantic understanding.
-  - If the task is classsification, output neurons depend on # of options.
-  - Linear layer: translates encoder understanding into the expected output
-  - Softmax: simply converts into a weighted sum.
+#### Each Section Briefly Explained
+
+- **Input embedding:** input is tokenized (int) (each token/word is mapped to an int), then each token is expanded to an `embedding` vector that later learns to represent the token in more detail.
+- **Positional encoding:** provide the attention layer with position of each token (in LSTM's this information is known by default cause the proces is sequential, not in Transformers attention), is not because row order can't be traced throughout matrix operations, but attention is computed in parallel and only from embeddings, we need to insert the position in the embedding, so attention can understand, noun comes before subject, or things like that. This is done via sin/cos waves patterns.
+- **Multi-Head self-attention:** Each token looks at all other tokens to improve it's context understanding moving the embedding vector to a different space with richer meaning, `multi-head`, means is done by multiple (smaller) matrices/heads, each one focusing on  different relationships, syntax/semantics/verbs. 
+- **Add & Norm / Residual:** add the original input tokens to the Attention layer output, helps preventing `vanishing gradient` problem + normalization.
+- **Feed forward pos wise:** Learns complex patterns out of Attention Layer, each token is processed individually, which means position is kept. This layer learns deeper individual tokens meanings. why? non-linearity the magic of Neural networks. Attention is linear operations, so in the semantic space it will be able to separate `animal | color`, this `FFN` understands `animal analogy` | `animal idiom` | `real animal`.
+- Output **Linear+softmax:** You use your network with language understanding layers to apply a basic nn to classify inputs. e.g. Sentiment analysis. Output neurons is a prob distribution `softmax` between "positive" "negative" "neutral".
 
 <br>
 
 <br>
 
-### Transformer Attention
+### Transformer Attention Details
 
 $
 \text{Attention}(Q, K, V) = \mathrm{softmax}\left(\frac{Q K^\top}{\sqrt{d_k}}\right) V
 $
 
 
-**Concepts:**
-- **Projecting a vector:** map vector from n dim to n-m dim.
-  - This is just __matmul__, matrix multiplication
-  - This causes dimensionality transformation (generally reduction, or compressing information)
-  - Information transformation = as X is changing it's dimension space, it's moving it's meaning to this space, generally being forced to compress it's features.
-  - `X*Y` projected, means X is being moved into the `Y` dimensionality space.
-  - I'll represent it below as `X*W_Q`, projecting input X into the query weight matrix.
-    - `X` is being transformed by `W_Q`, or `X` is being projected into the Query space.
-    - Analogy `W_Q`=lens, `X`=scene, `Q`=photo, lens never change, but photo is the scene via the lens used.
-  - Check [projection.py](_4_projection.py) for an exercise with deeper understanding
-- **Dot Product:** Similarity Measure, similar directions = similar meaning, represented as `@`
+**Prerequisites:**
+- **Vector Projection:** map vector from n dim to n-m dim.
+  - This is just `__matmul__`, matrix multiplication. X@Y
+  - This causes **dimensionality** transformation (generally reduction, or compressing information)
+  - **Information** transformation = as `X` is changing it's dimension space, it's moving it's meaning to `Y` dimension space, X is being forced to compress/transform it's features, and find the most relevant to represent itself at `Y`.
+  - `X @ Y` projected, means X is being moved into the `Y` dimensionality space.
+  - **Analogy** `Y`=lens, `X`=scene, `O`=photo, lens never change, but photo is the scene via the lens used.
+  - I'll represent it below as `X @ Y`,
+  - Example with `X @ W_Q`:
+    - `Q` Matrix above in the formula  is the result of `X @ W_Q`
+    - What is `W_Q` = a matrix with weights that we train (later explain what it means)
+    - Projecting input `X` into the query weight matrix means `X` (input token) is being transformed by `W_Q`, or `X` is being projected into the Query space.
+  - Check [projection.py](02-transformers-from-scratch/_4_projection.py) for an exercise with deeper understanding
+- **Dot Product:** Similarity Measure, similar directions = similar meaning, represented as `*`
 
 <br>
 
@@ -71,17 +75,20 @@ $
 - **Key (K):** "What can I be matched against?"
 - **Value (V):** "What actual information do I contain?"
 
-`Q,K,V = X*W_Q, X*W_K, X*W_V`.
-`n*m` Notation, means n projecting into m
-Suffix `W`, refers to weights (trainable parameters).
+`Q,K,V = X @ W_Q, X @ W_K, X @ W_V`.
+`n @ m` Notation, means n projecting into m
+Prefix `W`, refers to weights (trainable parameters).
+
+**X:**
+- Refers to input sequence.
+- Matrix with each row being the embedding vector of token i.
 
 **Q:**
 - `W_Q` (Query weights) get trained to create queries that find relevant information. So it develops like query templates.
-- `X` is the input matrix (tokens, [[],[],[]...]).
 - `X` is projecting into `W_Q`, which outputs `Q`. This `X*W_Q` is basically using `W_Q` learned ability to ask questions, to make it specific to the input vector, so `Q`, is the specific query each token/vector should look for.
-- Then e.g. `Q_$word` learns "I need to pay attention to: determiners, attributes, and predicates"
+- `W_Q` = "what do I need to pay attention to". `Q` says, as `Q_$word` "I need to pay attention to: determiners, attributes, and predicates"
 
-**K**: `W_K`, identity templates, `X*W_K` projection is `K`, which uses `W_K` learned ability to determine searchable params/features to make it specific to `X`. `k_$word` then says, this are the things I can be matched against / searched for, which based on ex above, it could be, I can be searched when trying to find nouns, adjectives, connectors, etc.
+**K**: `W_K`, identity templates, `X @ W_K` projection is `K`, which uses `W_K` learned ability to determine searchable params/features to make it specific to `X`. `k_$word` then says, this are the things I can be matched against / searched for, which based on the ex above, it could be, "I can be searched when trying to find nouns, adjectives, connectors", etc.
 
 **V**: "As `V_$word`, this is the information I'll contribute when someone pays attention to me". e.g. `W_V` learns to extract the most useful information from each token - semantic meaning, grammatical role, contextual features, etc.
 
@@ -89,21 +96,22 @@ Suffix `W`, refers to weights (trainable parameters).
 
 $(Q K^\top)$    - `Q @ K^T`
 
-- `K^T` Transpose, just to match dimensions for matrix multiplication.
-- `Q @` (dot product), computes similarity scores on queries/keys.
-- **Result:** An attention score matrix where entry (i,j) = "How much should token i attend to token j?"
-  - **why?**
-  - because we used queries (things that each token should look for), keys (identify things each token can be searched for), we know now based on similarity scores between things to search / things to be searched for, what things it should pay attention to
+- Here we already projected `X` into `W_Q`, `W_K`, giving us `Q`, `K`, which `Q` tells us for each token in `X`, this are the things I'm looking to pay attention to, and `K`  fo each token in `X`, this are the I can be searched for.
+- `K^T` Transpose, just to match dimensions for dot product to work.
+- `*` (dot product), computes similarity scores on queries/keys.
+- **Result:** A matrix known as `Attention Scores` where entry (i,j) = "How much should token i attend to token j?" **why/how?**
+  - because we used queries (things that each token should look for), keys (identify things each token can be searched for), we know now based on similarity scores between things to search / things to be searched for, what things it should pay attention to.
 
-The model discovers that:
+
+During training the model discovers that:
 - Nouns should attend to their modifiers
 - Adjectives should attend to what they modify
 - Verbs should attend to their arguments
 
 
-**Walkthrough of Part 1:**
+**Walkthrough:**
 ```python
-"The car is red"
+_input = "The car is red"
 
 # Q_the = "As 'the', I need to find: the noun I'm modifying"
 # Q_car = "As 'car', I need to find: my attributes, determiners, and related predicates" 
@@ -111,16 +119,17 @@ The model discovers that:
 # K_the = "I can be matched as: determiner/article pattern"
 # K_car = "I can be matched as: noun/subject/entity pattern"
 
+# (used later)
 # V_the = "I provide: definiteness, specificity signals"
 # V_car = "I provide: vehicle semantics, subject-entity information"
 
 similarity(Q_car, K_the) = HIGH   # car needs its determiner
 similarity(Q_car, K_is)  = HIGH   # car needs its predicate  
 similarity(Q_car, K_red) = HIGH   # car needs its attribute
-similarity(Q_car, K_car) = LOW    # less self-attention needed
+similarity(Q_car, K_car) = LOW    # most tokens have low attention to themselves
 
 
-attention_scores = Q @ K^T  # Shape: (4, 4)
+attention_scores = Q * K^T  # Shape: (4, 4)
 
 attention_scores = [
   [0.1, 0.8, 0.3, 0.2],  # How much "The" wants to attend to [The, car, is, red]
@@ -153,22 +162,30 @@ $
     # So each head works with 64-dimensional Q, K, V vectors
     ```
     - So dk is simply the size of each query/key vector, check more detail about attention heads in the FAQ below.
-  - Why `/√dk`: `Q @ K^T` dot product can be very large, large attention scores, causes extreme softmax, which means vanishing gradients. [ ] Requires more layman explanation.
-  - Statistical theory or smth, >> "If you have dk independent random variables, each with variance 1, their sum has variance dk. To keep the variance constant (around 1), you divide by √dk."
+  - Why `/√dk`: `Q @ K^T` dot product can be very large, large attention scores, causes extreme softmax, which means vanishing gradients
+  - [ ] Requires deeper understanding of variance in statistics.
+
+<br>
+  
 
 2.2 **Softmax**
-Once we have `Part1/√dk`, we apply `softmax` to get a weighted sum of % of attention each token should pay to each other, this are the `attention_weights`.
+Turns a bunch of values into a % that sum up to 1 (weighted sum).
+[Pytorch documentation](https://docs.pytorch.org/docs/stable/generated/torch.nn.Softmax.html)
 
-`attention_weights` **meaning:** "I want 40% of *car* info, 20% of *red* info, 30% of *is* info, 10% of *the* info"
+Once we have `Part1/√dk`, we apply a `softmax` to get a weighted sum of % of attention each token should pay to each other, this are the `attention_weights`.
 
-![pattern](images/attention-pattern.png)
+`attention_weights` **meaning:** as token "The", "I want 40% of *car* info, 25% of *red* info, 35% of *is* info.
 
-2.3. **Dot Product V**
-- Takes `attention_weights`, for each token checks how much information each want about every other, retrieves it from `V` and updates itself, moving it's semantic meaning depending.
-  - `V` matrix provides: The actual information packages to merge.
-  - Matrix multiplication creates: A new token vector that has the semantic representation of the whole sentence as it paid attention to each one of it and grabbed the key pieces.
-  - Each token has a new embedding representing all the things it paid attention to.
+- [ ] Include images of pattern generated by attention_viz_exercise.py 
 
+<br>
+
+2.3. **attention_weights \* V**
+- Using `attention_weights` (knowing how much attention to get from every other token), retrieves that information from `V`.
+  - `V` matrix provides: The actual information each token provides.
+  - **Output:** The input tokens but after paying attention to every other relevant token in the input sequence, which moved them around the embedding space to have a much richer contextual representation.
+
+<br>
 
 **Walkthrough:**
 ```python
@@ -183,7 +200,7 @@ attention_weights = [
 
 # skipping /square root of dk
 
-# attention_weights @ V
+# attention_weights * V
 
 V = [
   [0.1, 0.2, 0.3],  # V_the: determiner information
@@ -192,10 +209,10 @@ V = [
   [0.7, 0.2, 0.8]   # V_red: color/adjective information
 ]
 
-# softmax(Q@K^T) @ V
+# softmax(Q * K^T) * V
 ```
 
-> **The final result is:** we mutate/move each token around the semantic space based on the other tokens it needs to attend to, having a deeper meaning of its representation in the whole input sequence.
+> **The final result is:** we mutate/move each token around the semantic space based on the other tokens it needs to attend to, updating each token to a deeper meaning of its representation in the whole input sequence.
 
 <br>
 <br>
@@ -204,9 +221,9 @@ V = [
 ![residual](images/residual.png)
 - **Add**:
   - `MultiHeadAttention(pos_enc_input) + pos_enc_input`
-  - each layer outputs the same tokens, but with it's learned changes, modified vector space, we add that to the original embeddings.
+  - The attention layer outputs the input tokens but with it's learned changes, having modified vector space, we take that and add the initial positional_encoded_input.
   - why?
-    - vanishing gradient problem on deep nn
+    - vanishing gradient problem on deep neural networks.
     - but also don't make huge changes right away (stabilization)
     - helps preserve information, original input is not completely changed.
   - so it's like adding the new insights into the initial token embedding
