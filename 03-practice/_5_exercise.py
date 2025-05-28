@@ -1,1 +1,1 @@
-# TODO: create an embedding output model, no classifier
+# TODO: potentially solve a problem that requires a Transformer Encoder as part of another architecture, not the only thing.

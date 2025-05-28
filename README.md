@@ -388,7 +388,7 @@ V = [
 
 ![positional](images/positional-encoding.png)
 
-> so confusing (positional encoding)
+> so confusing
 
 - [ ] A more in depth analysis of sin/cos + refresh on its meaning is needed
 - [ ] I'm still not fully grasping this
@@ -453,6 +453,7 @@ Quoting my explanation above:
 - What's Q "asking", K "providing", V "representing"?
 - How's W_O mixing each head
 - What complex patterns is FFN learning, can neurons be traced? 
+- https://colab.research.google.com/github/tensorflow/tensor2tensor/blob/master/tensor2tensor/notebooks/hello_t2t.ipynb
 
 <br>
 

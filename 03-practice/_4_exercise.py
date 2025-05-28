@@ -1,1 +1,1 @@
-# TODO: make the current Transformer to act as decoder as well (toggle params)
+# TODO: create an embedding output model, no classifier

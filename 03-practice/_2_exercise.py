@@ -179,6 +179,7 @@ if __name__ == "__main__":
     #                         Val Loss: 0.34          Val Accuracy: 0.912
     
     # data imbalance? the model now is simply predicting the majority?
+    # TODO: Explore dataset first, brainstorm some possible reasons for this issue.
     # learning rate too high, makes the model answer always the majority class
     # check if the data is mostly truthful or deceptive
     # different loss function? 
