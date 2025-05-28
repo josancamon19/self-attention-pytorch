@@ -6,28 +6,6 @@
 
 Each word here was thought, not generated.
 
-<div style="background: #fff3cd; color: #856404; border: 2px solid #ffeeba; border-radius: 8px; padding: 24px; margin: 24px 0; font-size: 2em; text-align: center;">
-  <strong>🚨 <span id="days-until"></span> Days Remaining 🚨</strong>
-</div>
-
-<script>
-(function() {
-  // Target date: July 25, 2025
-  var target = new Date('2025-07-25T00:00:00Z');
-  // Get today's date (UTC, no time)
-  var now = new Date();
-  var nowUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  // Calculate difference in milliseconds
-  var diff = target - nowUTC;
-  // Convert to days
-  var days = Math.ceil(diff / (1000 * 60 * 60 * 24));
-  // If past, show 0
-  if (days < 0) days = 0;
-  document.getElementById('days-until').textContent = days;
-})();
-</script>
-
-
 
 ### Table of Contents
 
