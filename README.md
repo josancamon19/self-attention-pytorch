@@ -14,20 +14,22 @@ Each word here was thought, not generated.
       - [Transformer's vs LSTM's](#transformers-vs-lstms)
   - [Encoder Architecture](#encoder-architecture)
       - [Each Section Briefly Explained](#each-section-briefly-explained)
-    - [Transformer Attention Details](#transformer-attention-details)
+    - [Attention Details](#attention-details)
       - [Basics of Q,K,V Matrices](#basics-of-qkv-matrices)
       - [Formula Part 1](#formula-part-1)
       - [Formula Part 2](#formula-part-2)
     - [Residual Layers (Add \& Norm)](#residual-layers-add--norm)
+      - [Add](#add)
+      - [Norm](#norm)
     - [Position Wise FFN](#position-wise-ffn)
     - [FAQ](#faq)
-    - [Positional Encoding \& Embeddings](#positional-encoding--embeddings)
-  - [Training](#training)
-    - [Inference](#inference)
-    - [Interpretability and Visualizing](#interpretability-and-visualizing)
-    - [Why of Architectural Decisions](#why-of-architectural-decisions)
   - [Decoder Architecture](#decoder-architecture)
-    - [Next steps](#next-steps)
+  - [Positional Encoding \& Embeddings](#positional-encoding--embeddings)
+  - [Training](#training)
+  - [Inference](#inference)
+  - [Interpretability and Visualizing](#interpretability-and-visualizing)
+  - [Arguing Architectural Decisions](#arguing-architectural-decisions)
+  - [Tasks](#tasks)
 
 
 
@@ -40,7 +42,7 @@ Each word here was thought, not generated.
 - 3 types of Transformers architectures, Encoder, Decoder, Encoder<>Decoder.
 - **Encoder Only** = n token pays attention to n-1 and n+1 (all the input tokens), output can be a simple classifier layer on top. Used on tasks where language input classificationis needed. (Not generation)
 - **Decoder Only** = n token only pays attention to n-1 tokens, previous ones, "autoregressive generation", GPT like.
-- **Encoder <> Decoder** = Encoder generates part of attention (lookup table), Decoder uses it to map it's inputs into a transformed output. Used in Translation, Summarization, STT, MultiModal.
+- **Encoder <> Decoder** = Encoder generates part of attention (lookup table), Decoder uses it to map its inputs into a transformed output. Used in Translation, Summarization, STT, MultiModal.
 
 <br>
 
@@ -59,7 +61,7 @@ Each word here was thought, not generated.
 
 - **Input embedding:** input is tokenized (int) (each token/word is mapped to an int), then each token is expanded to an `embedding` vector that later learns to represent the token in more detail.
 - **Positional encoding:** provide the attention layer with position of each token (in LSTM's this information is known by default cause the proces is sequential, not in Transformers attention), is not because row order can't be traced throughout matrix operations, but attention is computed in parallel and only from embeddings, we need to insert the position in the embedding, so attention can understand, noun comes before subject, or things like that. This is done via sin/cos waves patterns.
-- **Multi-Head self-attention:** Each token looks at all other tokens to improve it's context understanding moving the embedding vector to a different space with richer meaning, `multi-head`, means is done by multiple (smaller) matrices/heads, each one focusing on  different relationships, syntax/semantics/verbs. 
+- **Multi-Head self-attention:** Each token looks at all other tokens to improve its context understanding moving the embedding vector to a different space with richer meaning, `multi-head`, means is done by multiple (smaller) matrices/heads, each one focusing on  different relationships, syntax/semantics/verbs. 
 - **Add & Norm / Residual:** add the original input tokens to the Attention layer output, helps preventing `vanishing gradient` problem + normalization.
 - **Feed forward pos wise:** Learns complex patterns out of Attention Layer, each token is processed individually, which means position is kept. This layer learns deeper individual tokens meanings. why? non-linearity the magic of Neural networks. Attention is linear operations, so in the semantic space it will be able to separate `animal | color`, this `FFN` understands `animal analogy` | `animal idiom` | `real animal`.
 - Output **Linear+softmax:** You use your network with language understanding layers to apply a basic nn to classify inputs. e.g. Sentiment analysis. Output neurons is a prob distribution `softmax` between "positive" "negative" "neutral".
@@ -68,7 +70,9 @@ Each word here was thought, not generated.
 
 <br>
 
-### Transformer Attention Details
+### Attention Details
+
+> This is the most relevant piece.
 
 $
 \text{Attention}(Q, K, V) = \mathrm{softmax}\left(\frac{Q K^\top}{\sqrt{d_k}}\right) V
@@ -77,9 +81,9 @@ $
 
 **Prerequisites:**
 - **Vector Projection:** map vector from n dim to n-m dim.
-  - This is just `__matmul__`, matrix multiplication. X@Y
+  - This is just `__matmul__`, matrix multiplication. `X @ Y`
   - This causes **dimensionality** transformation (generally reduction, or compressing information)
-  - **Information** transformation = as `X` is changing it's dimension space, it's moving it's meaning to `Y` dimension space, X is being forced to compress/transform it's features, and find the most relevant to represent itself at `Y`.
+  - **Information** transformation = as `X` is changing its dimension space, it's moving its meaning to `Y` dimension space, X is being forced to compress/transform its features, and find the most relevant to represent itself at `Y`.
   - `X @ Y` projected, means X is being moved into the `Y` dimensionality space.
   - **Analogy** `Y`=lens, `X`=scene, `O`=photo, lens never change, but photo is the scene via the lens used.
   - I'll represent it below as `X @ Y`,
@@ -118,15 +122,17 @@ Prefix `W`, refers to weights (trainable parameters).
 
 **V**: "As `V_$word`, this is the information I'll contribute when someone pays attention to me". e.g. `W_V` learns to extract the most useful information from each token - semantic meaning, grammatical role, contextual features, etc.
 
+<br>
+
 #### Formula Part 1
 
-$(Q K^\top)$    - `Q @ K^T`
+$(Q K^\top)$    - `Q * K^T`
 
 - Here we already projected `X` into `W_Q`, `W_K`, giving us `Q`, `K`, which `Q` tells us for each token in `X`, this are the things I'm looking to pay attention to, and `K`  fo each token in `X`, this are the I can be searched for.
 - `K^T` Transpose, just to match dimensions for dot product to work.
 - `*` (dot product), computes similarity scores on queries/keys.
-- **Result:** A matrix known as `Attention Scores` where entry (i,j) = "How much should token i attend to token j?" **why/how?**
-  - because we used queries (things that each token should look for), keys (identify things each token can be searched for), we know now based on similarity scores between things to search / things to be searched for, what things it should pay attention to.
+- **Result:** A matrix known as `Attention Scores` where entry (i,j) = "How much should token i attend to token j?" 
+  - **why/how?** because we used queries (things that eac token should look for), keys (identify things each token can be searched for), we know now based on similarity scores between things to search / things to be searched for, what things it should pay attention to.
 
 
 During training the model discovers that:
@@ -188,7 +194,7 @@ $
     # So each head works with 64-dimensional Q, K, V vectors
     ```
     - So dk is simply the size of each query/key vector, check more detail about attention heads in the FAQ below.
-  - Why `/√dk`: `Q @ K^T` dot product can be very large, large attention scores, causes extreme softmax, which means vanishing gradients
+  - Why `/√dk`: `Q * K^T` dot product can be very large, large attention scores, causes extreme softmax, which means vanishing gradients
   - [ ] Requires deeper understanding of variance in statistics.
 
 <br>
@@ -229,10 +235,10 @@ attention_weights = [
 # attention_weights * V
 
 V = [
-  [0.1, 0.2, 0.3],  # V_the: determiner information
-  [1.0, 0.8, 0.5],  # V_car: vehicle/noun information  
-  [0.3, 0.9, 0.1],  # V_is: linking-verb information
-  [0.7, 0.2, 0.8]   # V_red: color/adjective information
+  [0.1, 0.2, 0.3, 0.4],  # V_the: determiner information
+  [1.0, 0.8, 0.5, 0.2],  # V_car: vehicle/noun information  
+  [0.3, 0.9, 0.1, 0.3],  # V_is: linking-verb information
+  [0.7, 0.2, 0.8, 1.0]   # V_red: color/adjective information
 ]
 
 # softmax(Q * K^T) * V
@@ -245,34 +251,35 @@ V = [
 
 ### Residual Layers (Add & Norm)
 ![residual](images/residual.png)
-- **Add**:
-  - `MultiHeadAttention(pos_enc_input) + pos_enc_input`
-  - The attention layer outputs the input tokens but with it's learned changes, having modified vector space, we take that and add the initial positional_encoded_input.
-  - why?
-    - vanishing gradient problem on deep neural networks.
-    - but also don't make huge changes right away (stabilization)
-    - helps preserve information, original input is not completely changed.
-  - so it's like adding the new insights into the initial token embedding
-  - worst case safety: if a layer learns nothing, output as close to original
-  - adding vectors means combining information?
-    - it depends, if they have same semantic space, if not related/diff dim, no.
-    - The model learns to make outputs that work well with the layer
-- **Norm**:
-  - `nn.LayerNorm`, layer($add_result)
-  - After Multi-Head Attention, each token could be:
-    ```python
-    token_1 = [0.001, 0.002, 0.003]    # Tiny numbers
-    token_2 = [1000, 2000, 3000]       # Huge numbers  
-    token_3 = [-500, 800, -200]        # Mixed scales
-    ```
-  - Unstable traninig, huge gradients some, other tiny ones, activations functions to extremes, model doesn't find good learning rates.
-  - Allows to stack multiple layers reliably
+#### Add
+- `MultiHeadAttention(pos_enc_input) + pos_enc_input`
+- The attention layer outputs the input tokens but with its learned changes, having modified vector space, we take that and add the initial positional_encoded_input.
+- why?
+  - vanishing gradient problem on deep neural networks.
+  - but also don't make huge changes right away (stabilization)
+  - helps preserve information, original input is not completely changed.
+- so it's like adding the new insights into the initial token embedding
+- worst case safety: if a layer learns nothing, output as close to original
+- adding vectors means combining information?
+  - it depends, if they have same semantic space, if not related/diff dim, no.
+  - The model learns to make outputs that work well with the layer
+
+#### Norm
+- `nn.LayerNorm`, layer($add_result)
+- After Multi-Head Attention, each token could be:
+  ```python
+  token_1 = [0.001, 0.002, 0.003]    # Tiny numbers
+  token_2 = [1000, 2000, 3000]       # Huge numbers  
+  token_3 = [-500, 800, -200]        # Mixed scales
+  ```
+- Unstable training, huge gradients some, other tiny ones, activations functions to extremes, model doesn't find good learning rates.
+- Allows to stack multiple layers reliably
 
 <br>
 
 ### Position Wise FFN
 ![ffn_pos_wise](images/ffn_pos_wise.png)
-- So attention gave us a new representation for each token, having moved it's embedding space position and having paid attention to each other token correspondingly. We found patterns accross tokens and put the information in it.
+- So attention gave us a new representation for each token, having moved its embedding space position and having paid attention to each other token correspondingly. We found patterns across tokens and put the information in it.
 - Attention gave linear relationships between tokens, **but**, the magic of nn's is in their non-linearity, ffn give us this non linearity, which means more complex patterns.
 - The ffn now takes those vectors, and understand what each token (after attention modified them) means further.
 - what complex meanings emerge after the vector modifications.
@@ -325,8 +332,8 @@ V = [
     - fewer heads, less perspectives, but each head is richer
     - each head receives a *slice of each input token*.
 - Is it actually slicing each embedding token?
-  - Not really!!, `self.q = nn.Linear(embed_dim, head_dim)`, input dim is `embed_dim`, `W_Q` receives the whole thing, but we then are projecting `X * W_Q` to get `Q`, and this one is actually of a smaller size, cause `head_dim` output is embed_dim/n_heads.
-  - We take each token embedding and project it to W_Q, X*W_Q, and that way we get Q, which has 1/8th dimensionality reduction!!
+  - Not really!!, `self.q = nn.Linear(embed_dim, head_dim)`, input dim is `embed_dim`, `W_Q` receives the whole thing, but we then are projecting `X @ W_Q` to get `Q`, and this one is actually of a smaller size, cause `head_dim` output is embed_dim/n_heads.
+  - We take each token embedding and project it to W_Q, X @ W_Q, and that way we get Q, which has 1/8th dimensionality reduction!!
 - Why not **having Q,K,V** of size `embed_dim*embed_dim`, instead of `embed_dim*1/n_heads`?
   - all heads would learn similar patterns, we want them to specialize contains x information, each head's projection learns different patterns of language
   - compute just grows absurdly, exponentially. (512*64, to 512*512)
@@ -369,16 +376,20 @@ V = [
     - [ ] Further writing about this is required
     - bigger, more learnings, harder to train, if dataset is small, risk overfitting.
 
+<br>
+
+## Decoder Architecture
+- Explain the differences at each step, in the diagram, in training, and so on.
 
 <br>
 
-### Positional Encoding & Embeddings
+## Positional Encoding & Embeddings
 
 ![positional](images/positional-encoding.png)
 
 > so confusing (positional encoding)
 
-- [ ] A more in depth analysis of sin/cos + refresh on it's meaning is needed
+- [ ] A more in depth analysis of sin/cos + refresh on its meaning is needed
 - [ ] I'm still not fully grasping this
 
 <br>
@@ -391,7 +402,7 @@ Quoting my explanation above:
 
 
 - **1st Q**: "wait, but can't the rows just be traced around in the multiple matrix operations, and just retrieve the index?
-  - The answer is that the attention layer wasn't made with this in mind, each token embedding is processed in parallel, and only the embedding is taken, nothing else, so we gotta tell the layer through the embedding what's it's position
+  - The answer is that the attention layer wasn't made with this in mind, each token embedding is processed in parallel, and only the embedding is taken, nothing else, so we gotta tell the layer through the embedding what's its position
   - Apparently was a simpler way of doing it, lol.
 - **2nd Q**, "why at moment of processing each embedding in `Attention` we don't just, let the layer know about the index?" -> the answer is yes, modern architectures do this positional encoding differently, Tf-XL, T5, DeBERTa.
 - **3rd Q**, "so how does a sin/cos wave tell the attention layer that this other token comes behind you, and this is what it means"
@@ -407,7 +418,7 @@ Quoting my explanation above:
 <br>
 
 
-### Training
+## Training
 - How are the transformer weights initialized? (optimal strategies)
 - Key ideas on making training stable, 12+layers, not corrupted
 - How does backpropagation work through each layer, specially the attention mechanism?
@@ -429,13 +440,13 @@ Quoting my explanation above:
 
 <br>
 
-### Inference
+## Inference
 
 <br>
 
 <br>
 
-### Interpretability and Visualizing
+## Interpretability and Visualizing
 - Take a model, and view/interpret what each head is learning about language
 - Tried inspectus and bertviz [_12_interpretability.py](_12_interpretability.py)
 - What's Q "asking", K "providing", V "representing"?
@@ -444,7 +455,7 @@ Quoting my explanation above:
 
 <br>
 
-### Why of Architectural Decisions
+## Arguing Architectural Decisions
 - Why do these specific architectural choices work so well?
 - Why this particular combination of attention + FFN + residuals?
 - What happens if you change the order of operations?
@@ -460,10 +471,7 @@ Quoting my explanation above:
 - What makes it fundamentally different from CNNs/RNNs?
 <br>
 
-## Decoder Architecture
-- Explain the differences at each step, in the diagram, in training, and so on.
-
-### Next steps
+## Tasks
 - [ ] Dimensionality changes over the whole input output confuse me a lot.
 - [ ] Transformer.params() tells how many params has at each layer.
 
