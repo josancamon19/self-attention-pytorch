@@ -26,6 +26,9 @@ class PositionalEncoding(nn.Module):
 
     def forward(self, x):
         return x + self.pe[:, 0]
+    
+    def get_dimensions(self):
+        return self.pe.size()
 
 
 def add_positional_encoding(embedding_output: torch.Tensor, visualize: bool = False):

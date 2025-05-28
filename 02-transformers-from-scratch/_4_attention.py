@@ -59,6 +59,18 @@ class MultiHeadAttention(nn.Module):
         # referred as `W_O`, or output projection matrix.
         return x
 
+    def get_dimensions(self):
+        return {
+            "heads": [
+                {
+                    "wq": self.heads[0].q.weight.size(),
+                    "wk": self.heads[0].k.weight.size(),
+                    "wv": self.heads[0].v.weight.size(),
+                }
+            ],
+            "W_O": self.output_linear.weight.size(),
+        }
+
 
 if __name__ == "__main__":
     text = "Hi, this is a test"

@@ -36,6 +36,12 @@ class Encoder(nn.Module):
         x = x + self.feed_forward(hidden_state)
         return x
 
+    def get_dimensions(self):
+        return {
+            "attention": self.attention.get_dimensions(),
+            "ffn": self.feed_forward.get_dimensions(),
+        }
+
 
 if __name__ == "__main__":
     text = "Hi, this is a test"

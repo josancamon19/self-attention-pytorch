@@ -376,6 +376,36 @@ V = [
     - empirical scalling laws, chinchilla scaling laws, common existing sizes
     - [ ] Further writing about this is required
     - bigger, more learnings, harder to train, if dataset is small, risk overfitting.
+- **Dimensionality changes are confusing**:
+  > This will not make it clearer, but it's an attempt. Maybe I'll understand it when I go through this later. 
+  - input string sequence
+  - **tokenizer** converts to a list of integers `[sequence_length]`
+  - **batch_size** is just processing inputs in parallel through the network (a single backpropagation turn is made)
+  - now we have `[batch_size, sequence_length]`
+  
+  - **Embedding** layer shape: `[tokenizer_vocab_size, embedding_dim]` this is a lookup table, not a matmul, so output here is `[batch_size, sequence_length, embedding_dim]`, we just add the embedding dimension
+  - **pos_encoding** layer shape: `[max_token_length, 1, embedding_dim]`, this is just  modifying our token embeddings to give them a position signal. So output remains the same as above. `[batch_size, sequence_length, embedding_dim]`
+  - **head_dim** = embedding_dim/num_heads
+  - **Attention:**
+    - `W_Q/W_K/W_V` shape: `[head_dim, embedding_dim]`
+    - After taking `pos_encoding_output @ W_Q/K/V`, we get `Q,K,V`
+      - or `[batch_size, sequence_length, embedding_dim]` @ `[batch_size, head_dim, embedding_dim]`
+    - So `Q,K,V` shape is: `[batch_size, sequence_length, head_dim]`
+    - `K^T` = .transpose(1,2), switches e.g. from [1, 6, 16] to [1, 16, 6]
+    - Q * K^T 
+      - `[batch_size, sequence_length, head_dim]` * `[batch_size, head_dim, sequence_length]`
+      - = `[batch_size, sequence_length, sequence_length]`
+      - here we do `softmax` and get `attention_weights`
+    - **attention_weights** `* V` shape is:  `[batch_size, sequence_length, sequence_length]` * `[batch_size, sequence_length, head_dim]` = `[batch_size, sequence_length, head_dim]`
+    - `W_O` = input is concat of each head output at `-1` dim = `[batch_size, sequence_length, concatenate (head_dim, num_heads times)]`
+      - refreshing: `head_dim` is `embedding_dim/num_heads`
+      - Final output is `[batch_size, sequence_length, embed_dim]`
+  - residual layer doens't change dimensions
+  - FFN
+  - Final classifier output
+  - each layer has now implemented `.get_dimensions()`
+<br>
+- [ ] understand the logic on matmul/dot on n dimensions > 2
 
 <br>
 

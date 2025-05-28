@@ -32,6 +32,9 @@ class FeedForward(nn.Module):
         x = self.dropout(x)
         return x
 
+    def get_dimensions(self):
+        return [self.linear_1.weight.size(), self.linear_2.weight.size()]
+
 
 if __name__ == "__main__":
     text = "Hi, this is a test"
