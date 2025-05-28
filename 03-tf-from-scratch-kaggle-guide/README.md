@@ -1,7 +1,8 @@
 # Transformers From Scratch Kaggle Notebook
 
-Source: https://www.kaggle.com/code/auxeno/transformers-from-scratch-dl
-\+ Bunch of conversations with Sonnet4.
+Starting: https://www.kaggle.com/code/auxeno/transformers-from-scratch-dl
+Then just finding loopholes in understanding and asking claude.
+Also went through https://jalammar.github.io/illustrated-transformer/ here, specially to understand better pos encoding, but didn't learn anything new.
 
 ### Basics
 - Before Transformers, you did LSTM's (RNN), for processing sequential data.
@@ -28,7 +29,7 @@ Yea, LSTM's already had an attention component, here are the differences:
 ![encoder](images/encoder.png)
 
 - **Input embedding:** input is tokenized (int) (each token/word is converted into vectors), then a dict of token: embedding vectirs is made
-- **Positional encoding:** provide the transformer with position of each token (in LSTM's this information is known by default cause the proces is sequential, not in Transformers)
+- **Positional encoding:** provide the attention layer with position of each token (in LSTM's this information is known by default cause the proces is sequential, not in Transformers attention), is not because row order can't be traced, but attention is computed in parallel and only from embeddings, we need to insert the position in the embedding, so attention can understand, noun comes before subject, or things like that.
 - **Multi-Head self-attention:** each token looks at all other tokens to improve it's context understanding moving the vector to a different space, multi-head, means each head learns different relationships, syntax/semantics/verbs. In decoder-only, word n, would only look at prev words [0, n-1].
   - During training it learns where to look for information with `W_Q`, `W_K`, `W_V`.
 - **Add & Norm / Residual:** add the original input tokens to the Attention layer output, helps preventing vanishing gradient problem + normalization.
@@ -315,12 +316,45 @@ V = [
   - concatenate, put outputs side by side, in a single vector.
   - add a linear layer that combines all, learns to take 30% from h1 (syntax), 50% h2 (semantics), and so on
   - Basically learns the optimal mixing rations depending on word/context, **mix the different types of attention learned**
-- What do multiple attention layers do, how do they stack on each other?
+- What do multiple **attention layers** do, how do they **stack** on each other?
   - 1 complete encoder block: (mha - residual - ffn - residual), gpt 3 has 96 blocks.
   - 1 attention layer, means the mha layer in the block.
   - how many to stack together?
     - empirical scalling laws, chinchilla slcaling laws, common existing sizes
     - bigger, more learnings, harder to train, if dataset is small, risk overfitting.
+
+
+<br>
+
+### Positional Encoding & Embeddings
+
+![positional](images/positional-encoding.png)
+
+> so confusing (positional encoding)
+
+- [ ] A more in depth analysis of sin/cos + refresh on it's meaning is needed
+- [ ] I'm still not fully grasping this
+
+<br>
+
+Quoting my explanation above:
+> Provide the attention layer with position of each token (in LSTM's this information is known by default cause the proces is sequential, not in Transformers attention). 
+> 
+> Is not because row order can't be traced through the operations, but attention is computed in parallel and only from embeddings data, we need to insert the position in the embedding, so attention can understand it, e.g. *noun comes before subject*, or things like that.
+
+
+
+- **1st Q**: "wait, but can't the rows just be traced around in the multiple matrix operations, and just retrieve the index?
+  - The answer is that the attention layer wasn't made with this in mind, each token embedding is processed in parallel, and only the embedding is taken, nothing else, so we gotta tell the layer through the embedding what's it's position
+  - Apparently was a simpler way of doing it, lol.
+- **2nd Q**, "why at moment of processing each embedding in `Attention` we don't just, let the layer know about the index?" -> the answer is yes, modern architectures do this positional encoding differently, Tf-XL, T5, DeBERTa.
+- **3rd Q**, "so how does a sin/cos wave tell the attention layer that this other token comes behind you, and this is what it means"
+  - Part of the answer: 
+    - Each position 0,1,...,n, get's aidfferent sin/cos pattern
+    - Let's say n token is at idx 5, and m is idx 8, 3 positions apart would have a consistent math relationship as if they were index 0 and 3.
+    - This would mean we are rather showing the model relative distances between tokens, so if abs `(token_n.idx8-token_m.idx11)` = `(token_n.idx5-token_m.idx8)`
+- **4th Q:** Why is the embedding not broken? like, we randomly initialize it (learned params), and then we just add sin/cos waves and not breaking what it's learning. How can even the attention layer be able to separate what this mean at a position level.
+- Isn't this changing any way on every training run? how's position kept.
 
 
 <br>

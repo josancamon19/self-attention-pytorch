@@ -42,7 +42,13 @@ for i, sent in enumerate(sentences):
 # Your answer here:
 """
 YOUR ANSWER: 
+we still have each token separate, why would we lose it's position?
+If we have a list of embeddings, isn't that enough order?
 
+kk, got it. (Check readme)
+
+when we go through the attention layer, the only thing we have in parallel is the embedding's to do the operations, 
+we need to put in any way the position, so the attention layer can understand.
 """
 
 # Exercise 2: Visualizing the Positional Encoding Pattern (7 minutes)
@@ -217,7 +223,7 @@ axes[1].set_ylabel('Query Position')
 
 # Plot the difference
 diff = attn_with_pos - attn_without_pos
-axes[2].imshow(diff.numpy(), cmap='RdBu_r', center=0)
+axes[2].imshow(diff.numpy(), cmap='RdBu_r')
 axes[2].set_title('Difference (Impact of Positional Encoding)')
 axes[2].set_xlabel('Key Position')
 axes[2].set_ylabel('Query Position')
