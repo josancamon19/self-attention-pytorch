@@ -171,21 +171,14 @@ $
 \mathrm{softmax}\left(\frac{Part 1}{\sqrt{d_k}}\right) V
 $
 
-2.1. **What the /√dk means?** (Scaled dot product attention)
-  - What is `dk`
-    ```python
-    # Model hyperparameters
-    d_model = 512      # Total embedding dimension
-    num_heads = 8      # Number of attention heads
+<br>
 
-    # Each head gets a portion of the total dimension
-    dk = d_model // num_heads = 512 // 8 = 64
-
-    # So each head works with 64-dimensional Q, K, V vectors
-    ```
-    - So dk is simply the size of each query/key vector, check more detail about attention heads in the FAQ below.
-  - Why `/√dk`: `Q @ K^T` dot product can be very large, large attention scores, causes extreme softmax, which means vanishing gradients
-  - [ ] Requires deeper understanding of variance in statistics.
+2.1. **What the /√dk means?**
+- Instead of the normal `dot_product`, we call this `scaled_dot_product`.
+- Check [algebra.ipynb](algebra.ipynb) `Similarity operations` section.
+- So `dk` is simply the size of the key vector, which in Attention is `dk = embedding_dim // num_heads`. check more detail about attention heads in the FAQ below.
+- Why? check the [algebra.ipynb](algebra.ipynb) notebook, tldr, dot product of tons of dimensions, causes large similarity scores with high variance (which is just saying, range of distances from the avg is very large)
+- [ ] Need a proof on why/how /d_k helps reduce variance, and why d_k is chosen.
 
 <br>
   
