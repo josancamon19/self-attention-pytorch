@@ -388,8 +388,6 @@ V = [
   - **FFN pos wise**: just a linear classifier, usually hidden layer has `*4` embedding_dim, then shrinks back to embedding_dim. Output is still `[1, 100, 128]`
   - **Final classifier** output: scales `*4` again, but output layer has the # of options to be classified, e.g. positive | negative, 2 options, making a probability distribution, you take the neuron with the highest score, that's your output.
   - Use `Transformer.get_dimensions()` to get the traces.
-<br>
-- [ ] understand the logic on matmul/dot on n dimensions > 2
 
 <br>
 
