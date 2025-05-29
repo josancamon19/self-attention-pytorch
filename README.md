@@ -81,23 +81,11 @@ $
 
 
 **Prerequisites:**
-- **Vector Projection:** map vector from n dim to n-m dim.
-  - This is just `__matmul__`, matrix multiplication. `X @ Y`
-  - This causes **dimensionality** transformation (generally reduction, or compressing information)
-  - **Information** transformation = as `X` is changing its dimension space, it's moving its meaning to `Y` dimension space, X is being forced to compress/transform its features, and find the most relevant to represent itself at `Y`.
-  - `X @ Y` projected, means X is being moved into the `Y` dimensionality space.
-  - **Analogy** `Y`=lens, `X`=scene, `O`=photo, lens never change, but photo is the scene via the lens used.
-  - I'll represent it below as `X @ Y`,
-  - Example with `X @ W_Q`:
-    - `Q` Matrix above in the formula  is the result of `X @ W_Q`
-    - What is `W_Q` = a matrix with weights that we train (later explain what it means)
-    - Projecting input `X` into the query weight matrix means `X` (input token) is being transformed by `W_Q`, or `X` is being projected into the Query space.
-  - Check [projection.py](02-transformers-from-scratch/_4_projection.py) for an exercise with deeper understanding
-- **Dot Product:** Similarity Measure, similar directions = similar meaning, represented as `*`
-
-<br>
-
-- [ ] A linear algebra notebook will be added soon covering most important operations
+- [Algebra](algebra.ipynb).
+  - **Key higlight:** Matrices can represent 2 different things during Attention.
+  - Sometimes e.g. `W_Q`, matrices in here are meant to represent a transformation, `X @ W_Q`, taking input X and transforming it, is direction/magnitude but in this case a complete different coordinate system as well `W_Q`.
+  - Other times, e.g. `Q @ K^T`, Q,K represent a list of vectors, not transformations, and we are taking those vectors independently to compute similarities with each other (dot product).
+- Statistics `notebook to be added soon`
 
 <br>
 
@@ -107,7 +95,7 @@ $
 - **Value (V):** "What actual information do I contain?"
 
 `Q,K,V = X @ W_Q, X @ W_K, X @ W_V`.
-`n @ m` Notation, means n projecting into m
+`n @ m` in this case, means n projecting into m, or transforming n through m.
 Prefix `W`, refers to weights (trainable parameters).
 
 **X:**
@@ -116,7 +104,7 @@ Prefix `W`, refers to weights (trainable parameters).
 
 **Q:**
 - `W_Q` (Query weights) get trained to create queries that find relevant information. So it develops like query templates.
-- `X` is projecting into `W_Q`, which outputs `Q`. This `X*W_Q` is basically using `W_Q` learned ability to ask questions, to make it specific to the input vector, so `Q`, is the specific query each token/vector should look for.
+- `X` is being projected and transformed into `W_Q`, which outputs `Q`. This `X @ W_Q` is basically using `W_Q` learned ability to ask questions, to make it specific to the input vector, so `Q`, is the specific query each token/vector should look for.
 - `W_Q` = "what do I need to pay attention to". `Q` says, as `Q_$word` "I need to pay attention to: determiners, attributes, and predicates"
 
 **K**: `W_K`, identity templates, `X @ W_K` projection is `K`, which uses `W_K` learned ability to determine searchable params/features to make it specific to `X`. `k_$word` then says, this are the things I can be matched against / searched for, which based on the ex above, it could be, "I can be searched when trying to find nouns, adjectives, connectors", etc.
@@ -127,11 +115,12 @@ Prefix `W`, refers to weights (trainable parameters).
 
 #### Formula Part 1
 
-$(Q K^\top)$    - `Q * K^T`
+$(Q K^\top)$    - `Q @ K^T`
 
 - Here we already projected `X` into `W_Q`, `W_K`, giving us `Q`, `K`, which `Q` tells us for each token in `X`, this are the things I'm looking to pay attention to, and `K`  fo each token in `X`, this are the I can be searched for.
+- `Q, K, V` matrices represent a list of vectors each, not transformations.
 - `K^T` Transpose, just to match dimensions for dot product to work.
-- `*` (dot product), computes similarity scores on queries/keys.
+- `Q @ K.T`, computes similarity scores on queries/keys pairs.
 - **Result:** A matrix known as `Attention Scores` where entry (i,j) = "How much should token i attend to token j?" 
   - **why/how?** because we used queries (things that eac token should look for), keys (identify things each token can be searched for), we know now based on similarity scores between things to search / things to be searched for, what things it should pay attention to.
 
@@ -162,7 +151,7 @@ similarity(Q_car, K_red) = HIGH   # car needs its attribute
 similarity(Q_car, K_car) = LOW    # most tokens have low attention to themselves
 
 
-attention_scores = Q * K^T  # Shape: (4, 4)
+attention_scores = Q @ K^T  # Shape: (4, 4)
 
 attention_scores = [
   [0.1, 0.8, 0.3, 0.2],  # How much "The" wants to attend to [The, car, is, red]
@@ -182,7 +171,7 @@ $
 \mathrm{softmax}\left(\frac{Part 1}{\sqrt{d_k}}\right) V
 $
 
-2.1. **What the /√dk means?**
+2.1. **What the /√dk means?** (Scaled dot product attention)
   - What is `dk`
     ```python
     # Model hyperparameters
@@ -195,7 +184,7 @@ $
     # So each head works with 64-dimensional Q, K, V vectors
     ```
     - So dk is simply the size of each query/key vector, check more detail about attention heads in the FAQ below.
-  - Why `/√dk`: `Q * K^T` dot product can be very large, large attention scores, causes extreme softmax, which means vanishing gradients
+  - Why `/√dk`: `Q @ K^T` dot product can be very large, large attention scores, causes extreme softmax, which means vanishing gradients
   - [ ] Requires deeper understanding of variance in statistics.
 
 <br>
@@ -213,9 +202,10 @@ Once we have `Part1/√dk`, we apply a `softmax` to get a weighted sum of % of a
 
 <br>
 
-2.3. **attention_weights \* V**
+2.3. **attention_weights @ V**
 - Using `attention_weights` (knowing how much attention to get from every other token), retrieves that information from `V`.
   - `V` matrix provides: The actual information each token provides.
+  - Again we are computing similarities, Matrices here are meant to represent a list of vectors, not transformations.
   - **Output:** The input tokens but after paying attention to every other relevant token in the input sequence, which moved them around the embedding space to have a much richer contextual representation.
 
 <br>
@@ -233,7 +223,7 @@ attention_weights = [
 
 # skipping /square root of dk
 
-# attention_weights * V
+# attention_weights @ V
 
 V = [
   [0.1, 0.2, 0.3, 0.4],  # V_the: determiner information
@@ -290,7 +280,7 @@ V = [
 - A function is linear if: f(ax + by) = af(x) + bf(y)
   - predictable proportional behavior, scale input by 2, output scales by 2, add 2 inputs.
 - Linear functions can scale (stretch/shrink), rotate, project, combine (weighted sums), cannot create curves, make "if-then" decisions, separate complex patterns.
-- Basically all our attention operations are linear, `@` and `*` and `sqrt`
+- Basically all our attention operations are linear, `@` and `sqrt`
 - Why is `FFN` non linear?
   - example
     ```python
