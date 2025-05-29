@@ -27,3 +27,6 @@ class ClassifierHead(nn.Module):
             self.linear1.weight.size(),
             self.linear2.weight.size(),
         ]
+
+    def get_params_count(self):
+        return sum(p.numel() for p in self.parameters())

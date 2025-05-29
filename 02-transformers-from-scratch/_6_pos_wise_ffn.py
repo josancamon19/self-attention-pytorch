@@ -35,6 +35,9 @@ class FeedForward(nn.Module):
     def get_dimensions(self):
         return [self.linear_1.weight.size(), self.linear_2.weight.size()]
 
+    def get_params_count(self):
+        return sum(p.numel() for p in self.parameters())
+
 
 if __name__ == "__main__":
     text = "Hi, this is a test"

@@ -71,6 +71,9 @@ class MultiHeadAttention(nn.Module):
             "W_O": self.output_linear.weight.size(),
         }
 
+    def get_params_count(self):
+        return sum(p.numel() for p in self.parameters())
+
 
 if __name__ == "__main__":
     text = "Hi, this is a test"

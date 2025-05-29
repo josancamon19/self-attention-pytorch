@@ -34,10 +34,30 @@ class Transformer(nn.Module):
             "classifier_head": self.classifier_head.get_dimensions(),
         }
 
+    def get_params_count(self):
+        embedding_params = self.embedding.get_params_count()
+        encoder_params = [encoder.get_params_count() for encoder in self.encoders]
+        encoder_params_attention, encoder_params_ffn = (
+            encoder_params[0]["attention"],
+            encoder_params[0]["ffn"],
+        )
+        classifier_params = self.classifier_head.get_params_count()
+        return {
+            "embedding": embedding_params,
+            "encoder": {
+                "layers": len(self.encoders),
+                "1_attention": encoder_params_attention,
+                "1_ffn": encoder_params_ffn,
+            },
+            "classifier_head": classifier_params,
+            "total": embedding_params
+            + encoder_params_attention * len(self.encoders)
+            + encoder_params_ffn * len(self.encoders)
+            + classifier_params,
+        }
+
 
 if __name__ == "__main__":
     model = Transformer(config)
-    print(json.dumps(model.get_dimensions(), indent=2))
-    # Quick note, the 3rd dim in many of the dimensions is batch_size
-    # hidden_state (output of positional encoding) has shape (batch_size, sequence_length, embed_dim). Let's assume batch_size=1 and sequence_length is variable. For the example "Hi, this is a test", after tokenization and embedding, let's say sequence_length=6. So hidden_state is (1, 6, 128).
-    # TODO: rules of dimensions matching when nxn, if n > 2
+    # print(json.dumps(model.get_dimensions(), indent=2))
+    print(json.dumps(model.get_params_count(), indent=2))
