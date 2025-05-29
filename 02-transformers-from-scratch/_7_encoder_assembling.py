@@ -42,6 +42,12 @@ class Encoder(nn.Module):
             "ffn": self.feed_forward.get_dimensions(),
         }
 
+    def get_params_count(self):
+        return {
+            "attention": self.attention.get_params_count(),
+            "ffn": self.feed_forward.get_params_count(),
+        }
+
 
 if __name__ == "__main__":
     text = "Hi, this is a test"
