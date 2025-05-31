@@ -543,10 +543,6 @@ Quoting my explanation above:
 <br>
 
 ## Tasks
-- [ ] Dimensionality changes over the whole input output confuse me a lot.
-- [ ] Transformer.params() tells how many params has at each layer.
-
-<br>
 
 - [ ] implement and reimplement
 - [ ] Try different classifier heads
