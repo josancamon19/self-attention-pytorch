@@ -11,8 +11,15 @@ Each word here was thought, not generated.
 
 - [Mastering Transformers](#mastering-transformers)
     - [Table of Contents](#table-of-contents)
-    - [Basics](#basics)
-      - [Transformer's vs LSTM's](#transformers-vs-lstms)
+    - [Transformers](#transformers)
+      - [Encoder/Decoders](#encoderdecoders)
+      - [Encoder/Decoder in Transformers](#encoderdecoder-in-transformers)
+      - [Sequential Data Before](#sequential-data-before)
+        - [LSTMs](#lstms)
+        - [Seq2Seq](#seq2seq)
+      - [What is Attention?](#what-is-attention)
+        - [LSTMs Attention](#lstms-attention)
+        - [Transformers Attention](#transformers-attention)
   - [Encoder Architecture](#encoder-architecture)
       - [Each Section Briefly Explained](#each-section-briefly-explained)
     - [Attention Details](#attention-details)
@@ -33,23 +40,72 @@ Each word here was thought, not generated.
   - [Tasks](#tasks)
 
 
+### Transformers
+- A neural network architecture made for the processing sequential data. Much more than sequential now.
+- Novel idea: a new architecture making an `attention mechanism` its main component.
+<br>
 
-
-### Basics
-- **Before Transformers**, you used LSTM's (RNN's) for processing sequential data.
-- issue with **LSTMs**: They forget on long sequences + training is sequential, not parallelizable, hard to scale. (Though, [RWKV](https://wiki.rwkv.com/) is starting to solve this)
-- **Transformers** solved this, being highly scalable/parallel, each "Attention Head" process separately, as well as each input token.
-- **Attention:** How much each token/word in the input needs to "pay attention" to each other, like how much the meaning of token n changes based on all other tokens in the sequence.
-- 3 types of Transformers architectures, Encoder, Decoder, Encoder<>Decoder.
-- **Encoder Only** = n token pays attention to n-1 and n+1 (all the input tokens), output can be a simple classifier layer on top. Used on tasks where language input classificationis needed. (Not generation)
-- **Decoder Only** = n token only pays attention to n-1 tokens, previous ones, "autoregressive generation", GPT like.
-- **Encoder <> Decoder** = Encoder generates part of attention (lookup table), Decoder uses it to map its inputs into a transformed output. Used in Translation, Summarization, STT, MultiModal.
+#### Encoder/Decoders
+- A neural networks design pattern, each briefly:
+- Encoder: "Understand and compress"
+- Decoder: "Generate and expand"
+- Encoder-Decoder: "Transform from one domain/format to another"
 
 <br>
 
-#### Transformer's vs LSTM's
-- Section requires better understanding of LSTM's vs Transformers
-- Specially LSTM's attention.
+#### Encoder/Decoder in Transformers
+- `Decoder` is the one that outputs tokens, like GPT models. Token n pays attention to only previous tokens, so it learns what to generate then.
+- `Encoder` is used for classification tasks where we input a sequence, and try to classify that input as x,y,z options. Also when we want to find a meaningful representation of the whole input sequence.
+- `Encoder <> Decoder` = `Encoder` generates part of attention and get's a deep representation of the input, `Decoder` makes another part of attention, and uses it to map it to it's own learned representation and expected output. Used in Translation ("Hi", "Hola"), Summarization, Speech to text, Multimodality. `Attention` here is called `cross-attention`.
+<br>
+
+#### Sequential Data Before
+##### LSTMs
+- Processing of tokens it's sequential, n, n+1, n+2... and for processing n+2, n+1 has to be computed, and so on.
+- Token n=10, has no direct access to token n=5, instead has access only to n=9 as a representation of everything before itself+itself, whereas in [attention](#what-is-attention), tokens can interact far apart individually directly, not just with n-1 as the result of everything before.
+- This sequential nature, means information is lost in longer context, cause let's say at n=1000, it will have no relevance from n=0, and sometimes it should.
+- This also means we have vanishing gradients, which makes earlier layers of the LSTM's to not be able to learn as much.
+- Further expand: RNN, Encoder<>Decoder interactions. Encoder only, bidirectional
+
+##### Seq2Seq
+
+<br>
+
+
+#### What is Attention?
+It's a mechanism which neural networks use to **learn to focus** on the relevant parts of the input.
+- `Attention` means computing similarities between input sequences, to figure out things token i has to attend, and things token !=i can provide where they are being attended. This for every token in the input sequence.
+- What does it mean for a token to pay attention to other tokens?
+  - It means the token understood how other tokens in the input sequence change its meaning, and updates itself accordingly.
+  - analogy: the isolated understanding of a word given a text it's completely different as a part of the text.
+- With this tokens updates, the model learns what things in the input to pay attention to.
+
+
+##### LSTMs Attention
+- Initially implemented on Machine Translation tasks, which means over an LSTM with Encoder<>Decoder architecture. https://arxiv.org/pdf/1409.0473
+- So what it used is known as `cross-attention`, which means connecting Encoder<>Decoder through an attention layer. Encoder computes a part, Decoder uses it to compute the other part. This was not a replacement on the way LSTM interacts, but an extra computation between Encoder<>Decoder, definitely improved translation quality.
+- The issue here is that due to sequentiallity, encoder/decoder are still computing sequentially, so a few things are fixed on top of LSTMs (mainly quality, due to tokens far away not being able to interact) but they are still **not scalable**.
+- This doesn't let the architecture scale, we can have more GPU's, data, batch_size, layers, neurons, but the time of training a big model is gigantic.
+- **Self-attention**: Encoder or Decoder with an attention computation inside between each alone was tested in LSTMs before Transformers as well. But again this is on top of LSTMs, not replacing, so quality increased, but **sequentiality remained**, as well as **scale**.
+
+
+##### Transformers Attention
+- **Self attention** as key in the architecture itself, the Encoder/Decoder themselves are a bunch of self-attention layers.
+- When **Encoder<>Decoder**, cross attention is the same thing as in LSTMs.
+- This `self-attention` layers at Encoder/Decoder have multiple heads, this just means multiple stacked sublayers of attention being computed in parallel, each one with different weights, which means each one learns different patterns in the data.
+
+> [RWKV](https://wiki.rwkv.com/) is fixing LSTM's sequentiallity.
+
+<br>
+
+**New Things we can do with Transformers**
+Is there something that was technically impossible to do before `Transformers` like the simplest/non-prod MVP was not doable?
+- **No**,
+- e.g. Text Generation, Multimodal AI, translation, was already possible.
+- Transformers just made them to work really really well.
+- Also, most capabilities on Transformers, emerge from Scale:
+  - e.g. `In-context learning`, as the model pays attention in parallel to every other token, you can feed it examples, and it can do something it has never seen before in it's training data.
+
 
 <br>
 <br>
@@ -62,6 +118,7 @@ Each word here was thought, not generated.
 
 - **Input embedding:** input is tokenized (int) (each token/word is mapped to an int), then each token is expanded to an `embedding` vector that later learns to represent the token in more detail.
 - **Positional encoding:** provide the attention layer with position of each token (in LSTM's this information is known by default cause the proces is sequential, not in Transformers attention), is not because row order can't be traced throughout matrix operations, but attention is computed in parallel and only from embeddings, we need to insert the position in the embedding, so attention can understand, noun comes before subject, or things like that. This is done via sin/cos waves patterns.
+  > Self-attention itself is permutation-invariant; "sequence" behavior appears only after you add a positional encoding. Swap the encoding for e.g 2D grid for images, and the block serves other data types.
 - **Multi-Head self-attention:** Each token looks at all other tokens to improve its context understanding moving the embedding vector to a different space with richer meaning, `multi-head`, means is done by multiple (smaller) matrices/heads, each one focusing on  different relationships, syntax/semantics/verbs. 
 - **Add & Norm / Residual:** add the original input tokens to the Attention layer output, helps preventing `vanishing gradient` problem + normalization.
 - **Feed forward pos wise:** Learns complex patterns out of Attention Layer, each token is processed individually, which means position is kept. This layer learns deeper individual tokens meanings. why? non-linearity the magic of Neural networks. Attention is linear operations, so in the semantic space it will be able to separate `animal | color`, this `FFN` understands `animal analogy` | `animal idiom` | `real animal`.
