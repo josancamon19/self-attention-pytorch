@@ -17,18 +17,18 @@ from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
 
 from model_embeddings import ModelEmbeddings
 
-Hypothesis = namedtuple('Hypothesis', ['value', 'score'])
+Hypothesis = namedtuple("Hypothesis", ["value", "score"])
 
 
 class NMT(nn.Module):
-    """ Simple Neural Machine Translation Model:
-        - Bidrectional LSTM Encoder
-        - Unidirection LSTM Decoder
-        - Global Attention Model (Luong, et al. 2015)
+    """Simple Neural Machine Translation Model:
+    - Bidrectional LSTM Encoder
+    - Unidirection LSTM Decoder
+    - Global Attention Model (Luong, et al. 2015)
     """
 
     def __init__(self, embed_size, hidden_size, vocab, dropout_rate=0.2):
-        """ Init NMT Model.
+        """Init NMT Model.
 
         @param embed_size (int): Embedding size (dimensionality)
         @param hidden_size (int): Hidden Size, the size of hidden states (dimensionality)
@@ -41,6 +41,10 @@ class NMT(nn.Module):
         self.hidden_size = hidden_size
         self.dropout_rate = dropout_rate
         self.vocab = vocab
+
+        print(
+            f"[NMT.__init__] = [embed_size={embed_size}, vocab={vocab}, hidden_size={hidden_size}]"
+        )
 
         # default values
         self.post_embed_cnn = None
@@ -81,12 +85,43 @@ class NMT(nn.Module):
         ###     Dropout Layer:
         ###         https://pytorch.org/docs/stable/generated/torch.nn.Dropout.html
 
+        self.post_embed_cnn = nn.Conv1d(embed_size, embed_size, kernel_size=2, padding='same')
+        self.encoder = nn.LSTM(
+            input_size=embed_size,
+            hidden_size=self.hidden_size,
+            num_layers=1,
+            bias=True,
+            bidirectional=True,
+        )
+        print(f"[NMT.__init__.encoder] = [in:{embed_size}, hidden:{hidden_size}]")
+        self.decoder = nn.LSTMCell(
+            input_size=embed_size, hidden_size=self.hidden_size, bias=True
+        )
+        print(f"[NMT.__init__.decoder] = [in:{embed_size}, hidden:{hidden_size}]")
+        # projections from encoder to decoder (h,c)
+        self.h_projection = nn.Linear(
+            self.hidden_size * 2, self.hidden_size, bias=False
+        )
+        self.c_projection = nn.Linear(
+            self.hidden_size * 2, self.hidden_size, bias=False
+        )
 
+        # why is it 2h,h dim here?: because of bidirectional encoder!!
+        self.att_projection = nn.Linear(
+            self.hidden_size * 2, self.hidden_size, bias=False
+        )
+        self.combined_output_projection = nn.Linear(
+            self.hidden_size * 3, self.hidden_size, bias=False
+        )
+        self.target_vocab_projection = nn.Linear(
+            self.hidden_size, len(self.vocab.tgt), bias=False
+        )
+        self.dropout = nn.Dropout(self.dropout_rate)
 
         ### END YOUR CODE
 
     def forward(self, source: List[List[str]], target: List[List[str]]) -> torch.Tensor:
-        """ Take a mini-batch of source and target sentences, compute the log-likelihood of
+        """Take a mini-batch of source and target sentences, compute the log-likelihood of
         target sentences under the language models learned by the NMT system.
 
         @param source (List[List[str]]): list of source sentence tokens
@@ -100,8 +135,12 @@ class NMT(nn.Module):
         source_lengths = [len(s) for s in source]
 
         # Convert list of lists into tensors
-        source_padded = self.vocab.src.to_input_tensor(source, device=self.device)  # Tensor: (src_len, b)
-        target_padded = self.vocab.tgt.to_input_tensor(target, device=self.device)  # Tensor: (tgt_len, b)
+        source_padded = self.vocab.src.to_input_tensor(
+            source, device=self.device
+        )  # Tensor: (src_len, b)
+        target_padded = self.vocab.tgt.to_input_tensor(
+            target, device=self.device
+        )  # Tensor: (tgt_len, b)
 
         ###     Run the network forward:
         ###     1. Apply the encoder to `source_padded` by calling `self.encode()`
@@ -112,21 +151,26 @@ class NMT(nn.Module):
 
         enc_hiddens, dec_init_state = self.encode(source_padded, source_lengths)
         enc_masks = self.generate_sent_masks(enc_hiddens, source_lengths)
-        combined_outputs = self.decode(enc_hiddens, enc_masks, dec_init_state, target_padded)
+        combined_outputs = self.decode(
+            enc_hiddens, enc_masks, dec_init_state, target_padded
+        )
         P = F.log_softmax(self.target_vocab_projection(combined_outputs), dim=-1)
 
         # Zero out, probabilities for which we have nothing in the target text
-        target_masks = (target_padded != self.vocab.tgt['<pad>']).float()
+        target_masks = (target_padded != self.vocab.tgt["<pad>"]).float()
 
         # Compute log probability of generating true target words
-        target_gold_words_log_prob = torch.gather(P, index=target_padded[1:].unsqueeze(-1), dim=-1).squeeze(
-            -1) * target_masks[1:]
+        target_gold_words_log_prob = (
+            torch.gather(P, index=target_padded[1:].unsqueeze(-1), dim=-1).squeeze(-1)
+            * target_masks[1:]
+        )
         scores = target_gold_words_log_prob.sum(dim=0)
         return scores
 
-    def encode(self, source_padded: torch.Tensor, source_lengths: List[int], grader_params=None) -> Tuple[
-        torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        """ Apply the encoder to source sentences to obtain encoder hidden states.
+    def encode(
+        self, source_padded: torch.Tensor, source_lengths: List[int], grader_params=None
+    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """Apply the encoder to source sentences to obtain encoder hidden states.
             Additionally, take the final states of the encoder and project them to obtain initial states for decoder.
 
         @param source_padded (Tensor): Tensor of padded source sentences with shape (src_len, b), where
@@ -175,21 +219,46 @@ class NMT(nn.Module):
         ###         https://pytorch.org/docs/stable/generated/torch.cat.html
         ###     Tensor Permute:
         ###         https://pytorch.org/docs/stable/generated/torch.permute.html
+        # length, batch_size
+        print(
+            f"[NMT.encode] = source_padded [max_length: {source_padded.shape[0]} batch_size: {source_padded.shape[1]}]"
+        )
 
+        X = self.model_embeddings.source(source_padded)
+        print(f"[NMT.encode] = X.shape: {X.shape}")
+        # len, batch_size, embedding_dim
+        X = torch.permute(X, (1, 2, 0))  # batch_size, e_dim, len
+        print(f"[NMT.encode] = before embed_cnn X.shape: {X.shape}")
+        X = self.post_embed_cnn(X)
+        print(f"[NMT.encode] = post embed_cnn X.shape: {X.shape}")
+        X = torch.permute(X, (2, 0, 1))
+        print(f"[NMT.encode] = X.shape: {X.shape}")
+        packed = pack_padded_sequence(X, lengths=source_lengths)  # TODO: why?
+        print(
+            f"[NMT.encode] = packed [data.shape: {packed.data.shape}, batch_sizes.shape: {packed.batch_sizes.shape}]"
+        )
 
-
-
-
-
-
+        # packed_seq (tensor, tensor)
+        enc_hiddens, (last_hidden, last_cell) = self.encoder(packed)
+        enc_hiddens, enc_lengths = pad_packed_sequence(enc_hiddens)
+        print(
+            f"[NMT.encode] = enc_hiddens.shape: {enc_hiddens.shape}, enc_lengths.shape: {enc_lengths.shape}"
+        )
+        print(
+            f"[NMT.encode] = match_lengths: {source_lengths.__eq__(enc_lengths.tolist())}"
+        )
+        enc_hiddens = torch.permute(enc_hiddens, (1, 0, 2))
         ### END YOUR CODE
 
         return enc_hiddens, dec_init_state
 
-
-
-    def decode(self, enc_hiddens: torch.Tensor, enc_masks: torch.Tensor,
-               dec_init_state: Tuple[torch.Tensor, torch.Tensor], target_padded: torch.Tensor) -> torch.Tensor:
+    def decode(
+        self,
+        enc_hiddens: torch.Tensor,
+        enc_masks: torch.Tensor,
+        dec_init_state: Tuple[torch.Tensor, torch.Tensor],
+        target_padded: torch.Tensor,
+    ) -> torch.Tensor:
         """Compute combined output vectors for a batch.
 
         @param enc_hiddens (Tensor): Hidden states (b, src_len, h*2), where
@@ -252,21 +321,19 @@ class NMT(nn.Module):
         ###     Tensor Stacking:
         ###         https://pytorch.org/docs/stable/generated/torch.stack.html
 
-
-
-
-
-
         ### END YOUR CODE
 
         return combined_outputs
 
-    def step(self, Ybar_t: torch.Tensor,
-             dec_state: Tuple[torch.Tensor, torch.Tensor],
-             enc_hiddens: torch.Tensor,
-             enc_hiddens_proj: torch.Tensor,
-             enc_masks: torch.Tensor) -> Tuple[Tuple, torch.Tensor, torch.Tensor]:
-        """ Compute one forward step of the LSTM decoder, including the attention computation.
+    def step(
+        self,
+        Ybar_t: torch.Tensor,
+        dec_state: Tuple[torch.Tensor, torch.Tensor],
+        enc_hiddens: torch.Tensor,
+        enc_hiddens_proj: torch.Tensor,
+        enc_masks: torch.Tensor,
+    ) -> Tuple[Tuple, torch.Tensor, torch.Tensor]:
+        """Compute one forward step of the LSTM decoder, including the attention computation.
 
         @param Ybar_t (Tensor): Concatenated Tensor of [Y_t o_prev], with shape (b, e + h). The input for the decoder,
                                 where b = batch size, e = embedding size, h = hidden size.
@@ -313,12 +380,11 @@ class NMT(nn.Module):
         ###     Tensor Squeeze:
         ###         https://pytorch.org/docs/stable/generated/torch.squeeze.html
 
-
         ### END YOUR CODE
 
         # Set e_t to -inf where enc_masks has 1
         if enc_masks is not None:
-            e_t.data.masked_fill_(enc_masks.bool(), -float('inf'))
+            e_t.data.masked_fill_(enc_masks.bool(), -float("inf"))
 
         ### YOUR CODE HERE (~6 Lines)
         ### TODO:
@@ -347,14 +413,15 @@ class NMT(nn.Module):
         ###     Tanh:
         ###         https://pytorch.org/docs/stable/generated/torch.tanh.html
 
-
         ### END YOUR CODE
 
         combined_output = O_t
         return dec_state, combined_output, e_t
 
-    def generate_sent_masks(self, enc_hiddens: torch.Tensor, source_lengths: List[int]) -> torch.Tensor:
-        """ Generate sentence masks for encoder hidden states.
+    def generate_sent_masks(
+        self, enc_hiddens: torch.Tensor, source_lengths: List[int]
+    ) -> torch.Tensor:
+        """Generate sentence masks for encoder hidden states.
 
         @param enc_hiddens (Tensor): encodings of shape (b, src_len, 2*h), where b = batch size,
                                      src_len = max source length, h = hidden size.
@@ -363,14 +430,17 @@ class NMT(nn.Module):
         @returns enc_masks (Tensor): Tensor of sentence masks of shape (b, src_len),
                                     where src_len = max source length, h = hidden size.
         """
-        enc_masks = torch.zeros(enc_hiddens.size(0), enc_hiddens.size(1), dtype=torch.float)
+        enc_masks = torch.zeros(
+            enc_hiddens.size(0), enc_hiddens.size(1), dtype=torch.float
+        )
         for e_id, src_len in enumerate(source_lengths):
             enc_masks[e_id, src_len:] = 1
         return enc_masks.to(self.device)
 
-    def beam_search(self, src_sent: List[str], beam_size: int = 5, max_decoding_time_step: int = 70) -> List[
-        Hypothesis]:
-        """ Given a single source sentence, perform beam search, yielding translations in the target language.
+    def beam_search(
+        self, src_sent: List[str], beam_size: int = 5, max_decoding_time_step: int = 70
+    ) -> List[Hypothesis]:
+        """Given a single source sentence, perform beam search, yielding translations in the target language.
         @param src_sent (List[str]): a single source sentence (words)
         @param beam_size (int): beam size
         @param max_decoding_time_step (int): maximum number of time steps to unroll the decoding RNN
@@ -386,9 +456,9 @@ class NMT(nn.Module):
         h_tm1 = dec_init_vec
         att_tm1 = torch.zeros(1, self.hidden_size, device=self.device)
 
-        eos_id = self.vocab.tgt['</s>']
+        eos_id = self.vocab.tgt["</s>"]
 
-        hypotheses = [['<s>']]
+        hypotheses = [["<s>"]]
         hyp_scores = torch.zeros(len(hypotheses), dtype=torch.float, device=self.device)
         completed_hypotheses = []
 
@@ -397,46 +467,66 @@ class NMT(nn.Module):
             t += 1
             hyp_num = len(hypotheses)
 
-            exp_src_encodings = src_encodings.expand(hyp_num,
-                                                     src_encodings.size(1),
-                                                     src_encodings.size(2))
+            exp_src_encodings = src_encodings.expand(
+                hyp_num, src_encodings.size(1), src_encodings.size(2)
+            )
 
-            exp_src_encodings_att_linear = src_encodings_att_linear.expand(hyp_num,
-                                                                           src_encodings_att_linear.size(1),
-                                                                           src_encodings_att_linear.size(2))
+            exp_src_encodings_att_linear = src_encodings_att_linear.expand(
+                hyp_num,
+                src_encodings_att_linear.size(1),
+                src_encodings_att_linear.size(2),
+            )
 
-            y_tm1 = torch.tensor([self.vocab.tgt[hyp[-1]] for hyp in hypotheses], dtype=torch.long, device=self.device)
+            y_tm1 = torch.tensor(
+                [self.vocab.tgt[hyp[-1]] for hyp in hypotheses],
+                dtype=torch.long,
+                device=self.device,
+            )
             y_t_embed = self.model_embeddings.target(y_tm1)
 
             x = torch.cat([y_t_embed, att_tm1], dim=-1)
 
-            (h_t, cell_t), att_t, _ = self.step(x, h_tm1,
-                                                exp_src_encodings, exp_src_encodings_att_linear, enc_masks=None)
+            (h_t, cell_t), att_t, _ = self.step(
+                x,
+                h_tm1,
+                exp_src_encodings,
+                exp_src_encodings_att_linear,
+                enc_masks=None,
+            )
 
             # log probabilities over target words
             log_p_t = F.log_softmax(self.target_vocab_projection(att_t), dim=-1)
 
             live_hyp_num = beam_size - len(completed_hypotheses)
-            contiuating_hyp_scores = (hyp_scores.unsqueeze(1).expand_as(log_p_t) + log_p_t).view(-1)
-            top_cand_hyp_scores, top_cand_hyp_pos = torch.topk(contiuating_hyp_scores, k=live_hyp_num)
+            contiuating_hyp_scores = (
+                hyp_scores.unsqueeze(1).expand_as(log_p_t) + log_p_t
+            ).view(-1)
+            top_cand_hyp_scores, top_cand_hyp_pos = torch.topk(
+                contiuating_hyp_scores, k=live_hyp_num
+            )
 
-            prev_hyp_ids = torch.div(top_cand_hyp_pos, len(self.vocab.tgt), rounding_mode='floor')
+            prev_hyp_ids = torch.div(
+                top_cand_hyp_pos, len(self.vocab.tgt), rounding_mode="floor"
+            )
             hyp_word_ids = top_cand_hyp_pos % len(self.vocab.tgt)
 
             new_hypotheses = []
             live_hyp_ids = []
             new_hyp_scores = []
 
-            for prev_hyp_id, hyp_word_id, cand_new_hyp_score in zip(prev_hyp_ids, hyp_word_ids, top_cand_hyp_scores):
+            for prev_hyp_id, hyp_word_id, cand_new_hyp_score in zip(
+                prev_hyp_ids, hyp_word_ids, top_cand_hyp_scores
+            ):
                 prev_hyp_id = prev_hyp_id.item()
                 hyp_word_id = hyp_word_id.item()
                 cand_new_hyp_score = cand_new_hyp_score.item()
 
                 hyp_word = self.vocab.tgt.id2word[hyp_word_id]
                 new_hyp_sent = hypotheses[prev_hyp_id] + [hyp_word]
-                if hyp_word == '</s>':
-                    completed_hypotheses.append(Hypothesis(value=new_hyp_sent[1:-1],
-                                                           score=cand_new_hyp_score))
+                if hyp_word == "</s>":
+                    completed_hypotheses.append(
+                        Hypothesis(value=new_hyp_sent[1:-1], score=cand_new_hyp_score)
+                    )
                 else:
                     new_hypotheses.append(new_hyp_sent)
                     live_hyp_ids.append(prev_hyp_id)
@@ -445,16 +535,21 @@ class NMT(nn.Module):
             if len(completed_hypotheses) == beam_size:
                 break
 
-            live_hyp_ids = torch.tensor(live_hyp_ids, dtype=torch.long, device=self.device)
+            live_hyp_ids = torch.tensor(
+                live_hyp_ids, dtype=torch.long, device=self.device
+            )
             h_tm1 = (h_t[live_hyp_ids], cell_t[live_hyp_ids])
             att_tm1 = att_t[live_hyp_ids]
 
             hypotheses = new_hypotheses
-            hyp_scores = torch.tensor(new_hyp_scores, dtype=torch.float, device=self.device)
+            hyp_scores = torch.tensor(
+                new_hyp_scores, dtype=torch.float, device=self.device
+            )
 
         if len(completed_hypotheses) == 0:
-            completed_hypotheses.append(Hypothesis(value=hypotheses[0][1:],
-                                                   score=hyp_scores[0].item()))
+            completed_hypotheses.append(
+                Hypothesis(value=hypotheses[0][1:], score=hyp_scores[0].item())
+            )
 
         completed_hypotheses.sort(key=lambda hyp: hyp.score, reverse=True)
 
@@ -462,33 +557,35 @@ class NMT(nn.Module):
 
     @property
     def device(self) -> torch.device:
-        """ Determine which device to place the Tensors upon, CPU or GPU.
-        """
+        """Determine which device to place the Tensors upon, CPU or GPU."""
         return self.model_embeddings.source.weight.device
 
     @staticmethod
     def load(model_path: str):
-        """ Load the model from a file.
+        """Load the model from a file.
         @param model_path (str): path to model
         """
         params = torch.load(model_path, map_location=lambda storage, loc: storage)
-        args = params['args']
-        model = NMT(vocab=params['vocab'], **args)
-        model.load_state_dict(params['state_dict'])
+        args = params["args"]
+        model = NMT(vocab=params["vocab"], **args)
+        model.load_state_dict(params["state_dict"])
 
         return model
 
     def save(self, path: str):
-        """ Save the odel to a file.
+        """Save the odel to a file.
         @param path (str): path to the model
         """
-        print('save model parameters to [%s]' % path, file=sys.stderr)
+        print("save model parameters to [%s]" % path, file=sys.stderr)
 
         params = {
-            'args': dict(embed_size=self.model_embeddings.embed_size, hidden_size=self.hidden_size,
-                         dropout_rate=self.dropout_rate),
-            'vocab': self.vocab,
-            'state_dict': self.state_dict()
+            "args": dict(
+                embed_size=self.model_embeddings.embed_size,
+                hidden_size=self.hidden_size,
+                dropout_rate=self.dropout_rate,
+            ),
+            "vocab": self.vocab,
+            "state_dict": self.state_dict(),
         }
 
         torch.save(params, path)

@@ -8,10 +8,12 @@ model_embeddings.py: Embeddings for the NMT model
 
 import torch.nn as nn
 
-class ModelEmbeddings(nn.Module): 
+
+class ModelEmbeddings(nn.Module):
     """
     Class that converts input words to their embeddings.
     """
+
     def __init__(self, embed_size, vocab):
         """
         Init the Embedding layers.
@@ -27,8 +29,8 @@ class ModelEmbeddings(nn.Module):
         self.source = None
         self.target = None
 
-        src_pad_token_idx = vocab.src['<pad>']
-        tgt_pad_token_idx = vocab.tgt['<pad>']
+        src_pad_token_idx = vocab.src["<pad>"]
+        tgt_pad_token_idx = vocab.tgt["<pad>"]
 
         ### YOUR CODE HERE (~2 Lines)
         ### TODO - Initialize the following variables:
@@ -47,8 +49,8 @@ class ModelEmbeddings(nn.Module):
         ### Use the following docs to properly initialize these variables:
         ###     Embedding Layer:
         ###         https://pytorch.org/docs/stable/generated/torch.nn.Embedding.html
-        
+
+        self.source = nn.Embedding(len(vocab.src), self.embed_size, src_pad_token_idx)
+        self.target = nn.Embedding(len(vocab.tgt), self.embed_size, tgt_pad_token_idx)
 
         ### END YOUR CODE
-
-
