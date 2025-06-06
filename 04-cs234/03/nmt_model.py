@@ -85,7 +85,9 @@ class NMT(nn.Module):
         ###     Dropout Layer:
         ###         https://pytorch.org/docs/stable/generated/torch.nn.Dropout.html
 
-        self.post_embed_cnn = nn.Conv1d(embed_size, embed_size, kernel_size=2, padding='same')
+        self.post_embed_cnn = nn.Conv1d(
+            embed_size, embed_size, kernel_size=2, padding="same"
+        )
         self.encoder = nn.LSTM(
             input_size=embed_size,
             hidden_size=self.hidden_size,
@@ -249,7 +251,20 @@ class NMT(nn.Module):
         )
         enc_hiddens = torch.permute(enc_hiddens, (1, 0, 2))
         ### END YOUR CODE
+        print("[NMT.encode] ------------------------------------")
+        print(
+            f"[NMT.encode] = enc_last_hidden: {last_hidden.shape}, enc_last_cell: {last_cell.shape}"
+        )  # (2, batch_size, hidden_size), dim_0=2, bilstm, 2h
 
+        last_hidden = torch.cat([last_hidden[0], last_hidden[1]], dim=1)
+        print(f"[NMT.encode] = last_hidden_concat = {last_hidden.shape}")
+        init_decoder_hidden = self.h_projection(last_hidden)
+        print(f"[NMT.encode] = init_decoder_hidden.shape = {init_decoder_hidden.shape}")
+        
+        last_cell = torch.cat([last_cell[0], last_cell[1]], dim=1)
+        init_decoder_cell = self.c_projection(last_cell)
+        
+        dec_init_state = (init_decoder_hidden, init_decoder_cell)
         return enc_hiddens, dec_init_state
 
     def decode(
