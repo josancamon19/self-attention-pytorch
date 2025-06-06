@@ -104,14 +104,24 @@ class NMT(nn.Module):
         self.h_projection = nn.Linear(
             self.hidden_size * 2, self.hidden_size, bias=False
         )
+        print(
+            f"[NMT.__init__.h_projection] = {self.h_projection.in_features, self.h_projection.out_features}"
+        )
         self.c_projection = nn.Linear(
             self.hidden_size * 2, self.hidden_size, bias=False
+        )
+        print(
+            f"[NMT.__init__.c_projection] = {self.c_projection.in_features, self.h_projection.out_features}"
         )
 
         # why is it 2h,h dim here?: because of bidirectional encoder!!
         self.att_projection = nn.Linear(
             self.hidden_size * 2, self.hidden_size, bias=False
         )
+        print(
+            f"[NMT.__init__.att_projection] = {self.att_projection.in_features, self.att_projection.out_features}"
+        )
+
         self.combined_output_projection = nn.Linear(
             self.hidden_size * 3, self.hidden_size, bias=False
         )
@@ -260,10 +270,10 @@ class NMT(nn.Module):
         print(f"[NMT.encode] = last_hidden_concat = {last_hidden.shape}")
         init_decoder_hidden = self.h_projection(last_hidden)
         print(f"[NMT.encode] = init_decoder_hidden.shape = {init_decoder_hidden.shape}")
-        
+
         last_cell = torch.cat([last_cell[0], last_cell[1]], dim=1)
         init_decoder_cell = self.c_projection(last_cell)
-        
+
         dec_init_state = (init_decoder_hidden, init_decoder_cell)
         return enc_hiddens, dec_init_state
 
@@ -287,11 +297,18 @@ class NMT(nn.Module):
         @returns combined_outputs (Tensor): combined output tensor  (tgt_len, b,  h), where
                                         tgt_len = maximum target sentence length, b = batch_size,  h = hidden size
         """
+        print(
+            f"[NMT.decode] = [enc_hiddens.shape: {enc_hiddens.shape}, enc_masks.shape: {enc_masks.shape}]"
+        )
         # Chop off the <END> token for max length sentences.
         target_padded = target_padded[:-1]
+        print(f"[NMT.decode] = target_padded.shape {target_padded.shape}")
 
         # Initialize the decoder state (hidden and cell)
         dec_state = dec_init_state
+        print(
+            f"[NMT.decode] = dec_state[0].shape {dec_state[0].shape}, dec_state[1].shape {dec_state[1].shape}"
+        )
 
         # Initialize previous combined output vector o_{t-1} as zero
         batch_size = enc_hiddens.size(0)
@@ -336,8 +353,37 @@ class NMT(nn.Module):
         ###     Tensor Stacking:
         ###         https://pytorch.org/docs/stable/generated/torch.stack.html
 
-        ### END YOUR CODE
+        enc_hiddens_proj = self.att_projection(enc_hiddens)
+        print(f"[NMT.decode] = enc_hiddens_proj.shape {enc_hiddens_proj.shape}")
+        Y = self.model_embeddings.target(target_padded)
+        print(f"[NMT.decode] = Y.shape {Y.shape}")
 
+        split_tensors = torch.split(Y, 1)
+        print(
+            f"[NMT.decode] = split_tensors.length {len(split_tensors)}, split_tensors.shape {split_tensors[0].shape}"
+        )
+        for i, Y_t in enumerate(torch.split(Y, 1)):
+            Y_t = torch.squeeze(Y_t)
+            if i == 0:
+                print(f"[NMT.decode] [loop, i=0] Y_t.shape {Y_t.shape}")
+            Ybar_t = torch.cat([Y_t, o_prev], dim=-1)
+            if i == 0:
+                print(f"[NMT.decode] [loop, i=0] Ybar_t.shape {Ybar_t.shape}")
+            dec_state, o_t, _ = self.step(
+                Ybar_t, dec_state, enc_hiddens, enc_hiddens_proj, enc_masks
+            )
+            if i == 0:
+                print(f"[NMT.decode] [loop, i=0] dec_state.[h,c] {[dec_state[0].shape, dec_state[1].shape]}")
+                print(f"[NMT.decode] [loop, i=0] o_t.shape {o_t.shape}")
+
+            combined_outputs.append(o_t)
+            o_prev = o_t
+        
+        ### END YOUR CODE
+        print(f"[NMT.decode] = combined_outputs.len: {len(combined_outputs)}, combined_outputs[0].shape {combined_outputs[0].shape}")
+        combined_outputs = torch.stack(combined_outputs, 0)
+        print(f"[NMT.decode] = stack.combined_outputs.shape: {combined_outputs.shape}")
+        
         return combined_outputs
 
     def step(
