@@ -417,6 +417,12 @@ class NMT(nn.Module):
         """
 
         combined_output = None
+        # Go through handoff first, this part is confusing, Ybar is 5,5, but ofc decoder expects 3,2, so 3 as first dim
+        print(f"[NMT.step] Ybar_t: {Ybar_t.shape} dec_state: [{dec_state[0].shape}, {dec_state[1].shape}] batch_size: {dec_state[0].shape[0]}")
+        output, (dec_hidden, dec_cell) = self.decoder(Ybar_t, dec_state)
+        print(f"[NMT.step] decoder.output: {output.shape}")
+        print(f"[NMT.step] decoder.dec_hidden: {dec_hidden.shape}, decoder.dec_cell: {dec_cell.shape}")
+        # torch.bmm()
 
         ### YOUR CODE HERE (~3 Lines)
         ### TODO:
