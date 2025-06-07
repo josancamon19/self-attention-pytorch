@@ -240,45 +240,45 @@ class NMT(nn.Module):
         ###     Tensor Permute:
         ###         https://pytorch.org/docs/stable/generated/torch.permute.html
         # length, batch_size
-        print(
-            f"[NMT.encode] = source_padded [max_length: {source_padded.shape[0]} batch_size: {source_padded.shape[1]}]"
-        )
+        # print(
+        #     f"[NMT.encode] = source_padded [max_length: {source_padded.shape[0]} batch_size: {source_padded.shape[1]}]"
+        # )
 
         X = self.model_embeddings.source(source_padded)
-        print(f"[NMT.encode] = X.shape: {X.shape}")
+        # print(f"[NMT.encode] = X.shape: {X.shape}")
         # len, batch_size, embedding_dim
         X = torch.permute(X, (1, 2, 0))  # batch_size, e_dim, len
-        print(f"[NMT.encode] = before embed_cnn X.shape: {X.shape}")
+        # print(f"[NMT.encode] = before embed_cnn X.shape: {X.shape}")
         X = self.post_embed_cnn(X)
-        print(f"[NMT.encode] = post embed_cnn X.shape: {X.shape}")
+        # print(f"[NMT.encode] = post embed_cnn X.shape: {X.shape}")
         X = torch.permute(X, (2, 0, 1))
-        print(f"[NMT.encode] = X.shape: {X.shape}")
+        # print(f"[NMT.encode] = X.shape: {X.shape}")
         packed = pack_padded_sequence(X, lengths=source_lengths)  # TODO: why?
-        print(
-            f"[NMT.encode] = packed [data.shape: {packed.data.shape}, batch_sizes.shape: {packed.batch_sizes.shape}]"
-        )
+        # print(
+        #     f"[NMT.encode] = packed [data.shape: {packed.data.shape}, batch_sizes.shape: {packed.batch_sizes.shape}]"
+        # )
 
         # packed_seq (tensor, tensor)
         enc_hiddens, (last_hidden, last_cell) = self.encoder(packed)
         enc_hiddens, enc_lengths = pad_packed_sequence(enc_hiddens)
-        print(
-            f"[NMT.encode] = enc_hiddens.shape: {enc_hiddens.shape}, enc_lengths.shape: {enc_lengths.shape}"
-        )
-        print(
-            f"[NMT.encode] = match_lengths: {source_lengths.__eq__(enc_lengths.tolist())}"
-        )
+        # print(
+        #     f"[NMT.encode] = enc_hiddens.shape: {enc_hiddens.shape}, enc_lengths.shape: {enc_lengths.shape}"
+        # )
+        # print(
+        #     f"[NMT.encode] = match_lengths: {source_lengths.__eq__(enc_lengths.tolist())}"
+        # )
         enc_hiddens = torch.permute(enc_hiddens, (1, 0, 2))
 
-        print("[NMT.encode] ------------------------------------")
+        # print("[NMT.encode] ------------------------------------")
 
-        print(
-            f"[NMT.encode] = enc_last_hidden: {last_hidden.shape}, enc_last_cell: {last_cell.shape}"
-        )  # (2, batch_size, hidden_size), dim_0=2, bilstm, 2h
+        # print(
+        #     f"[NMT.encode] = enc_last_hidden: {last_hidden.shape}, enc_last_cell: {last_cell.shape}"
+        # )  # (2, batch_size, hidden_size), dim_0=2, bilstm, 2h
 
         last_hidden = torch.cat([last_hidden[0], last_hidden[1]], dim=1)
-        print(f"[NMT.encode] = last_hidden_concat = {last_hidden.shape}")
+        # print(f"[NMT.encode] = last_hidden_concat = {last_hidden.shape}")
         init_decoder_hidden = self.h_projection(last_hidden)
-        print(f"[NMT.encode] = init_decoder_hidden.shape = {init_decoder_hidden.shape}")
+        # print(f"[NMT.encode] = init_decoder_hidden.shape = {init_decoder_hidden.shape}")
 
         last_cell = torch.cat([last_cell[0], last_cell[1]], dim=1)
         init_decoder_cell = self.c_projection(last_cell)
@@ -307,18 +307,18 @@ class NMT(nn.Module):
         @returns combined_outputs (Tensor): combined output tensor  (tgt_len, b,  h), where
                                         tgt_len = maximum target sentence length, b = batch_size,  h = hidden size
         """
-        print(
-            f"[NMT.decode] = [enc_hiddens.shape: {enc_hiddens.shape}, enc_masks.shape: {enc_masks.shape}]"
-        )
+        # print(
+        #     f"[NMT.decode] = [enc_hiddens.shape: {enc_hiddens.shape}, enc_masks.shape: {enc_masks.shape}]"
+        # )
         # Chop off the <END> token for max length sentences.
         target_padded = target_padded[:-1]
-        print(f"[NMT.decode] = target_padded.shape {target_padded.shape}")
+        # print(f"[NMT.decode] = target_padded.shape {target_padded.shape}")
 
         # Initialize the decoder state (hidden and cell)
         dec_state = dec_init_state
-        print(
-            f"[NMT.decode] = dec_state[0].shape {dec_state[0].shape}, dec_state[1].shape {dec_state[1].shape}"
-        )
+        # print(
+        #     f"[NMT.decode] = dec_state[0].shape {dec_state[0].shape}, dec_state[1].shape {dec_state[1].shape}"
+        # )
 
         # Initialize previous combined output vector o_{t-1} as zero
         batch_size = enc_hiddens.size(0)
@@ -365,39 +365,39 @@ class NMT(nn.Module):
 
         # if not bidirectional, we wouldn't need this.
         enc_hiddens_proj = self.att_projection(enc_hiddens)
-        print(f"[NMT.decode] = enc_hiddens_proj.shape {enc_hiddens_proj.shape}")
+        # print(f"[NMT.decode] = enc_hiddens_proj.shape {enc_hiddens_proj.shape}")
         Y = self.model_embeddings.target(target_padded)
-        print(f"[NMT.decode] = Y.shape {Y.shape}")
+        # print(f"[NMT.decode] = Y.shape {Y.shape}")
 
         split_tensors = torch.split(Y, 1)
-        print(
-            f"[NMT.decode] = split_tensors.length {len(split_tensors)}, split_tensors.shape {split_tensors[0].shape}"
-        )
-        for i, Y_t in enumerate(torch.split(Y, 1)):
+        # print(
+        #     f"[NMT.decode] = split_tensors.length {len(split_tensors)}, split_tensors.shape {split_tensors[0].shape}"
+        # )
+        for i, Y_t in enumerate(split_tensors):
             Y_t = torch.squeeze(Y_t)
-            if i == 0:
-                print(f"[NMT.decode] [loop, i=0] Y_t.shape {Y_t.shape}")
+            # if i == 0:
+            #     print(f"[NMT.decode] [loop, i=0] Y_t.shape {Y_t.shape}")
             Ybar_t = torch.cat([Y_t, o_prev], dim=-1)
-            if i == 0:
-                print(f"[NMT.decode] [loop, i=0] Ybar_t.shape {Ybar_t.shape}")
+            # if i == 0:
+            #     print(f"[NMT.decode] [loop, i=0] Ybar_t.shape {Ybar_t.shape}")
             dec_state, o_t, _ = self.step(
                 Ybar_t, dec_state, enc_hiddens, enc_hiddens_proj, enc_masks
             )
-            if i == 0:
-                print(
-                    f"[NMT.decode] [loop, i=0] dec_state.[h,c] {[dec_state[0].shape, dec_state[1].shape]}"
-                )
-                print(f"[NMT.decode] [loop, i=0] o_t.shape {o_t.shape}")
+            # if i == 0:
+            #     print(
+            #         f"[NMT.decode] [loop, i=0] dec_state.[h,c] {[dec_state[0].shape, dec_state[1].shape]}"
+            #     )
+            #     print(f"[NMT.decode] [loop, i=0] o_t.shape {o_t.shape}")
 
             combined_outputs.append(o_t)
             o_prev = o_t
 
         ### END YOUR CODE
-        print(
-            f"[NMT.decode] = combined_outputs.len: {len(combined_outputs)}, combined_outputs[0].shape {combined_outputs[0].shape}"
-        )
+        # print(
+        #     f"[NMT.decode] = combined_outputs.len: {len(combined_outputs)}, combined_outputs[0].shape {combined_outputs[0].shape}"
+        # )
         combined_outputs = torch.stack(combined_outputs, 0)
-        print(f"[NMT.decode] = stack.combined_outputs.shape: {combined_outputs.shape}")
+        # print(f"[NMT.decode] = stack.combined_outputs.shape: {combined_outputs.shape}")
 
         return combined_outputs
 
@@ -432,21 +432,21 @@ class NMT(nn.Module):
         """
 
         combined_output = None
-        print(
-            f"[NMT.step] Ybar_t: {Ybar_t.shape} dec_state: [{dec_state[0].shape}, {dec_state[1].shape}] batch_size: {dec_state[0].shape[0]}"
-        )
+        # print(
+        #     f"[NMT.step] Ybar_t: {Ybar_t.shape} dec_state: [{dec_state[0].shape}, {dec_state[1].shape}] batch_size: {dec_state[0].shape[0]}"
+        # )
         dec_state = self.decoder(Ybar_t, dec_state)
         dec_hidden, dec_cell = dec_state
-        print(f"[NMT.step] new_state dec_hidden.shape: {dec_hidden.shape}")
-        print(f"[NMT.step] new_state dec_cell.shape: {dec_cell.shape}")
-        print(f"[NMT.step] enc_hiddens_proj.shape: {enc_hiddens_proj.shape}")
-        # dec_hidden = torch.transpose(dec_hidden, 0, 1) # TODO: why not Transpose?
+        # print(f"[NMT.step] new_state dec_hidden.shape: {dec_hidden.shape}")
+        # print(f"[NMT.step] new_state dec_cell.shape: {dec_cell.shape}")
+        # print(f"[NMT.step] enc_hiddens_proj.shape: {enc_hiddens_proj.shape}")
+        # # dec_hidden = torch.transpose(dec_hidden, 0, 1) # TODO: why not Transpose?
         dec_hidden_squeezed = dec_hidden.unsqueeze(dim=-1)
-        print(f"[NMT.step] dec_hidden_squeezed.shape: {dec_hidden_squeezed.shape}")
+        # print(f"[NMT.step] dec_hidden_squeezed.shape: {dec_hidden_squeezed.shape}")
         e_t = torch.bmm(enc_hiddens_proj, dec_hidden_squeezed)
-        print(f"[NMT.step] e_t.shape: {e_t.shape}")
+        # print(f"[NMT.step] e_t.shape: {e_t.shape}")
         e_t = e_t.squeeze(-1)  # batch, enc_seq_length
-        print(f"[NMT.step] squeezed e_t ~ attention_scores.shape: {e_t.shape}")
+        # print(f"[NMT.step] squeezed e_t ~ attention_scores.shape: {e_t.shape}")
 
         ### YOUR CODE HERE (~3 Lines)
         ### TODO:
@@ -507,24 +507,24 @@ class NMT(nn.Module):
         ### END YOUR CODE
         alpha_t = e_t.softmax(1)
         # batch, enc_sequence_length
-        print(f"[NMT.step] alpha_t.softmax ~ attention_weights.shape: {alpha_t.shape}")
+        # print(f"[NMT.step] alpha_t.softmax ~ attention_weights.shape: {alpha_t.shape}")
         alpha_t = torch.unsqueeze(alpha_t, 1)
         # batch, 1, enc_seq_length
-        print(f"[NMT.step] alpha_t ~ attention_weights.shape: {alpha_t.shape}")
+        # print(f"[NMT.step] alpha_t ~ attention_weights.shape: {alpha_t.shape}")
         # batch, enc_seq_length, 2xh
-        print(f"[NMT.step] enc_hiddens.shape: {enc_hiddens.shape}")
+        # print(f"[NMT.step] enc_hiddens.shape: {enc_hiddens.shape}")
         a_t = torch.bmm(alpha_t, enc_hiddens)  # attention vector
-        print(f"[NMT.step] a_t.shape: {a_t.shape}")  # batch, 1, hx2
+        # print(f"[NMT.step] a_t.shape: {a_t.shape}")  # batch, 1, hx2
         a_t = torch.squeeze(a_t, 1)
-        print(f"[NMT.step] squeezed a_t.shape: {a_t.shape}")  # batch, hx2
+        # print(f"[NMT.step] squeezed a_t.shape: {a_t.shape}")  # batch, hx2
         # ------
 
         U_t = torch.cat([a_t, dec_hidden], 1)  # [batch, hx2] + [batch, h]
-        print(f"[NMT.step] U_t.shape: {U_t.shape}")  # [batch, hx3]
+        # print(f"[NMT.step] U_t.shape: {U_t.shape}")  # [batch, hx3]
         v_t = self.combined_output_projection(U_t)
-        print(f"[NMT.step] v_t.shape: {v_t.shape}")  # [batch, h]
+        # print(f"[NMT.step] v_t.shape: {v_t.shape}")  # [batch, h]
         O_t = self.dropout(torch.tanh(v_t))
-        print(f"[NMT.step] O_t.shape: {O_t.shape}")  # [batch, h]
+        # print(f"[NMT.step] O_t.shape: {O_t.shape}")  # [batch, h]
 
         combined_output = O_t
         return dec_state, combined_output, e_t

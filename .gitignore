@@ -1,7 +1,7 @@
-*/__pycache__
+__pycache__
+runs
 */best_model*.pt
 .DS_Store
 */.ipynb_checkpoints
 .cache
 .vscode
-04-cs234/03/__pycache__
