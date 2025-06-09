@@ -6,3 +6,4 @@ runs
 .cache
 .vscode
 04-cs234/04/expt
+.venv
