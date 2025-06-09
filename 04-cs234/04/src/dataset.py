@@ -74,10 +74,11 @@ from torch.utils.data import Dataset
 #   x: John Stephen. Born in Glasgow, Steph⁇lder's apprentice on⁇en became a we⁇□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□
 #   y: ohn Stephen. Born in Glasgow, Steph⁇lder's apprentice on⁇en became a we⁇□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□
 
+
 class CharCorruptionDataset(Dataset):
     def __init__(self, data, block_size):
-        self.MASK_CHAR = "\u2047" # the doublequestionmark character, for mask
-        self.PAD_CHAR = "\u25A1" # the empty square character, for pad
+        self.MASK_CHAR = "\u2047"  # the doublequestionmark character, for mask
+        self.PAD_CHAR = "\u25a1"  # the empty square character, for pad
 
         chars = list(sorted(list(set(data))))
         assert self.MASK_CHAR not in chars
@@ -85,15 +86,15 @@ class CharCorruptionDataset(Dataset):
         chars.insert(0, self.MASK_CHAR)
         chars.insert(0, self.PAD_CHAR)
 
-        self.stoi = {ch:i for i,ch in enumerate(chars)}
-        self.itos = {i:ch for i,ch in enumerate(chars)}
+        self.stoi = {ch: i for i, ch in enumerate(chars)}
+        self.itos = {i: ch for i, ch in enumerate(chars)}
 
         data_size, vocab_size = len(data), len(chars)
-        print(f'data has {data_size} characters, {vocab_size} unique.')
+        print(f"data has {data_size} characters, {vocab_size} unique.")
 
         self.block_size = block_size
         self.vocab_size = vocab_size
-        self.data = data.split('\n')
+        self.data = data.split("\n")
 
     def __len__(self):
         return len(self.data)
@@ -101,7 +102,40 @@ class CharCorruptionDataset(Dataset):
     def __getitem__(self, idx):
         # TODO [part e]: see spec above
         ### YOUR CODE HERE ###
-        pass
+        document = self.data[idx]
+        # print("[__getitem__] document:", document)
+        truncate_count = min(
+            random.randint(4, int(self.block_size * 7 / 8)), len(document)
+        )
+        # print("[__getitem__] truncate_count:", truncate_count)
+        truncated_document = document[:truncate_count]
+        # print("[__getitem__] truncated_document:", truncated_document)
+
+        masked_length = random.randint(1, len(truncated_document) // 2)
+        i = random.randint(0, len(truncated_document) - masked_length)
+        j = i + masked_length
+        
+        # print("[__getitem__] i,j:", i, j)
+        
+        prefix, masked_content, suffix = (
+            truncated_document[:i],
+            truncated_document[i:j],
+            truncated_document[j:],
+        )
+        # print("[__getitem__] prefix:", prefix)
+        # print("[__getitem__] masked_content:", masked_content)
+        # print("[__getitem__] suffix:", suffix)
+        masked_string = prefix + self.MASK_CHAR + suffix + self.MASK_CHAR + masked_content
+        # print("[__getitem__] masked_string:", masked_string)
+        masked_string += self.PAD_CHAR * (self.block_size + 1 - len(masked_string))
+        # print("[__getitem__] masked_string+padding:", masked_string)
+        input_string, output_string = masked_string[:-1], masked_string[1:]
+        # print("[__getitem__] input_string:", input_string)
+        # print("[__getitem__] output_string:", output_string)
+        x = torch.tensor([self.stoi[c] for c in input_string], dtype=torch.long)
+        y = torch.tensor([self.stoi[c] for c in output_string], dtype=torch.long)
+        # print("[__getitem__] x:", x.flatten())
+        return x,y
         ### END YOUR CODE ###
 
 
@@ -121,23 +155,26 @@ class CharCorruptionDataset(Dataset):
 
 # You don't need to implement anything in NameDataset.
 
+
 class NameDataset(Dataset):
     def __init__(self, pretraining_dataset, data):
-        self.MASK_CHAR = "\u2047" # the doublequestionmark character, for mask
-        self.PAD_CHAR = "\u25A1" # the empty square character, for pad
+        self.MASK_CHAR = "\u2047"  # the doublequestionmark character, for mask
+        self.PAD_CHAR = "\u25a1"  # the empty square character, for pad
         self.itos = pretraining_dataset.itos
         self.stoi = pretraining_dataset.stoi
         self.block_size = pretraining_dataset.block_size
-        self.data = list(data.encode('utf-8').decode('ascii', errors='ignore').split('\n'))
+        self.data = list(
+            data.encode("utf-8").decode("ascii", errors="ignore").split("\n")
+        )
 
     def __len__(self):
         return len(self.data) - 1
 
     def __getitem__(self, idx):
-        inp, oup = self.data[idx].split('\t')
+        inp, oup = self.data[idx].split("\t")
         x = inp + self.MASK_CHAR + oup + self.MASK_CHAR
-        x = x + self.PAD_CHAR*(self.block_size - len(x))
-        y = self.PAD_CHAR*(len(inp)-1) + x[len(inp):]
+        x = x + self.PAD_CHAR * (self.block_size - len(x))
+        y = self.PAD_CHAR * (len(inp) - 1) + x[len(inp) :]
 
         x = x[:-1]
         x = torch.tensor([self.stoi[c] for c in x], dtype=torch.long)
@@ -148,30 +185,37 @@ class NameDataset(Dataset):
 # Code below is strictly for your debugging purposes; feel free to modify
 # as desired.
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     argp = argparse.ArgumentParser()
-    argp.add_argument('dataset_type', help="Type of dataset to sample from."
-            "Options: namedata, charcorruption.",
-            choices=["namedata", "charcorruption"])
+    argp.add_argument(
+        "dataset_type",
+        help="Type of dataset to sample from.Options: namedata, charcorruption.",
+        choices=["namedata", "charcorruption"],
+    )
     args = argp.parse_args()
 
-    if args.dataset_type == 'namedata':
+    if args.dataset_type == "namedata":
         # Even if it hasn't been implemented, we use it to define the vocab
         corruption_dataset = CharCorruptionDataset(
-            open('wiki.txt', encoding='utf-8').read(), 128)
+            open("wiki.txt", encoding="utf-8").read(), 128
+        )
         # Make the name dataset
-        name_dataset = NameDataset(corruption_dataset,
-            open('birth_places_train.tsv', encoding='utf-8').read())
+        name_dataset = NameDataset(
+            corruption_dataset, open("birth_places_train.tsv", encoding="utf-8").read()
+        )
         for _, example in zip(range(4), name_dataset):
             x, y = example
-            print('x:', ''.join([name_dataset.itos[int(c)] for c in x]))
-            print('y:', ''.join([name_dataset.itos[int(c)] for c in y]))
-    elif args.dataset_type == 'charcorruption':
+            print("x:", "".join([name_dataset.itos[int(c)] for c in x]))
+            print("y:", "".join([name_dataset.itos[int(c)] for c in y]))
+    elif args.dataset_type == "charcorruption":
         corruption_dataset = CharCorruptionDataset(
-            open('wiki.txt', encoding='utf-8').read(), 128)
+            open("wiki.txt", encoding="utf-8").read(), 128
+        )
         for _, example in zip(range(4), corruption_dataset):
             x, y = example
-            print('x:', ''.join([corruption_dataset.itos[int(c)] for c in x]))
-            print('y:', ''.join([corruption_dataset.itos[int(c)] for c in y]))
+            print("x:", "".join([corruption_dataset.itos[int(c)] for c in x]))
+            print("y:", "".join([corruption_dataset.itos[int(c)] for c in y]))
     else:
-        raise ValueError(f"Unknown dataset type in command line args: {args.dataset_type}")
+        raise ValueError(
+            f"Unknown dataset type in command line args: {args.dataset_type}"
+        )
