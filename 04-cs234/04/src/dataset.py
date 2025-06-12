@@ -175,7 +175,8 @@ class NameDataset(Dataset):
         x = inp + self.MASK_CHAR + oup + self.MASK_CHAR
         x = x + self.PAD_CHAR * (self.block_size - len(x))
         y = self.PAD_CHAR * (len(inp) - 1) + x[len(inp) :]
-
+        # print(x)
+        # print(y)
         x = x[:-1]
         x = torch.tensor([self.stoi[c] for c in x], dtype=torch.long)
         y = torch.tensor([self.stoi[c] for c in y], dtype=torch.long)
