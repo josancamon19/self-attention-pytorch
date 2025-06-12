@@ -38,29 +38,86 @@ def precompute_rotary_emb(dim, max_positions):
     rope_cache = None
     # TODO: [part g]
     ### YOUR CODE HERE ###
-    pass
+
+    theta_i = 1 / 10000 ** (-2 * (torch.arange(dim // 2) - 1) / dim)
+    # print(theta_i.shape)
+    # for every position, 1, 100
+    # for every dimension,
+    # compute cos, sin
+
+    positions = torch.arange(max_positions).unsqueeze(dim=1)
+    theta_i = theta_i.unsqueeze(dim=0)
+    # print(positions.shape, theta_i.shape)
+    thetas = positions * theta_i
+    # print(thetas.shape)
+    cosines = torch.cos(thetas)
+    sines = torch.sin(thetas)
+    rope_cache = torch.stack([cosines, sines], dim=-1)
+    # print(rope_cache.shape)
+    # print(cosines.shape)
+
+    # for pos in range(max_positions):
+    #     thetas_pos = []
+    #     for d in range(dim // 2):
+    #         thetas_pos.append([math.cos(pos * theta_i[d]), math.sin(pos * theta_i[d])])
+    #     rope_cache.append(thetas_pos)
     ### END YOUR CODE ###
     return rope_cache
 
 
+# output = precompute_rotary_emb(128, 100)
+
+
 def apply_rotary_emb(x, rope_cache):
     """Apply the RoPE to the input tensor x."""
-    # TODO: [part g]
+    # TODO: [part g] # TODO: need to improve pytorch
+    # print("apply_rotary_emb x:", x.shape, "rope_cache:", rope_cache.shape)
     # You might find the following functions useful to convert
     # between real and complex numbers:
+    # Reshape x to add a dimension for pairs of values
+    rope_truncated = rope_cache[: x.shape[0],]
+    # print("rope_truncated", rope_truncated.shape)
+
+    sequence_length = x.shape[0]
+    x_pairs = x.view(sequence_length, -1, 2)
+    x_pairs = x_pairs.to(torch.float16)
+    # INSTEAD OF COMPLEX, could've done direct matrix approach
+    # For each pair of dimesions [d1, d2] and rotation angle θ:
+    #   d1_new = d1 * cos(θ) - d2 * sin(θ)
+    #   d2_new = d1 * sin(θ) + d2 * cos(θ)
+    # but apparently complex op just goes way faster than this and represents the same.
+    # print("x_pairs.shape:", x_pairs.shape)
+    x_complex = torch.view_as_complex(x_pairs)
+    # print("x_complex", x_complex)
+    # print("x_complex.shape:", x_complex.shape)
+
+    rope_complex = torch.view_as_complex(rope_truncated)
+    # print("rope_complex", rope_complex.shape)
+    rotated_complex = x_complex * rope_complex
+    # print("rotated_complex", rotated_complex.shape)
 
     # torch.view_as_real - https://pytorch.org/docs/stable/generated/torch.view_as_real.html
     # torch.view_as_complex - https://pytorch.org/docs/stable/generated/torch.view_as_complex.html
-
+    rotated_real = torch.view_as_real(rotated_complex)
+    # print("rotated_real", rotated_real.shape)
+    rotated_x = rotated_real.flatten(-2)
+    # print("rotated_x", rotated_x.shape)
     # Note that during inference, the length of the sequence might be different
     # from the length of the precomputed values. In this case, you should use
     # truncate the precomputed values to match the length of the sequence.
 
-    rotated_x = None
     ### YOUR CODE HERE ###
-    pass
     ### END YOUR CODE ###
     return rotated_x
+
+
+# embed_dim = 10
+# sequence_length = 12
+# max_length = 14
+# rope_cache = precompute_rotary_emb(embed_dim, max_length)
+# x = torch.arange(0, embed_dim).repeat(sequence_length, 1)
+# apply_rotary_emb(x, rope_cache)
+
 
 class CausalSelfAttention(nn.Module):
     """
@@ -84,9 +141,8 @@ class CausalSelfAttention(nn.Module):
             # TODO: [part g] Precompute the cos and sin values for RoPE and
             # store them in rope_cache.
             # Hint: The maximum sequence length is given by config.block_size.
-            rope_cache = None
             ### YOUR CODE HERE ###
-            pass
+            rope_cache = precompute_rotary_emb(config.n_embed, config.block_size)
             ### END YOUR CODE ###
 
             self.register_buffer("rope_cache", rope_cache)
@@ -97,32 +153,46 @@ class CausalSelfAttention(nn.Module):
         # output projection
         self.proj = nn.Linear(config.n_embd, config.n_embd)
         # causal mask to ensure that attention is only applied to the left in the input sequence
-        self.register_buffer("mask", torch.tril(torch.ones(config.block_size, config.block_size))
-                                     .view(1, 1, config.block_size, config.block_size))
+        self.register_buffer(
+            "mask",
+            torch.tril(torch.ones(config.block_size, config.block_size)).view(
+                1, 1, config.block_size, config.block_size
+            ),
+        )
         self.n_head = config.n_head
 
     def forward(self, x):
         B, T, C = x.size()
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        k = self.key(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = self.value(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        k = (
+            self.key(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        )  # (B, nh, T, hs)
+        q = (
+            self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        )  # (B, nh, T, hs)
+        v = (
+            self.value(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        )  # (B, nh, T, hs)
 
         if self.rope:
             # TODO: [part g] Apply RoPE to the query and key.
             ### YOUR CODE HERE ###
-            pass
+            # TODO: is self.rope_cache correct, is q, k batch dimension missing?
+            q = apply_rotary_emb(q, self.rope_cache)
+            k = apply_rotary_emb(k, self.rope_cache)
             ### END YOUR CODE ###
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
 
-        att = att.masked_fill(self.mask[:,:,:T,:T] == 0, -1e10)
+        att = att.masked_fill(self.mask[:, :, :T, :T] == 0, -1e10)
         att = F.softmax(att, dim=-1)
         att = self.attn_drop(att)
-        y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+        y = att @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        y = (
+            y.transpose(1, 2).contiguous().view(B, T, C)
+        )  # re-assemble all head outputs side by side
 
         # output projection
         y = self.resid_drop(self.proj(y))
@@ -135,7 +205,7 @@ class CausalCrossAttention(nn.Module):
     cross-attention between them.
     This follows the implementation of the self attention module with
     auto-regressive masking on (key).
-    Manipulation of batch-size to allow for different batch size between the 
+    Manipulation of batch-size to allow for different batch size between the
     two inputs, with broadcasting over to the higher batch size value.
     """
 
@@ -152,8 +222,12 @@ class CausalCrossAttention(nn.Module):
         # output projection
         self.proj = nn.Linear(config.n_embd, config.n_embd)
         # causal mask to ensure that attention is only applied to the left in the input sequence
-        self.register_buffer("mask", torch.tril(torch.ones(config.block_size, config.block_size))
-                                     .view(1, 1, config.block_size, config.block_size))
+        self.register_buffer(
+            "mask",
+            torch.tril(torch.ones(config.block_size, config.block_size)).view(
+                1, 1, config.block_size, config.block_size
+            ),
+        )
         self.n_head = config.n_head
 
     def forward(self, x_kv, x_q):
@@ -161,26 +235,36 @@ class CausalCrossAttention(nn.Module):
         Bq, Tq, Cq = x_q.size()
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        
+
         # keys of x1
-        k = self.key(x_kv).view(Bk, Tk, self.n_head, Ck // self.n_head).transpose(1, 2) # (B, nh, Tk, hs)
-        
+        k = (
+            self.key(x_kv).view(Bk, Tk, self.n_head, Ck // self.n_head).transpose(1, 2)
+        )  # (B, nh, Tk, hs)
+
         # query with x2
-        q = self.query(x_q).view(Bq, Tq, self.n_head, Cq // self.n_head).transpose(1, 2) # (B, nh, Tq, hs)
-        
+        q = (
+            self.query(x_q).view(Bq, Tq, self.n_head, Cq // self.n_head).transpose(1, 2)
+        )  # (B, nh, Tq, hs)
+
         # values from x1
-        v = self.value(x_kv).view(Bk, Tk, self.n_head, Ck // self.n_head).transpose(1, 2) # (B, nh, Tk, hs)
+        v = (
+            self.value(x_kv)
+            .view(Bk, Tk, self.n_head, Ck // self.n_head)
+            .transpose(1, 2)
+        )  # (B, nh, Tk, hs)
 
         # causal self-attention;  (B, nh, Tk, hs) x (B, nh, hs, Tq) -> (B, nh, Tq, Tk)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        
+
         B = max(Bk, Bq)
-        
-        att = att.masked_fill(self.mask[:,:,:Tq,:Tk] == 0, -1e10) 
+
+        att = att.masked_fill(self.mask[:, :, :Tq, :Tk] == 0, -1e10)
         att = F.softmax(att, dim=-1)
         att = self.attn_drop(att)
-        y = att @ v # (B, nh, Tq, Tk) x (B, nh, Tk, hs) -> (B, nh, Tq, hs)
-        y = y.transpose(1, 2).contiguous().view(B, Tq, Cq) # re-assemble all head outputs side by side
+        y = att @ v  # (B, nh, Tq, Tk) x (B, nh, Tk, hs) -> (B, nh, Tq, hs)
+        y = (
+            y.transpose(1, 2).contiguous().view(B, Tq, Cq)
+        )  # re-assemble all head outputs side by side
 
         # output projection
         y = self.resid_drop(self.proj(y))
