@@ -71,7 +71,7 @@ def precompute_rotary_emb(dim, max_positions):
 def apply_rotary_emb(x, rope_cache):
     """Apply the RoPE to the input tensor x."""
     # TODO: [part g] # TODO: need to improve pytorch
-    # print("apply_rotary_emb x:", x.shape, "rope_cache:", rope_cache.shape)
+    print("apply_rotary_emb x:", x.shape, "rope_cache:", rope_cache.shape)
     # You might find the following functions useful to convert
     # between real and complex numbers:
     # Reshape x to add a dimension for pairs of values
@@ -142,7 +142,12 @@ class CausalSelfAttention(nn.Module):
             # store them in rope_cache.
             # Hint: The maximum sequence length is given by config.block_size.
             ### YOUR CODE HERE ###
-            rope_cache = precompute_rotary_emb(config.n_embed, config.block_size)
+            rope_cache = precompute_rotary_emb(config.n_embd, config.block_size)
+            # print(rope_cache.shape)
+            # rope_cache = rope_cache.unsqueeze(1)
+            # print(rope_cache.shape)
+            # rope_cache = rope_cache.repeat(8,2,3)
+            # print(rope_cache.shape)
             ### END YOUR CODE ###
 
             self.register_buffer("rope_cache", rope_cache)
@@ -162,9 +167,15 @@ class CausalSelfAttention(nn.Module):
         self.n_head = config.n_head
 
     def forward(self, x):
+        # embedding_dim = 256, //2 = 128
+        # batch_size = 128
+        # x sequence_length = 128
+
         B, T, C = x.size()
+        print(x.shape)  # batch_size, sequence_length, embedding_size
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        # nheads = 8, T = sequence_length, head_size = embed/heads = 256/8=32
         k = (
             self.key(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         )  # (B, nh, T, hs)
@@ -178,7 +189,7 @@ class CausalSelfAttention(nn.Module):
         if self.rope:
             # TODO: [part g] Apply RoPE to the query and key.
             ### YOUR CODE HERE ###
-            # TODO: is self.rope_cache correct, is q, k batch dimension missing?
+            # self.rope_cache = max_sequence_length, embed_dim // 2, 2
             q = apply_rotary_emb(q, self.rope_cache)
             k = apply_rotary_emb(k, self.rope_cache)
             ### END YOUR CODE ###
