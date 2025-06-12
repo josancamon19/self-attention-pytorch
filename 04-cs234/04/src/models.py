@@ -26,7 +26,8 @@ torch.manual_seed(0)
 
 
 class GPTConfig:
-    """ base GPT config, params common to all GPT versions """
+    """base GPT config, params common to all GPT versions"""
+
     embd_pdrop = 0.1
     resid_pdrop = 0.1
     attn_pdrop = 0.1
@@ -36,19 +37,20 @@ class GPTConfig:
     def __init__(self, vocab_size, block_size, **kwargs):
         self.vocab_size = vocab_size
         self.block_size = block_size
-        for k,v in kwargs.items():
+        for k, v in kwargs.items():
             setattr(self, k, v)
 
 
 class GPT1Config(GPTConfig):
-    """ GPT-1 like network roughly 125M params """
+    """GPT-1 like network roughly 125M params"""
+
     n_layer = 12
     n_head = 12
     n_embd = 768
 
 
 class Block(nn.Module):
-    """ an unassuming Transformer block """
+    """an unassuming Transformer block"""
 
     def __init__(self, config):
         super().__init__()
@@ -67,8 +69,9 @@ class Block(nn.Module):
         x = x + self.mlp(self.ln2(x))
         return x
 
+
 class GPT(nn.Module):
-    """  the full GPT language model, with a context size of block_size """
+    """the full GPT language model, with a context size of block_size"""
 
     def __init__(self, config):
         super().__init__()
@@ -76,7 +79,9 @@ class GPT(nn.Module):
         # input embedding stem
         self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
         if not config.rope:
-            self.pos_emb = nn.Parameter(torch.zeros(1, config.block_size, config.n_embd))
+            self.pos_emb = nn.Parameter(
+                torch.zeros(1, config.block_size, config.n_embd)
+            )
         self.drop = nn.Dropout(config.embd_pdrop)
         self.rope = config.rope
         # transformer
@@ -104,14 +109,18 @@ class GPT(nn.Module):
 
     def forward(self, idx, targets=None):
         b, t = idx.size()
-        assert t <= self.block_size, f"Cannot forward, model block size ({t}, {self.block_size}) is exhausted."
+        assert t <= self.block_size, (
+            f"Cannot forward, model block size ({t}, {self.block_size}) is exhausted."
+        )
 
         # forward the GPT model
-        token_embeddings = self.tok_emb(idx) # each index maps to a (learnable) vector
+        token_embeddings = self.tok_emb(idx)  # each index maps to a (learnable) vector
         if self.rope:
             x_input = token_embeddings
         else:
-            position_embeddings = self.pos_emb[:, :t, :] # each position maps to a (learnable) vector
+            position_embeddings = self.pos_emb[
+                :, :t, :
+            ]  # each position maps to a (learnable) vector
             x_input = token_embeddings + position_embeddings
 
         x = self.drop(x_input)
@@ -122,6 +131,8 @@ class GPT(nn.Module):
         # if we are given some desired targets also calculate the loss
         loss = None
         if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=0)
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=0
+            )
 
         return logits, loss
