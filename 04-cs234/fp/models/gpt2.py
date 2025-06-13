@@ -52,24 +52,23 @@ class GPT2Model(GPTPreTrainedModel):
         self.init_weights()
 
     def embed(self, input_ids):
-        print("embed input_ids.shape", input_ids.shape)
+        # print("embed input_ids.shape", input_ids.shape)
         input_shape = input_ids.size()
         seq_length = input_shape[1]
-
 
         ### YOUR CODE HERE
 
         inputs_embeds = self.word_embedding(input_ids)
-        print("embed inputs_embeds.shape", inputs_embeds.shape)
+        # print("embed inputs_embeds.shape", inputs_embeds.shape)
         pos_ids = self.position_ids[:, :seq_length]
-        print("embed pos_ids.shape", pos_ids.shape)
+        # print("embed pos_ids.shape", pos_ids.shape)
         pos_embeds = self.pos_embedding(pos_ids)
-        print("embed pos_embeds.shape", pos_embeds.shape)
+        # print("embed pos_embeds.shape", pos_embeds.shape)
         output = inputs_embeds + pos_embeds
-        print("embed output.shape", output.shape)
+        # print("embed output.shape", output.shape)
         output = self.embed_dropout(output)
-        
-        ### TODO: Use pos_ids to get position embedding from self.pos_embedding into pos_embeds.
+
+        ### ✅ Use pos_ids to get position embedding from self.pos_embedding into pos_embeds.
         ###       Then, add two embeddings together; then apply dropout and return.
         ### YOUR CODE HERE
         return output
