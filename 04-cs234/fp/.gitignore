@@ -1,0 +1,7 @@
+*pretest
+*~
+*.pyc
+*.pt
+*.pkl
+.idea/
+out/
