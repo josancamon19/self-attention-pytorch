@@ -104,5 +104,5 @@ print()
 
 # TODO: play with datasets here as well, test loss in prediction manually.
 
-explore_datasets()
-# exec_finetuned("Where was John Owens born?")
+# explore_datasets()
+exec_finetuned("Where was John Owens born?")

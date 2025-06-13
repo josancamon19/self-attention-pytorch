@@ -39,7 +39,11 @@ def precompute_rotary_emb(dim, max_positions):
     # TODO: [part g]
     ### YOUR CODE HERE ###
 
-    theta_i = 1 / 10000 ** (-2 * (torch.arange(dim // 2) - 1) / dim)
+    # theta_i = 1 / 10000 ** (-2 * (torch.arange(dim // 2) - 1) / dim)
+    # TODO: the formula above is incorrect, the -2 should be a 2 instead.
+    i = torch.arange(1, dim // 2 + 1, dtype=torch.float32)
+    theta_i = 1 / (10000 ** (2 * (i - 1) / dim))
+
     # print(theta_i.shape)
     # for every position, 1, 100
     # for every dimension,
@@ -121,7 +125,7 @@ def apply_rotary_emb(x, rope_cache):
     *leading_dims, _ = x.shape
     # print("apply_rotary_emb *leading_dims, last_dim:", )
 
-    x_pairs = x.view(*leading_dims, -1, 2) # or last_dim // 2, 2
+    x_pairs = x.view(*leading_dims, -1, 2)  # or last_dim // 2, 2
     # print("apply_rotary_emb x_pairs.shape:", x_pairs.shape)
     x_pairs = x_pairs.to(torch.float16)
 
@@ -135,13 +139,13 @@ def apply_rotary_emb(x, rope_cache):
     return rotated_x
 
 
-embed_dim = 12
-n_heads = 2
-batch_size = 5
-head_size = embed_dim // n_heads
+# embed_dim = 12
+# n_heads = 2
+# batch_size = 5
+# head_size = embed_dim // n_heads
 
-sequence_length = 16
-max_length = 20
+# sequence_length = 16
+# max_length = 20
 
 # 2d, x applied
 # rope_cache = precompute_rotary_emb(embed_dim, max_length)
@@ -149,11 +153,11 @@ max_length = 20
 # apply_rotary_emb_2dim(x, rope_cache)
 
 # batch, q applied, not x
-rope_cache = precompute_rotary_emb(embed_dim, max_length)
-x = torch.arange(0, embed_dim * sequence_length * n_heads * batch_size).reshape(
-    (batch_size, n_heads, sequence_length, -1)
-)
-apply_rotary_emb(x, rope_cache)
+# rope_cache = precompute_rotary_emb(embed_dim, max_length)
+# x = torch.arange(0, embed_dim * sequence_length * n_heads * batch_size).reshape(
+#     (batch_size, n_heads, sequence_length, -1)
+# )
+# apply_rotary_emb(x, rope_cache)
 
 
 class CausalSelfAttention(nn.Module):
