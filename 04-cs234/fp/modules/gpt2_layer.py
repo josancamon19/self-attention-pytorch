@@ -35,10 +35,6 @@ class GPT2Layer(nn.Module):
             IN THIS FUNCTION.
         """
         # TODO: implement this.
-        # Possible Reasons
-        # - adding layernorm where it shouldn't be?
-        # - operations in different order? are they actually implementing gpt2, cause the order defined __init__ is strange.
-        # - order of attention operations is incorrect? like dropout or mask?
         return dropout(dense_layer(output(*_input))) + _input[0]
 
     def forward(self, hidden_states, attention_mask):
@@ -57,12 +53,12 @@ class GPT2Layer(nn.Module):
         attention_output = attention_output + residual
         # print("GPT2Layer.forward attention_output.shape", attention_output.shape)
         
+        residual = attention_output
         mlp_output = self.out_layer_norm(attention_output)
         mlp_output = self.interm_dense(mlp_output)
         mlp_output = self.interm_af(mlp_output)
         mlp_output = self.out_dense(mlp_output)
         mlp_output = self.out_dropout(mlp_output)
-        mlp_output = mlp_output + attention_output
+        mlp_output = mlp_output + residual
         # print("GPT2Layer.forward mlp_output.shape", mlp_output.shape)
-
         return mlp_output
