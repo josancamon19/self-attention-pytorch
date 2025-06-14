@@ -99,11 +99,13 @@ class GPT2Model(GPTPreTrainedModel):
         attention_mask: same size as input_ids, 1 represents non-padding tokens, 0 represents padding tokens
         """
         # Get the embedding for each input token.
-        embedding_output = self.embed(input_ids=input_ids)
+        # print("gpt2 input_ids", input_ids.shape)
+        embedding_input = self.embed(input_ids=input_ids)
 
         # Feed to a transformer (a stack of GPTLayers).
-        sequence_output = self.encode(embedding_output, attention_mask=attention_mask)
+        sequence_output = self.encode(embedding_input, attention_mask=attention_mask)
         sequence_output = self.final_layer_norm(sequence_output)
+        # print("gpt2 sequence_output", sequence_output.shape)
 
         # Get the hidden state of the final token.
         last_non_pad_idx = attention_mask.sum(dim=1) - 1  # Subtract 1 to get last index
@@ -120,8 +122,9 @@ class GPT2Model(GPTPreTrainedModel):
 
           return hidden_state(s) * E^T
         """
-        ### YOUR CODE HERE
-        raise NotImplementedError
+        output = hidden_state @ self.word_embedding.weight.T
+        print("hidden_state_to_token", output.shape)
+        return output
 
     @classmethod
     def from_pretrained(cls, model="gpt2", d=768, l=12, num_heads=12):
