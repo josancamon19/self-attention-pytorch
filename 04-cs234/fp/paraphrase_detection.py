@@ -77,21 +77,16 @@ class ParaphraseGPT(nn.Module):
 
         "Takes a batch of sentences and produces embeddings for them."
 
-        # print("input_ids:", input_ids.shape)
         gpt_output: dict = self.gpt(input_ids, attention_mask)
-        # print("gpt_output", last_hidden_state.shape, last_token.shape)
-        # hidden_state = gpt_output["last_hidden_state"]
-        # next_token_prob = self.gpt.hidden_state_to_token(hidden_state)
-        # next_token_prob = torch.argmax(next_token_prob, -1)
-        # print(next_token_prob.shape)
-        # print(next_token_prob[0])
-        # return next_token_prob
+        hidden_state = gpt_output["last_hidden_state"]
+        next_token_logits = self.gpt.hidden_state_to_token(hidden_state)
+        print("next_token_logits.shape", next_token_logits.shape)
+        last_position_logits = next_token_logits[:, -1, :]
+        print("last_position_logits.shape", last_position_logits.shape)
+        return last_position_logits
+    
         last_token = gpt_output["last_token"]
-        output = self.paraphrase_detection_head(last_token)
-        # print(output.shape)
-        return output
-        # TODO: why not dropout here? complex taks? not enough capacity?
-        # TODO: if binary why output 2, and not 1 binary?
+        return self.paraphrase_detection_head(last_token)
 
 
 def save_model(model, optimizer, args, filepath):
@@ -156,7 +151,7 @@ def train(args):
             b_ids = b_ids.to(device)
             b_mask = b_mask.to(device)
             labels = labels.to(device)
-            labels = torch.where(labels == 8505, 1, 0)
+            # labels = torch.where(labels == 8505, 1, 0)
             # Compute the loss, gradients, and update the model's parameters.
             optimizer.zero_grad()
             logits = model(b_ids, b_mask)
