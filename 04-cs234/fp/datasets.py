@@ -149,6 +149,7 @@ class SonnetsDataset(Dataset):
 
         self.tokenizer.pad_token = self.tokenizer.eos_token
         self.sonnets = self._load_sonnets(file_path)
+        # print("SonnetsDataset, sonnet[0]:\n", self.sonnets[0], "\n")
 
     def _load_sonnets(self, file_path):
         """Reads the file and extracts individual sonnets."""
