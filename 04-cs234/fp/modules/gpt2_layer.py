@@ -26,7 +26,7 @@ class GPT2Layer(nn.Module):
         )
         self.out_dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def add(self, _input, output, dense_layer, dropout):
+    def add(self, residual, output, dense_layer, dropout):
         """
         TODO: Implement this helper method for the forward function.
           - This function is applied after the multi-head attention layer as well as after the feed forward layer.
@@ -34,8 +34,8 @@ class GPT2Layer(nn.Module):
             before it is added to the sub-layer input. WE DO NOT APPLY THE LAYER NORM
             IN THIS FUNCTION.
         """
-        # TODO: implement this.
-        return dropout(dense_layer(output(*_input))) + _input[0]
+        # Apply dense layer to output, then dropout, then add residual
+        return dropout(dense_layer(output)) + residual
 
     def forward(self, hidden_states, attention_mask):
         """
@@ -45,20 +45,22 @@ class GPT2Layer(nn.Module):
                - Apply dropout, residual connection, and layer normalization according to the plot in the assignment. (Use self.add)
                - A feed-forward layer that applies transformations to further refine the hidden states.
         """
-        residual = hidden_states
-        hidden_states = self.attention_layer_norm(hidden_states)
-        attention_output = self.self_attention(hidden_states, attention_mask)
-        attention_output = self.attention_dense(attention_output)
-        attention_output = self.attention_dropout(attention_output)
-        attention_output = attention_output + residual
-        # print("GPT2Layer.forward attention_output.shape", attention_output.shape)
-        
-        residual = attention_output
-        mlp_output = self.out_layer_norm(attention_output)
-        mlp_output = self.interm_dense(mlp_output)
-        mlp_output = self.interm_af(mlp_output)
-        mlp_output = self.out_dense(mlp_output)
-        mlp_output = self.out_dropout(mlp_output)
-        mlp_output = mlp_output + residual
-        # print("GPT2Layer.forward mlp_output.shape", mlp_output.shape)
+        # Attention block using add helper
+        normed_hidden = self.attention_layer_norm(hidden_states)
+        attention_output = self.add(
+            hidden_states,
+            self.self_attention(normed_hidden, attention_mask),
+            self.attention_dense,
+            self.attention_dropout,
+        )
+
+        # MLP block using add helper
+        normed_attention = self.out_layer_norm(attention_output)
+        mlp_output = self.add(
+            attention_output,
+            self.interm_af(self.interm_dense(normed_attention)),
+            self.out_dense,
+            self.out_dropout,
+        )
+
         return mlp_output

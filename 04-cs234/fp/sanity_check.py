@@ -18,6 +18,7 @@ def test_gpt2(model_size='gpt2'):
   gpt = GPT2Model.from_pretrained(model=model_size, **model_size_to_params(model_size))
 
   outputs = gpt(sent_ids, att_mask)
+  print(outputs)
   openai_outputs = openai_model(input_ids=sent_ids, attention_mask=att_mask, output_hidden_states=True).hidden_states[-1]
 
   att_mask = att_mask.unsqueeze(-1)
