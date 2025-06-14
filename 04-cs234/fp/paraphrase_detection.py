@@ -78,12 +78,7 @@ class ParaphraseGPT(nn.Module):
         "Takes a batch of sentences and produces embeddings for them."
 
         gpt_output: dict = self.gpt(input_ids, attention_mask)
-        hidden_state = gpt_output["last_hidden_state"]
-        next_token_logits = self.gpt.hidden_state_to_token(hidden_state)
-        print("next_token_logits.shape", next_token_logits.shape)
-        last_position_logits = next_token_logits[:, -1, :]
-        print("last_position_logits.shape", last_position_logits.shape)
-        return last_position_logits
+        return self.gpt.hidden_state_to_token(gpt_output["last_hidden_state"])[:, -1, :]
 
         last_token = gpt_output["last_token"]
         return self.paraphrase_detection_head(last_token)
