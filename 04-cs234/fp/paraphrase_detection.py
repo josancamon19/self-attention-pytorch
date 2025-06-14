@@ -84,7 +84,7 @@ class ParaphraseGPT(nn.Module):
         last_position_logits = next_token_logits[:, -1, :]
         print("last_position_logits.shape", last_position_logits.shape)
         return last_position_logits
-    
+
         last_token = gpt_output["last_token"]
         return self.paraphrase_detection_head(last_token)
 
