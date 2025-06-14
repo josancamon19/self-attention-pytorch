@@ -55,16 +55,18 @@ class GPT2SentimentClassifier(torch.nn.Module):
                 param.requires_grad = True
 
         ### TODO: Create any instance variables you need to classify the sentiment of BERT embeddings.
-        self.classifier_dropout = nn.Dropout()
-        self.classifier_hidden = nn.Linear(
-            config.hidden_size, config.num_labels
-        )  # project 4x then relu then out?
+        self.classifier_dropout = nn.Dropout(p=config.hidden_dropout_prob)
+        self.classifier = nn.Linear(config.hidden_size, config.num_labels)
         ### YOUR CODE HERE
 
     def forward(self, input_ids, attention_mask):
         """Takes a batch of sentences and returns logits for sentiment classes"""
         gpt_output: dict = self.gpt(input_ids, attention_mask)
-        return self.classifier_hidden(self.classifier_dropout(gpt_output["last_token"]))
+        # hidden = self.classifier_hidden(
+        #     self.classifier_dropout(gpt_output["last_token"])
+        # )
+        # return self.classifier_out(self.classifier_relu(hidden))
+        return self.classifier(self.classifier_dropout(gpt_output["last_token"]))
         ### TODO: The final GPT contextualized embedding is the hidden state of the last token.
         ###       HINT: You should consider what is an appropriate return value given that
         ###       the training loop currently uses F.cross_entropy as the loss function.
@@ -257,6 +259,7 @@ def save_model(model, optimizer, args, config, filepath):
 
 def train(args):
     device = torch.device("cuda") if args.use_gpu else torch.device("cpu")
+    print("train device:", device)
     # Create the data and its corresponding datasets and dataloader.
     train_data, num_labels = load_data(args.train, "train")
     dev_data = load_data(args.dev, "valid")
@@ -343,7 +346,7 @@ def train(args):
 def test(args):
     with torch.no_grad():
         device = torch.device("cuda") if args.use_gpu else torch.device("cpu")
-        saved = torch.load(args.filepath)
+        saved = torch.load(args.filepath, weights_only=False)
         config = saved["model_config"]
         model = GPT2SentimentClassifier(config)
         model.load_state_dict(saved["model"])
