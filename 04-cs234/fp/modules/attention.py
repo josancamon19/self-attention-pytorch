@@ -50,7 +50,11 @@ class CausalSelfAttention(nn.Module):
         attention_scores = query @ key.transpose(3, 2)
         attention_scores = attention_scores / math.sqrt(key.shape[-1])
         # print(attention_mask)
-        attention_scores = attention_scores + attention_mask
+        causal_mask = torch.tril(torch.ones(sequence_length, sequence_length))
+        causal_mask = (1.0 - causal_mask) * -10000.0 # match attention_mask base
+        # print(attention_mask)
+        attention_scores = attention_scores + attention_mask + causal_mask
+        
         # print("CausalSelfAttention.attention scores.shape", attention_scores.shape)
         attention_weights = torch.softmax(attention_scores, -1)
         attention_weights = self.dropout(attention_weights)
