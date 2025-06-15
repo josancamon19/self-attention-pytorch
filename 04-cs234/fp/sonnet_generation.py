@@ -8,6 +8,7 @@ trains your SonnetGPT model and writes the required submission files.
 """
 
 import argparse
+import os
 import random
 import torch
 
@@ -29,6 +30,25 @@ from optimizer import AdamW
 from peft import LoraConfig, TaskType, get_peft_model
 
 TQDM_DISABLE = False
+
+
+def _get_lora_config(inference: bool):
+    return LoraConfig(
+        target_modules=[
+            "query",
+            "key",
+            "value",
+            "attention_dense",
+            # if only interm_dense, has issue with interm*4, instead of custom *3 of ours, why?
+            "gpt.gpt_layers.*.interm_dense",
+            "gpt.gpt_layers.*.out_dense",
+        ],
+        task_type=TaskType.CAUSAL_LM,
+        inference_mode=False,
+        r=32,
+        lora_alpha=64,
+        lora_dropout=0.1,
+    )
 
 
 # Fix the random seed.
@@ -56,6 +76,11 @@ class SonnetGPT(nn.Module):
         # By default, fine-tune the full model. TODO: this is maybe not idea.
         for param in self.gpt.parameters():
             param.requires_grad = True
+
+        # Add generation_config for PEFT compatibility
+        from types import SimpleNamespace
+
+        self.generation_config = SimpleNamespace(temperature=0.7, top_p=0.9)
 
     @property
     def config(self):
@@ -143,7 +168,7 @@ class SonnetGPT(nn.Module):
         }
 
 
-def save_model(model, optimizer, args, filepath):
+def save_model(model, optimizer, args):
     save_info = {
         "model": model.state_dict(),
         "optim": optimizer.state_dict(),
@@ -153,8 +178,10 @@ def save_model(model, optimizer, args, filepath):
         "torch_rng": torch.random.get_rng_state(),
     }
 
-    torch.save(save_info, filepath)
-    print(f"save the model to {filepath}")
+    torch.save(save_info, args.filepath)
+    print(f"save the model to {args.filepath}")
+    if args.peft:
+        model.save_pretrained(".models/sonnet")
 
 
 def train(args):
@@ -175,23 +202,7 @@ def train(args):
     args = add_arguments(args)
     model = SonnetGPT(args)
     model = model.to(device)
-    peft_config = LoraConfig(
-        target_modules=[
-            "query",
-            "key",
-            "value",
-            "attention_dense",
-            # if only interm_dense, has issue with interm*4, instead of custom *3 of ours, why?
-            "gpt.gpt_layers.*.interm_dense", 
-            "gpt.gpt_layers.*.out_dense",
-        ],
-        task_type=TaskType.CAUSAL_LM,
-        inference_mode=False,
-        r=4,
-        lora_alpha=8,
-        lora_dropout=0.1,
-    )
-    model = get_peft_model(model, peft_config)
+    model = get_peft_model(model, _get_lora_config(False))
     model.print_trainable_parameters()
 
     lr = args.lr
@@ -241,7 +252,7 @@ def train(args):
         #     print(f"{batch[1]}{output[1]}\n\n")
 
         # TODO: consider a stopping condition to prevent overfitting on the small dataset of sonnets.
-        save_model(model, optimizer, args, f"{epoch}_{args.filepath}")
+        save_model(model, optimizer, args)
 
 
 @torch.no_grad()
@@ -250,7 +261,8 @@ def generate_submission_sonnets(args):
     saved = torch.load(f"{args.epochs - 1}_{args.filepath}", weights_only=False)
 
     model = SonnetGPT(saved["args"])
-    model.load_state_dict(saved["model"])
+    model = get_peft_model(model, _get_lora_config(False))
+    # model.load_state_dict(saved["model"])
     model = model.to(device)
     model.eval()
 
@@ -270,10 +282,10 @@ def generate_submission_sonnets(args):
         full_sonnet = f"{decoded_output}\n\n"
         generated_sonnets.append((sonnet_id, full_sonnet))
 
-        print(f"{decoded_output}\n\n")
+        print(batch[1], "\noutput:", decoded_output, "-\n----")
 
     with open(args.sonnet_out, "w+") as f:
-        f.write(f"--Generated Sonnets-- \n\n")
+        f.write("--Generated Sonnets-- \n\n")
         for sonnet in generated_sonnets:
             f.write(f"\n{sonnet[0]}\n")
             f.write(sonnet[1])
@@ -293,6 +305,7 @@ def get_args():
     parser.add_argument("--seed", type=int, default=11711)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--use_gpu", action="store_true")
+    parser.add_argument("--peft", action="store_true")
 
     # Generation parameters.
     parser.add_argument(
@@ -342,7 +355,8 @@ def add_arguments(args):
 
 if __name__ == "__main__":
     args = get_args()
-    args.filepath = f"{args.epochs}-{args.lr}-{args.model_size}-sonnet.pt"  # Save path.
+    os.makedirs("./models/sonnet", exist_ok=True)
+    args.filepath = f"./models/sonnet/{args.model_size}-{args.lr}.pt"  # Save path.
     seed_everything(args.seed)  # Fix the seed for reproducibility.
     train(args)
     generate_submission_sonnets(args)
