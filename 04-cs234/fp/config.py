@@ -96,6 +96,18 @@ class PretrainedConfig(object):
       except AttributeError as err:
         raise err
 
+  def get(self, key: str, default: Any = None) -> Any:
+    """Get a configuration field value.
+    
+    Args:
+        key: The name of the configuration field to retrieve
+        default: The default value to return if the field doesn't exist
+        
+    Returns:
+        The value of the configuration field if it exists, otherwise the default value
+    """
+    return getattr(self, key, default)
+
   @classmethod
   def from_pretrained(cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs) -> "PretrainedConfig":
     config_dict, kwargs = cls.get_config_dict(pretrained_model_name_or_path, **kwargs)

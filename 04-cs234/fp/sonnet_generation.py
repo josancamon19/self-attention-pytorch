@@ -27,6 +27,7 @@ from models.gpt2 import GPT2Model
 
 from optimizer import AdamW
 from peft import LoraConfig, TaskType, get_peft_model
+
 TQDM_DISABLE = False
 
 
@@ -56,7 +57,12 @@ class SonnetGPT(nn.Module):
         for param in self.gpt.parameters():
             param.requires_grad = True
 
-    def forward(self, input_ids, attention_mask):
+    @property
+    def config(self):
+        """Forward the config from the underlying GPT2 model for PEFT compatibility."""
+        return self.gpt.config
+
+    def forward(self, input_ids, attention_mask, **kwargs):
         """
         This is similar to the forward for ParaphraseGPT, but we now want to produce a logit for each token in our sequence;
         not just the last token! This will allow our model to learn the natural language distribution that composes sonnets,
@@ -129,6 +135,13 @@ class SonnetGPT(nn.Module):
         ]
         return token_ids, generated_output
 
+    def prepare_inputs_for_generation(self, input_ids, attention_mask=None, **kwargs):
+        """Required method for PEFT compatibility with causal LM."""
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+        }
+
 
 def save_model(model, optimizer, args, filepath):
     save_info = {
@@ -163,15 +176,23 @@ def train(args):
     model = SonnetGPT(args)
     model = model.to(device)
     peft_config = LoraConfig(
-        target_modules=["query", "key", "value", "interm_dense", "out_dense"],
+        target_modules=[
+            "query",
+            "key",
+            "value",
+            "attention_dense",
+            # if only interm_dense, has issue with interm*4, instead of custom *3 of ours, why?
+            "gpt.gpt_layers.*.interm_dense", 
+            "gpt.gpt_layers.*.out_dense",
+        ],
         task_type=TaskType.CAUSAL_LM,
         inference_mode=False,
         r=4,
         lora_alpha=8,
-        lora_dropout=0.1
+        lora_dropout=0.1,
     )
-    model2 = get_peft_model(model, peft_config)
-    model2.print_trainable_parameters()
+    model = get_peft_model(model, peft_config)
+    model.print_trainable_parameters()
 
     lr = args.lr
     optimizer = AdamW(model.parameters(), lr=lr)
