@@ -177,11 +177,10 @@ def save_model(model, optimizer, args):
         "numpy_rng": np.random.get_state(),
         "torch_rng": torch.random.get_rng_state(),
     }
-
     torch.save(save_info, args.filepath)
     print(f"save the model to {args.filepath}")
     if args.peft:
-        model.save_pretrained(".models/sonnet")
+        model.save_pretrained("./.models/sonnet")
 
 
 def train(args):
@@ -258,7 +257,7 @@ def train(args):
 @torch.no_grad()
 def generate_submission_sonnets(args):
     device = torch.device("cuda") if args.use_gpu else torch.device("cpu")
-    saved = torch.load(f"{args.epochs - 1}_{args.filepath}", weights_only=False)
+    saved = torch.load(args.filepath, weights_only=False)
 
     model = SonnetGPT(saved["args"])
     model = get_peft_model(model, _get_lora_config(False))
@@ -355,8 +354,8 @@ def add_arguments(args):
 
 if __name__ == "__main__":
     args = get_args()
-    os.makedirs("./models/sonnet", exist_ok=True)
-    args.filepath = f"./models/sonnet/{args.model_size}-{args.lr}.pt"  # Save path.
+    os.makedirs("./.models/sonnet", exist_ok=True)
+    args.filepath = f"./.models/sonnet/{args.model_size}-{args.lr}.pt"  # Save path.
     seed_everything(args.seed)  # Fix the seed for reproducibility.
     train(args)
-    generate_submission_sonnets(args)
+    # generate_submission_sonnets(args)
