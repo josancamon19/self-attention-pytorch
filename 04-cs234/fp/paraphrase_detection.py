@@ -14,7 +14,7 @@ trains and evaluates your ParaphraseGPT model and writes the required submission
 import argparse
 import random
 import torch
-
+import os
 import numpy as np
 import torch.nn.functional as F
 
@@ -31,6 +31,9 @@ from evaluation import model_eval_paraphrase, model_test_paraphrase
 from models.gpt2 import GPT2Model
 
 from optimizer import AdamW
+from sonnet_generation import _get_lora_config
+from peft import LoraConfig, TaskType, get_peft_model
+from types import SimpleNamespace
 
 TQDM_DISABLE = False
 
@@ -54,15 +57,17 @@ class ParaphraseGPT(nn.Module):
         self.gpt = GPT2Model.from_pretrained(
             model=args.model_size, d=args.d, l=args.l, num_heads=args.num_heads
         )
-        self.paraphrase_detection_head = nn.Linear(
-            args.d, 2
-        )  # Paraphrase detection has two outputs: 1 (yes) or 0 (no).
+        # self.paraphrase_detection_head = nn.Linear(
+        #     args.d, 2
+        # )  # Paraphrase detection has two outputs: 1 (yes) or 0 (no).
 
         # By default, fine-tune the full model.
         for param in self.gpt.parameters():
             param.requires_grad = True
+        
+        self.generation_config = SimpleNamespace(temperature=0.7, top_p=0.9)
 
-    def forward(self, input_ids, attention_mask):
+    def forward(self, input_ids, attention_mask, **kwargs):
         """
         TODO: Predict the label of the token using the paraphrase_detection_head Linear layer.
 
@@ -80,11 +85,18 @@ class ParaphraseGPT(nn.Module):
         gpt_output: dict = self.gpt(input_ids, attention_mask)
         return self.gpt.hidden_state_to_token(gpt_output["last_hidden_state"])[:, -1, :]
 
-        last_token = gpt_output["last_token"]
-        return self.paraphrase_detection_head(last_token)
+        # last_token = gpt_output["last_token"]
+        # return self.paraphrase_detection_head(last_token)
+    
+    @property
+    def config(self):
+        return self.gpt.config
+    
+    def prepare_inputs_for_generation(self, input_ids, attention_mask=None, **kwargs):
+        return {"input_ids": input_ids, "attention_mask": attention_mask}
 
 
-def save_model(model, optimizer, args, filepath):
+def save_model(model, optimizer, args):
     save_info = {
         "model": model.state_dict(),
         "optim": optimizer.state_dict(),
@@ -95,6 +107,8 @@ def save_model(model, optimizer, args, filepath):
     }
 
     torch.save(save_info, filepath)
+    if args.peft:
+        model.save_pretrained("./.models/paraphrase")
     print(f"save the model to {filepath}")
 
 
@@ -124,6 +138,9 @@ def train(args):
     args = add_arguments(args)
     model = ParaphraseGPT(args)
     model = model.to(device)
+    if args.peft:
+        model = get_peft_model(model, _get_lora_config(False))
+        model.print_trainable_parameters()
 
     lr = args.lr
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=0.0)
@@ -179,7 +196,10 @@ def test(args):
     saved = torch.load(args.filepath, weights_only=False)
 
     model = ParaphraseGPT(saved["args"])
-    model.load_state_dict(saved["model"])
+    # model.load_state_dict(saved["model"])
+    if args.peft:
+        model = get_peft_model(model, _get_lora_config(True))
+        
     model = model.to(device)
     model.eval()
     print(f"Loaded model to test from {args.filepath}")
@@ -238,6 +258,7 @@ def get_args():
     parser.add_argument("--seed", type=int, default=11711)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--use_gpu", action="store_true")
+    parser.add_argument("--peft", action="store_true")
 
     parser.add_argument(
         "--batch_size",
@@ -279,7 +300,8 @@ def add_arguments(args):
 
 if __name__ == "__main__":
     args = get_args()
-    args.filepath = f"{args.epochs}-{args.lr}-{args.model_size}-paraphrase.pt"  # Save path.
+    os.makedirs("./.models/paraphrase", exist_ok=True)
+    args.filepath = f"./.models/paraphrase/{args.model_size}-{args.lr}.pt"
     seed_everything(args.seed)  # Fix the seed for reproducibility.
     train(args)
     test(args)
