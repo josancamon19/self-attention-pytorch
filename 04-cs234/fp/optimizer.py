@@ -71,21 +71,23 @@ class AdamW(Optimizer):
                     state["step"] = 0
                     state["mt"] = torch.zeros_like(grad)  # First moment (m)
                     state["vt"] = torch.zeros_like(grad)  # Second moment (v)
-
+                
                 state["step"] += 1
-                state["mt"] = b1 * state["mt"] + (1 - b1) * grad
-                state["vt"] = b2 * state["vt"] + (1 - b2) * grad * grad
+                # Update moments in-place
+                state["mt"].mul_(b1).add_(grad, alpha=1 - b1)
+                state["vt"].mul_(b2).addcmul_(grad, grad, value=1 - b2)
 
-                # print(state)
-                # m_hat = state["mt"] / (1 - b1 ** state["step"])
-                # v_hat = state["vt"] / (1 - b2 ** state["step"])
-                lr_t = (
-                    lr * math.sqrt(1 - b2 ** state["step"]) / (1 - b1 ** state["step"])
-                )
-                p.data = p.data - lr_t * state["mt"] / (torch.sqrt(state["vt"]) + eps)
+                # Compute bias correction factor
+                bias_correction = math.sqrt(1 - b2 ** state["step"]) / (1 - b1 ** state["step"])
 
-                # TODO: this part didn't see it in the formula
-                p.data = p.data - weight_decay * lr * p.data
+                # Apply main update in-place
+                denom = (state["vt"].sqrt() / math.sqrt(1 - b2 ** state["step"])).add_(eps)
+                step_size = lr * bias_correction
+                p.data.addcdiv_(state["mt"], denom, value=-step_size)
+
+                # Apply weight decay in-place
+                if weight_decay != 0:
+                    p.data.mul_(1 - weight_decay * lr)
 
                 ### TODO: Complete the implementation of AdamW here, reading and saving
                 ###       your state in the `state` dictionary above.
