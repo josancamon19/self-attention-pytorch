@@ -26,7 +26,7 @@ from datasets import (
 from models.gpt2 import GPT2Model
 
 from optimizer import AdamW
-
+from peft import LoraConfig, TaskType, get_peft_model
 TQDM_DISABLE = False
 
 
@@ -162,6 +162,16 @@ def train(args):
     args = add_arguments(args)
     model = SonnetGPT(args)
     model = model.to(device)
+    peft_config = LoraConfig(
+        target_modules=["query", "key", "value", "interm_dense", "out_dense"],
+        task_type=TaskType.CAUSAL_LM,
+        inference_mode=False,
+        r=4,
+        lora_alpha=8,
+        lora_dropout=0.1
+    )
+    model2 = get_peft_model(model, peft_config)
+    model2.print_trainable_parameters()
 
     lr = args.lr
     optimizer = AdamW(model.parameters(), lr=lr)
@@ -311,7 +321,7 @@ def add_arguments(args):
 
 if __name__ == "__main__":
     args = get_args()
-    args.filepath = f"{args.epochs}-{args.lr}-sonnet.pt"  # Save path.
+    args.filepath = f"{args.epochs}-{args.lr}-{args.model_size}-sonnet.pt"  # Save path.
     seed_everything(args.seed)  # Fix the seed for reproducibility.
     train(args)
     generate_submission_sonnets(args)
