@@ -28,6 +28,7 @@ from models.gpt2 import GPT2Model
 
 from optimizer import AdamW
 from peft import LoraConfig, TaskType, get_peft_model
+from types import SimpleNamespace
 
 TQDM_DISABLE = False
 
@@ -76,9 +77,6 @@ class SonnetGPT(nn.Module):
         # By default, fine-tune the full model. TODO: this is maybe not idea.
         for param in self.gpt.parameters():
             param.requires_grad = True
-
-        # Add generation_config for PEFT compatibility
-        from types import SimpleNamespace
 
         self.generation_config = SimpleNamespace(temperature=0.7, top_p=0.9)
 
@@ -201,8 +199,9 @@ def train(args):
     args = add_arguments(args)
     model = SonnetGPT(args)
     model = model.to(device)
-    model = get_peft_model(model, _get_lora_config(False))
-    model.print_trainable_parameters()
+    if args.peft:
+        model = get_peft_model(model, _get_lora_config(False))
+        model.print_trainable_parameters()
 
     lr = args.lr
     optimizer = AdamW(model.parameters(), lr=lr)
@@ -260,7 +259,8 @@ def generate_submission_sonnets(args):
     saved = torch.load(args.filepath, weights_only=False)
 
     model = SonnetGPT(saved["args"])
-    model = get_peft_model(model, _get_lora_config(False))
+    if args.peft:
+        model = get_peft_model(model, _get_lora_config(False))
     # model.load_state_dict(saved["model"])
     model = model.to(device)
     model.eval()
@@ -358,4 +358,4 @@ if __name__ == "__main__":
     args.filepath = f"./.models/sonnet/{args.model_size}-{args.lr}.pt"  # Save path.
     seed_everything(args.seed)  # Fix the seed for reproducibility.
     train(args)
-    # generate_submission_sonnets(args)
+    generate_submission_sonnets(args)
