@@ -33,7 +33,7 @@ from types import SimpleNamespace
 TQDM_DISABLE = False
 
 
-def _get_lora_config(inference: bool):
+def _get_lora_config(inference: bool, r=32):
     return LoraConfig(
         target_modules=[
             "query",
@@ -44,10 +44,10 @@ def _get_lora_config(inference: bool):
             "gpt.gpt_layers.*.interm_dense",
             "gpt.gpt_layers.*.out_dense",
         ],
-        task_type=TaskType.CAUSAL_LM,
+        task_type=TaskType.CAUSAL_LM, # semantic label, not functional
         inference_mode=False,
-        r=32,
-        lora_alpha=64,
+        r=r,
+        lora_alpha=r * 2,
         lora_dropout=0.1,
     )
 
@@ -238,8 +238,8 @@ def train(args):
 
         train_loss = train_loss / num_batches
         print(f"Epoch {epoch}: train loss :: {train_loss:.3f}.")
-        print("Generating several output sonnets...")
-        model.eval()
+        # print("Generating several output sonnets...")
+        # model.eval()
         # for batch in held_out_sonnet_dataset:
         #     encoding = model.tokenizer(
         #         batch[1], return_tensors="pt", padding=True, truncation=True
@@ -347,6 +347,10 @@ def add_arguments(args):
         args.d = 1280
         args.l = 36
         args.num_heads = 20
+    elif args.model_size == "gpt2-xl":
+        args.d = 1600
+        args.l = 48
+        args.num_heads = 25
     else:
         raise Exception(f"{args.model_size} is not supported.")
     return args
@@ -359,3 +363,4 @@ if __name__ == "__main__":
     seed_everything(args.seed)  # Fix the seed for reproducibility.
     train(args)
     generate_submission_sonnets(args)
+    # peft def underperforms here, very little data to train a lot
