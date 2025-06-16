@@ -122,11 +122,14 @@ def get_train_datasets(args):
     para_train_data = ParaphraseDetectionDataset(para_train_data, args)
     para_dev_data = ParaphraseDetectionDataset(para_dev_data, args)
 
+    train_sampler = DistributedSampler(para_train_data) if args.distributed else None
+
     para_train_dataloader = DataLoader(
         para_train_data,
-        shuffle=True,
+        shuffle=(train_sampler is None), # TODO: why?
         batch_size=args.batch_size,
         collate_fn=para_train_data.collate_fn,
+        sampler=train_sampler # TODO: what's this for
     )
     para_dev_dataloader = DataLoader(
         para_dev_data,
@@ -208,6 +211,7 @@ def train(args):
             para_dev_dataloader,
             best_dev_acc,
         )
+    dist.destroy_process_group()
 
 
 def train_dist(args, rank, world):
