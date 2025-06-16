@@ -42,6 +42,7 @@ import time
 import functools
 import os
 from transformers import GPT2Tokenizer
+from torch import autocast
 
 TQDM_DISABLE = False
 
@@ -192,9 +193,9 @@ def get_model_and_optimizer(args, device):
         model = get_peft_model(model, _get_lora_config(False))
         model.print_trainable_parameters()
 
-    if args.use_bf16:
-        model = model.to(torch.bfloat16)
-        print("get_model_and_optimizer: model moved to bf16")
+    # if args.use_bf16: # no autocast
+    #     model = model.to(torch.bfloat16)
+    #     print("get_model_and_optimizer: model moved to bf16")
     
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.0)
     return model, optimizer
@@ -233,13 +234,14 @@ def train_epoch(
             batch["labels"].flatten().to(device),
         )
         
-        if use_bf16 and next(model.parameters()).dtype == torch.bfloat16:
-            # b_ids = b_ids.to(torch.bfloat16)
-            b_mask = b_mask.to(torch.bfloat16)
+        with autocast(device_type='cuda', dtype=torch.bfloat16, enabled=use_bf16):
+            logits = model(b_ids, b_mask)
+            loss = F.cross_entropy(logits, labels, reduction="mean")
+            loss = loss / gradient_accumulation_steps
             
-        logits = model(b_ids, b_mask)
-        loss = F.cross_entropy(logits, labels, reduction="mean")
-        loss = loss / gradient_accumulation_steps
+        # logits = model(b_ids, b_mask)
+        # loss = F.cross_entropy(logits, labels, reduction="mean")
+        # loss = loss / gradient_accumulation_steps
         loss.backward()
         
         if (batch_idx + 1) % gradient_accumulation_steps == 0:
@@ -466,7 +468,6 @@ def check_bf16_support():
         else:
             print("❌ BF16 not supported on this GPU (need Ampere or newer)")
             return False
-    return False
 
 
 if __name__ == "__main__":
@@ -477,10 +478,9 @@ if __name__ == "__main__":
     seed_everything(args.seed)  # Fix the seed for reproducibility.
     args.cache_dir = hf_cache_dir
     
-    # if check_bf16_support(): # issues with some internal ops
-    #     print("enabling BF16 usage")
-    #     args.use_bf16 = True
-    args.use_bf16 = False
+    # TODO: it causes issues with distributed, why?
+    args.use_bf16 = check_bf16_support() if not args.distributed else False
+    # args.use_bf16 = False
     
     if args.distributed:
         gpus = torch.cuda.device_count()
@@ -498,6 +498,13 @@ if __name__ == "__main__":
         # maybe here, there's a slight 5/10% gain
         
         # STOPPED TRYING STUFF, let's profile the model
+        # nvm profiling is so confusing,
+        
+        # bf16, 2x as fast, 1/2 memory, wtf. (single GPU)
+        # now I'm confused, distributed is not the same? why, wtf
+        # now distributed doesn't work at all
+        
+        # TODO: I don't know yet if distributed communication/loss/training is working, solve
     else:
         train(args)
     test(args)
