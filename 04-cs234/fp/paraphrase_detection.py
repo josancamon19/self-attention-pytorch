@@ -192,7 +192,7 @@ def get_model_and_optimizer(args, device):
         model = get_peft_model(model, _get_lora_config(False))
         model.print_trainable_parameters()
 
-    if device.type == "cuda" and args.use_bf16:
+    if args.use_bf16:
         model = model.to(torch.bfloat16)
         print("get_model_and_optimizer: model moved to bf16")
     
@@ -477,9 +477,10 @@ if __name__ == "__main__":
     seed_everything(args.seed)  # Fix the seed for reproducibility.
     args.cache_dir = hf_cache_dir
     
-    if check_bf16_support():
-        print("enabling BF16 usage")
-        args.use_bf16 = True
+    # if check_bf16_support(): # issues with some internal ops
+    #     print("enabling BF16 usage")
+    #     args.use_bf16 = True
+    args.use_bf16 = False
     
     if args.distributed:
         gpus = torch.cuda.device_count()
