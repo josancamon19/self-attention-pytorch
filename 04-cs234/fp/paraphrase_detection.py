@@ -34,6 +34,9 @@ from optimizer import AdamW
 from sonnet_generation import _get_lora_config
 from peft import LoraConfig, TaskType, get_peft_model
 from types import SimpleNamespace
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.utils.data import Dataset, DataLoader, DistributedSampler
 
 TQDM_DISABLE = False
 
@@ -64,7 +67,7 @@ class ParaphraseGPT(nn.Module):
         # By default, fine-tune the full model.
         for param in self.gpt.parameters():
             param.requires_grad = True
-        
+
         self.generation_config = SimpleNamespace(temperature=0.7, top_p=0.9)
 
     def forward(self, input_ids, attention_mask, **kwargs):
@@ -87,11 +90,11 @@ class ParaphraseGPT(nn.Module):
 
         # last_token = gpt_output["last_token"]
         # return self.paraphrase_detection_head(last_token)
-    
+
     @property
     def config(self):
         return self.gpt.config
-    
+
     def prepare_inputs_for_generation(self, input_ids, attention_mask=None, **kwargs):
         return {"input_ids": input_ids, "attention_mask": attention_mask}
 
@@ -106,16 +109,13 @@ def save_model(model, optimizer, args):
         "torch_rng": torch.random.get_rng_state(),
     }
 
-    torch.save(save_info, filepath)
+    torch.save(save_info, args.filepath)
     if args.peft:
         model.save_pretrained("./.models/paraphrase")
-    print(f"save the model to {filepath}")
+    print(f"save the model to {args.filepath}")
 
 
-def train(args):
-    """Train GPT-2 for paraphrase detection on the Quora dataset."""
-    device = torch.device("cuda") if args.use_gpu else torch.device("cpu")
-    # Create the data and its corresponding datasets and dataloader.
+def get_train_datasets(args):
     para_train_data = load_paraphrase_data(args.para_train)
     para_dev_data = load_paraphrase_data(args.para_dev)
 
@@ -134,58 +134,100 @@ def train(args):
         batch_size=args.batch_size,
         collate_fn=para_dev_data.collate_fn,
     )
+    return para_train_dataloader, para_dev_dataloader
 
-    args = add_arguments(args)
+
+def get_model_and_optimizer(args, device):
     model = ParaphraseGPT(args)
     model = model.to(device)
     if args.peft:
         model = get_peft_model(model, _get_lora_config(False))
         model.print_trainable_parameters()
 
-    lr = args.lr
-    optimizer = AdamW(model.parameters(), lr=lr, weight_decay=0.0)
+    optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.0)
+    return model, optimizer
+
+
+def train_epoch(
+    model,
+    epoch,
+    device,
+    optimizer,
+    para_train_dataloader,
+    para_dev_dataloader,
+    best_dev_acc,
+):
+    model.train()
+    train_loss = 0
+    num_batches = 0
+    for batch in tqdm(
+        para_train_dataloader, desc=f"train-{epoch}", disable=TQDM_DISABLE
+    ):
+        # Get the input and move it to the gpu (I do not recommend training this model on CPU).
+        b_ids, b_mask, labels = (
+            batch["token_ids"].to(device),
+            batch["attention_mask"].to(device),
+            batch["labels"].flatten().to(device),
+        )
+        optimizer.zero_grad()
+        logits = model(b_ids, b_mask)
+        loss = F.cross_entropy(logits, labels, reduction="mean")
+        loss.backward()
+        optimizer.step()
+
+        train_loss += loss.item()
+        num_batches += 1
+
+    train_loss = train_loss / num_batches
+
+    dev_acc, dev_f1, *_ = model_eval_paraphrase(para_dev_dataloader, model, device)
+
+    if dev_acc > best_dev_acc:
+        best_dev_acc = dev_acc
+        save_model(model, optimizer, args, args.filepath)
+
+    print(f"Epoch {epoch}: train loss :: {train_loss:.3f}, dev acc :: {dev_acc:.3f}")
+    return best_dev_acc
+
+
+def train(args):
+    """Train GPT-2 for paraphrase detection on the Quora dataset."""
+
+    device = torch.device("cuda") if args.use_gpu else torch.device("cpu")
+    para_train_dataloader, para_dev_dataloader = get_train_datasets(args)
+    model, optimizer = get_model_and_optimizer(args, device)
     best_dev_acc = 0
 
-    # Run for the specified number of epochs.
     for epoch in range(args.epochs):
-        model.train()
-        train_loss = 0
-        num_batches = 0
-        for batch in tqdm(
-            para_train_dataloader, desc=f"train-{epoch}", disable=TQDM_DISABLE
-        ):
-            # Get the input and move it to the gpu (I do not recommend training this model on CPU).
-            b_ids, b_mask, labels = (
-                batch["token_ids"],
-                batch["attention_mask"],
-                batch["labels"].flatten(),
-            )
-            b_ids = b_ids.to(device)
-            b_mask = b_mask.to(device)
-            labels = labels.to(device)
-            # labels = torch.where(labels == 8505, 1, 0)
-            # Compute the loss, gradients, and update the model's parameters.
-            optimizer.zero_grad()
-            logits = model(b_ids, b_mask)
-            # print(logits, labels)
-            preds = torch.argmax(logits, dim=1)
-            loss = F.cross_entropy(logits, labels, reduction="mean")
-            loss.backward()
-            optimizer.step()
+        best_dev_acc = train_epoch(
+            model,
+            epoch,
+            device,
+            optimizer,
+            para_train_dataloader,
+            para_dev_dataloader,
+            best_dev_acc,
+        )
 
-            train_loss += loss.item()
-            num_batches += 1
 
-        train_loss = train_loss / num_batches
+def train_dist(args, rank, world):
+    dist.init_process_group("nccl", rank=rank, world_size=world)  # TODO what rank?
+    torch.cuda.set_device(rank)
+    para_train_dataloader, para_dev_dataloader = get_train_datasets(args)
+    model, optimizer = get_model_and_optimizer(args, rank)
+    model = nn.parallel.DistributedDataParallel(model, device_ids=[rank])
 
-        dev_acc, dev_f1, *_ = model_eval_paraphrase(para_dev_dataloader, model, device)
+    best_dev_acc = 0
 
-        if dev_acc > best_dev_acc:
-            best_dev_acc = dev_acc
-            save_model(model, optimizer, args, args.filepath)
-
-        print(
-            f"Epoch {epoch}: train loss :: {train_loss:.3f}, dev acc :: {dev_acc:.3f}"
+    for epoch in range(args.epochs):
+        best_dev_acc = train_epoch(
+            model,
+            epoch,
+            rank,
+            optimizer,
+            para_train_dataloader,
+            para_dev_dataloader,
+            best_dev_acc,
         )
 
 
@@ -199,7 +241,7 @@ def test(args):
     # model.load_state_dict(saved["model"])
     if args.peft:
         model = get_peft_model(model, _get_lora_config(True))
-        
+
     model = model.to(device)
     model.eval()
     print(f"Loaded model to test from {args.filepath}")
@@ -259,6 +301,7 @@ def get_args():
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--use_gpu", action="store_true")
     parser.add_argument("--peft", action="store_true")
+    parser.add_argument("--distributed", action="store_true")
 
     parser.add_argument(
         "--batch_size",
@@ -300,9 +343,14 @@ def add_arguments(args):
 
 if __name__ == "__main__":
     args = get_args()
+    args = add_arguments(args)
     os.makedirs("./.models/paraphrase", exist_ok=True)
     args.filepath = f"./.models/paraphrase/{args.model_size}-{args.lr}.pt"
     seed_everything(args.seed)  # Fix the seed for reproducibility.
-    train(args)
+    if args.distributed:
+        gpus = torch.cuda.device_count()
+        mp.spawn(train_dist, args=(args, gpus), nprocs=gpus)
+    else:
+        train(args)
     test(args)
     # 0.86 default settings 10-1e-05-paraphrase.pt
