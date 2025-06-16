@@ -122,7 +122,9 @@ def get_train_datasets(args):
     para_train_data = ParaphraseDetectionDataset(para_train_data, args)
     para_dev_data = ParaphraseDetectionDataset(para_dev_data, args)
 
-    train_sampler = DistributedSampler(para_train_data) if args.distributed else None
+    # handle multiple processes
+    train_sampler = DistributedSampler(para_train_data, shuffle=True) if args.distributed else None
+    # dataloader, grain python.
 
     para_train_dataloader = DataLoader(
         para_train_data,
@@ -159,6 +161,7 @@ def train_epoch(
     para_train_dataloader,
     para_dev_dataloader,
     best_dev_acc,
+    rank = None,
 ):
     model.train()
     train_loss = 0
@@ -183,13 +186,15 @@ def train_epoch(
 
     train_loss = train_loss / num_batches
 
-    dev_acc, dev_f1, *_ = model_eval_paraphrase(para_dev_dataloader, model, device)
 
-    if dev_acc > best_dev_acc:
-        best_dev_acc = dev_acc
-        save_model(model, optimizer, args, args.filepath)
-
-    print(f"Epoch {epoch}: train loss :: {train_loss:.3f}, dev acc :: {dev_acc:.3f}")
+    if rank is None or rank == 0:
+        dev_acc, dev_f1, *_ = model_eval_paraphrase(para_dev_dataloader, model, device)
+        if dev_acc > best_dev_acc:
+            best_dev_acc = dev_acc
+            model_to_save = model.module if hasattr(model, 'module') else model
+            save_model(model_to_save, optimizer, args)
+        print(f"Epoch {epoch}: train loss :: {train_loss:.3f}, dev acc :: {dev_acc:.3f}")
+        
     return best_dev_acc
 
 
@@ -211,15 +216,25 @@ def train(args):
             para_dev_dataloader,
             best_dev_acc,
         )
-    dist.destroy_process_group()
 
 
-def train_dist(args, rank, world):
-    dist.init_process_group("nccl", rank=rank, world_size=world)  # TODO what rank?
+def train_dist(rank, args):
+    world_size = torch.cuda.device_count()
+    dist.init_process_group(
+        "nccl", # gloo, never used, test things on cpu
+        init_method="tcp://localhost:12355",
+        # rendevouz, server python spins up, distribute works to other processes
+        rank=rank,
+        world_size=world_size
+    )
     torch.cuda.set_device(rank)
     para_train_dataloader, para_dev_dataloader = get_train_datasets(args)
-    model, optimizer = get_model_and_optimizer(args, rank)
-    model = nn.parallel.DistributedDataParallel(model, device_ids=[rank])
+    device = torch.device(f'cuda:{rank}')
+    
+    model, optimizer = get_model_and_optimizer(args, device)
+    # tries to schedule things ahead of time, mark operations ready to go, but it some vars never receive gradients
+    # it will keep waiting for that.
+    model = nn.parallel.DistributedDataParallel(model, device_ids=[rank], find_unused_parameters=True)
 
     best_dev_acc = 0
 
@@ -227,12 +242,14 @@ def train_dist(args, rank, world):
         best_dev_acc = train_epoch(
             model,
             epoch,
-            rank,
+            device,
             optimizer,
             para_train_dataloader,
             para_dev_dataloader,
             best_dev_acc,
+            rank,
         )
+    dist.destroy_process_group()
 
 
 @torch.no_grad()
@@ -353,7 +370,9 @@ if __name__ == "__main__":
     seed_everything(args.seed)  # Fix the seed for reproducibility.
     if args.distributed:
         gpus = torch.cuda.device_count()
-        mp.spawn(train_dist, args=(args, gpus), nprocs=gpus)
+        mp.spawn(train_dist, args=(args, ), nprocs=gpus)
+        # use torchrun instead of mp.spawn
+        # python process controlling other python processes.
     else:
         train(args)
     test(args)
