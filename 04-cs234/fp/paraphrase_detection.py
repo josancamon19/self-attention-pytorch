@@ -29,6 +29,7 @@ from datasets import (
 )
 from evaluation import model_eval_paraphrase, model_test_paraphrase
 from models.gpt2 import GPT2Model
+from transformers import GPT2Model as OpenAIGPT2Model
 
 from optimizer import AdamW
 from sonnet_generation import _get_lora_config
@@ -37,11 +38,30 @@ from types import SimpleNamespace
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.utils.data import Dataset, DataLoader, DistributedSampler
+import time
+import functools
+import os
+from transformers import GPT2Tokenizer
 
 TQDM_DISABLE = False
 
+hf_cache_dir = "./.cache/huggingface"
+os.makedirs(hf_cache_dir, exist_ok=True)
 
-# Fix the random seed.
+
+def timeit(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        print(f"{func.__name__} took {end_time - start_time:.2f} seconds to execute")
+        return result
+    return wrapper
+
+
+# Fix the random seed
+@timeit
 def seed_everything(seed=11711):
     random.seed(seed)
     np.random.seed(seed)
@@ -52,23 +72,18 @@ def seed_everything(seed=11711):
     torch.backends.cudnn.deterministic = True
 
 
-# def cache_model():
-#     """Download and cache the tokenizer before DDP training starts."""
-#     import os
-#     from transformers import GPT2Tokenizer
+@timeit
+def cache_model():
+    print("Downloading and caching GPT2 tokenizer...")
+    tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=hf_cache_dir)
+    # OpenAIGPT2Model.from_pretrained()
+    print("Tokenizer cached successfully!")
     
-#     cache_dir = "./.cache/huggingface"
-#     os.makedirs(cache_dir, exist_ok=True)
-    
-#     print("Downloading and caching GPT2 tokenizer...")
-#     tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=cache_dir)
-#     print("Tokenizer cached successfully!")
-#     return cache_dir
-
 
 class ParaphraseGPT(nn.Module):
     """Your GPT-2 Model designed for paraphrase detection."""
-
+    
+    @timeit
     def __init__(self, args):
         super().__init__()
         self.gpt = GPT2Model.from_pretrained(
@@ -128,7 +143,7 @@ def save_model(model, optimizer, args):
         model.save_pretrained("./.models/paraphrase")
     print(f"save the model to {args.filepath}")
 
-
+@timeit
 def get_train_datasets(args, is_distributed: bool = False):
     para_train_data = load_paraphrase_data(args.para_train)
     para_dev_data = load_paraphrase_data(args.para_dev)
@@ -406,13 +421,14 @@ def add_arguments(args):
     return args
 
 
+
 if __name__ == "__main__":
     args = get_args()
     args = add_arguments(args)
     os.makedirs("./.models/paraphrase", exist_ok=True)
     args.filepath = f"./.models/paraphrase/{args.model_size}-{args.lr}.pt"
     seed_everything(args.seed)  # Fix the seed for reproducibility.
-    # args.cache_dir = cache_model()
+    args.cache_dir = hf_cache_dir
     
     if args.distributed:
         gpus = torch.cuda.device_count()
