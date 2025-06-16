@@ -143,7 +143,7 @@ def load_paraphrase_data(paraphrase_filename, split="train"):
                 except:
                     pass
 
-    print(f"Loaded {len(paraphrase_data)} {split} examples from {paraphrase_filename}")
+    # print(f"Loaded {len(paraphrase_data)} {split} examples from {paraphrase_filename}")
     return paraphrase_data
 
 
