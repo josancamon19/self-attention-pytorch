@@ -52,18 +52,18 @@ def seed_everything(seed=11711):
     torch.backends.cudnn.deterministic = True
 
 
-def cache_model():
-    """Download and cache the tokenizer before DDP training starts."""
-    import os
-    from transformers import GPT2Tokenizer
+# def cache_model():
+#     """Download and cache the tokenizer before DDP training starts."""
+#     import os
+#     from transformers import GPT2Tokenizer
     
-    cache_dir = "./.cache/huggingface"
-    os.makedirs(cache_dir, exist_ok=True)
+#     cache_dir = "./.cache/huggingface"
+#     os.makedirs(cache_dir, exist_ok=True)
     
-    print("Downloading and caching GPT2 tokenizer...")
-    tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=cache_dir)
-    print("Tokenizer cached successfully!")
-    return cache_dir
+#     print("Downloading and caching GPT2 tokenizer...")
+#     tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=cache_dir)
+#     print("Tokenizer cached successfully!")
+#     return cache_dir
 
 
 class ParaphraseGPT(nn.Module):
@@ -412,7 +412,7 @@ if __name__ == "__main__":
     os.makedirs("./.models/paraphrase", exist_ok=True)
     args.filepath = f"./.models/paraphrase/{args.model_size}-{args.lr}.pt"
     seed_everything(args.seed)  # Fix the seed for reproducibility.
-    args.cache_dir = cache_model()
+    # args.cache_dir = cache_model()
     
     if args.distributed:
         gpus = torch.cuda.device_count()
