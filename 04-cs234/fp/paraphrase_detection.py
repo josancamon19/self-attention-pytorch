@@ -52,6 +52,20 @@ def seed_everything(seed=11711):
     torch.backends.cudnn.deterministic = True
 
 
+def cache_model():
+    """Download and cache the tokenizer before DDP training starts."""
+    import os
+    from transformers import GPT2Tokenizer
+    
+    cache_dir = "./.cache/huggingface"
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    print("Downloading and caching GPT2 tokenizer...")
+    tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=cache_dir)
+    print("Tokenizer cached successfully!")
+    return cache_dir
+
+
 class ParaphraseGPT(nn.Module):
     """Your GPT-2 Model designed for paraphrase detection."""
 
@@ -115,15 +129,19 @@ def save_model(model, optimizer, args):
     print(f"save the model to {args.filepath}")
 
 
-def get_train_datasets(args):
+def get_train_datasets(args, is_distributed: bool = False):
     para_train_data = load_paraphrase_data(args.para_train)
     para_dev_data = load_paraphrase_data(args.para_dev)
 
     para_train_data = ParaphraseDetectionDataset(para_train_data, args)
     para_dev_data = ParaphraseDetectionDataset(para_dev_data, args)
+    
+    print("get_train_datasets len(para_train_data)", len(para_train_data))
+    print("get_train_datasets len(para_dev_data)", len(para_dev_data))
 
     # handle multiple processes
-    train_sampler = DistributedSampler(para_train_data, shuffle=True) if args.distributed else None
+    dev_sampler = DistributedSampler(para_dev_data, shuffle=False) if is_distributed else None
+    train_sampler = DistributedSampler(para_train_data, shuffle=True) if is_distributed else None
     # dataloader, grain python.
 
     para_train_dataloader = DataLoader(
@@ -138,6 +156,7 @@ def get_train_datasets(args):
         shuffle=False,
         batch_size=args.batch_size,
         collate_fn=para_dev_data.collate_fn,
+        sampler=dev_sampler,
     )
     return para_train_dataloader, para_dev_dataloader
 
@@ -162,7 +181,12 @@ def train_epoch(
     para_dev_dataloader,
     best_dev_acc,
     rank = None,
-):
+    train_sampler = None
+):  
+    # is necessary to make shuffling work properly across multiple epochs. Otherwise, the same ordering will be used in each epoch.
+    if train_sampler is not None: # TODO: reasoning
+        train_sampler.set_epoch(epoch)
+    
     model.train()
     train_loss = 0
     num_batches = 0
@@ -185,7 +209,12 @@ def train_epoch(
         num_batches += 1
 
     train_loss = train_loss / num_batches
-
+    
+    # TODO: docs
+    if rank is not None:
+        train_loss_tensor = torch.tensor(train_loss).cuda()
+        dist.all_reduce(train_loss_tensor, op=dist.ReduceOp.SUM)
+        train_loss = train_loss_tensor.item() / dist.get_world_size()
 
     if rank is None or rank == 0:
         dev_acc, dev_f1, *_ = model_eval_paraphrase(para_dev_dataloader, model, device)
@@ -194,6 +223,11 @@ def train_epoch(
             model_to_save = model.module if hasattr(model, 'module') else model
             save_model(model_to_save, optimizer, args)
         print(f"Epoch {epoch}: train loss :: {train_loss:.3f}, dev acc :: {dev_acc:.3f}")
+        
+    if rank is not None:
+        best_dev_acc_tensor = torch.tensor(best_dev_acc).cuda()
+        dist.broadcast(best_dev_acc_tensor, src=0)
+        best_dev_acc = best_dev_acc_tensor.item()
         
     return best_dev_acc
 
@@ -219,37 +253,46 @@ def train(args):
 
 
 def train_dist(rank, args):
-    world_size = torch.cuda.device_count()
-    dist.init_process_group(
-        "nccl", # gloo, never used, test things on cpu
-        init_method="tcp://localhost:12355",
-        # rendevouz, server python spins up, distribute works to other processes
-        rank=rank,
-        world_size=world_size
-    )
-    torch.cuda.set_device(rank)
-    para_train_dataloader, para_dev_dataloader = get_train_datasets(args)
-    device = torch.device(f'cuda:{rank}')
-    
-    model, optimizer = get_model_and_optimizer(args, device)
-    # tries to schedule things ahead of time, mark operations ready to go, but it some vars never receive gradients
-    # it will keep waiting for that.
-    model = nn.parallel.DistributedDataParallel(model, device_ids=[rank], find_unused_parameters=True)
-
-    best_dev_acc = 0
-
-    for epoch in range(args.epochs):
-        best_dev_acc = train_epoch(
-            model,
-            epoch,
-            device,
-            optimizer,
-            para_train_dataloader,
-            para_dev_dataloader,
-            best_dev_acc,
-            rank,
+    try:
+        world_size = torch.cuda.device_count()
+        dist.init_process_group(
+            "nccl", # gloo, never used, test things on cpu
+            init_method="tcp://localhost:12355",
+            # rendevouz, server python spins up, distribute works to other processes
+            rank=rank,
+            world_size=world_size
         )
-    dist.destroy_process_group()
+        torch.cuda.set_device(rank)
+        para_train_dataloader, para_dev_dataloader = get_train_datasets(args, True)
+        device = torch.device(f'cuda:{rank}')
+        
+        model, optimizer = get_model_and_optimizer(args, device)
+        # tries to schedule things ahead of time, mark operations ready to go, but it some vars never receive gradients
+        # it will keep waiting for that.
+        model = nn.parallel.DistributedDataParallel(model, device_ids=[rank], find_unused_parameters=True)
+
+        best_dev_acc = 0
+
+        for epoch in range(args.epochs):
+            best_dev_acc = train_epoch(
+                model,
+                epoch,
+                device,
+                optimizer,
+                para_train_dataloader,
+                para_dev_dataloader,
+                best_dev_acc,
+                rank,
+                para_train_dataloader.sampler
+            )
+            dist.barrier()
+    except Exception as e:
+        print(f"Error in rank {rank}: {e}")
+        raise
+    finally:
+        if dist.is_initialized():
+            dist.destroy_process_group()
+        
 
 
 @torch.no_grad()
@@ -259,9 +302,10 @@ def test(args):
     saved = torch.load(args.filepath, weights_only=False)
 
     model = ParaphraseGPT(saved["args"])
-    # model.load_state_dict(saved["model"])
     if args.peft:
         model = get_peft_model(model, _get_lora_config(True))
+    else:
+        model.load_state_dict(saved["model"])
 
     model = model.to(device)
     model.eval()
@@ -368,6 +412,8 @@ if __name__ == "__main__":
     os.makedirs("./.models/paraphrase", exist_ok=True)
     args.filepath = f"./.models/paraphrase/{args.model_size}-{args.lr}.pt"
     seed_everything(args.seed)  # Fix the seed for reproducibility.
+    args.cache_dir = cache_model()
+    
     if args.distributed:
         gpus = torch.cuda.device_count()
         mp.spawn(train_dist, args=(args, ), nprocs=gpus)
