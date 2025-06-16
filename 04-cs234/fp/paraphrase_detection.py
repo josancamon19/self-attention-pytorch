@@ -144,15 +144,24 @@ def save_model(model, optimizer, args):
     print(f"save the model to {args.filepath}")
 
 @timeit
-def get_train_datasets(args, is_distributed: bool = False):
+def get_train_datasets(args, is_distributed: bool = False, rank: int = None):
     para_train_data = load_paraphrase_data(args.para_train)
     para_dev_data = load_paraphrase_data(args.para_dev)
 
     para_train_data = ParaphraseDetectionDataset(para_train_data, args)
     para_dev_data = ParaphraseDetectionDataset(para_dev_data, args)
     
-    print("get_train_datasets len(para_train_data)", len(para_train_data))
-    print("get_train_datasets len(para_dev_data)", len(para_dev_data))
+    if is_distributed:
+        if rank == 0: # print only once
+            world_size = torch.cuda.device_count()
+            print(f"Distributed: {len(para_train_data)} total samples")
+            print(f"Distributed: ~{len(para_train_data)//world_size} samples per GPU")
+            print(f"Distributed: ~{(len(para_train_data)//world_size)//args.batch_size} batches per GPU")
+            # print(f"Distributed: Global effective batch size: {args.batch_size * world_size}")
+    else:
+        print(f"Single GPU: {len(para_train_data)} samples")
+        print(f"Single GPU: {len(para_train_data)//args.batch_size} batches total")
+
 
     # handle multiple processes
     dev_sampler = DistributedSampler(para_dev_data, shuffle=False) if is_distributed else None
@@ -183,6 +192,10 @@ def get_model_and_optimizer(args, device):
         model = get_peft_model(model, _get_lora_config(False))
         model.print_trainable_parameters()
 
+    if device.type == "cuda" and args.use_bf16:
+        model = model.to(torch.bfloat16)
+        print("get_model_and_optimizer: model moved to bf16")
+    
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.0)
     return model, optimizer
 
@@ -196,33 +209,50 @@ def train_epoch(
     para_dev_dataloader,
     best_dev_acc,
     rank = None,
-    train_sampler = None
+    train_sampler = None,
+    gradient_accumulation_steps = 1,
+    use_bf16 = False,
 ):  
-    # is necessary to make shuffling work properly across multiple epochs. Otherwise, the same ordering will be used in each epoch.
-    if train_sampler is not None: # TODO: reasoning
+    # is necessary to make shuffling work properly across multiple epochs. 
+    # # Otherwise, the same ordering will be used in each epoch.
+    if train_sampler is not None:
         train_sampler.set_epoch(epoch)
     
     model.train()
     train_loss = 0
     num_batches = 0
-    for batch in tqdm(
+    optimizer.zero_grad()
+    
+    for batch_idx, batch in enumerate(tqdm(
         para_train_dataloader, desc=f"train-{epoch}", disable=TQDM_DISABLE
-    ):
+    )):
         # Get the input and move it to the gpu (I do not recommend training this model on CPU).
         b_ids, b_mask, labels = (
             batch["token_ids"].to(device),
             batch["attention_mask"].to(device),
             batch["labels"].flatten().to(device),
         )
-        optimizer.zero_grad()
+        
+        if use_bf16 and next(model.parameters()).dtype == torch.bfloat16:
+            # b_ids = b_ids.to(torch.bfloat16)
+            b_mask = b_mask.to(torch.bfloat16)
+            
         logits = model(b_ids, b_mask)
         loss = F.cross_entropy(logits, labels, reduction="mean")
+        loss = loss / gradient_accumulation_steps
         loss.backward()
-        optimizer.step()
+        
+        if (batch_idx + 1) % gradient_accumulation_steps == 0:
+            optimizer.step()
+            optimizer.zero_grad()
 
-        train_loss += loss.item()
+        train_loss += loss.item() * gradient_accumulation_steps
         num_batches += 1
 
+    if num_batches % gradient_accumulation_steps == 0:
+        optimizer.step()
+        optimizer.zero_grad()   
+    
     train_loss = train_loss / num_batches
     
     # TODO: docs
@@ -264,6 +294,10 @@ def train(args):
             para_train_dataloader,
             para_dev_dataloader,
             best_dev_acc,
+            None,
+            None,
+            3,
+            args.use_bf16
         )
 
 
@@ -278,12 +312,12 @@ def train_dist(rank, args):
             world_size=world_size
         )
         torch.cuda.set_device(rank)
-        para_train_dataloader, para_dev_dataloader = get_train_datasets(args, True)
+        para_train_dataloader, para_dev_dataloader = get_train_datasets(args, True, rank)
         device = torch.device(f'cuda:{rank}')
         
         model, optimizer = get_model_and_optimizer(args, device)
         # tries to schedule things ahead of time, mark operations ready to go, but it some vars never receive gradients
-        # it will keep waiting for that.
+        # it will keep waiting for that. (find_unused_parameters = True)
         model = nn.parallel.DistributedDataParallel(model, device_ids=[rank], find_unused_parameters=True)
 
         best_dev_acc = 0
@@ -298,7 +332,9 @@ def train_dist(rank, args):
                 para_dev_dataloader,
                 best_dev_acc,
                 rank,
-                para_train_dataloader.sampler
+                para_train_dataloader.sampler,
+                3,
+                args.use_bf16
             )
             dist.barrier()
     except Exception as e:
@@ -420,6 +456,17 @@ def add_arguments(args):
         raise Exception(f"{args.model_size} is not supported.")
     return args
 
+def check_bf16_support():
+    if torch.cuda.is_available():
+        # Check if GPU supports BF16
+        major, minor = torch.cuda.get_device_capability()
+        if major >= 8:  # Ampere (RTX 30xx) and newer
+            print("✅ BF16 supported on this GPU")
+            return True
+        else:
+            print("❌ BF16 not supported on this GPU (need Ampere or newer)")
+            return False
+    return False
 
 
 if __name__ == "__main__":
@@ -430,11 +477,26 @@ if __name__ == "__main__":
     seed_everything(args.seed)  # Fix the seed for reproducibility.
     args.cache_dir = hf_cache_dir
     
+    if check_bf16_support():
+        print("enabling BF16 usage")
+        args.use_bf16 = True
+    
     if args.distributed:
         gpus = torch.cuda.device_count()
+        print("loading distributed training, gpus:", gpus)
         mp.spawn(train_dist, args=(args, ), nprocs=gpus)
         # use torchrun instead of mp.spawn
         # python process controlling other python processes.
+        # fuck, so DDP is a bad idea here, communication overhead is bigger than comp gain.
+        # python paraphrase_detection.py --use_gpu --batch_size 160 --distributed, 345 samples second
+        # python paraphrase_detection.py --use_gpu --batch_size 52, 100*52/16 = 325 samples per second
+        
+        # with gradient accumulation 3, 360 samples per second
+        # single gpu, gradient accum: 338 samples per second
+        
+        # maybe here, there's a slight 5/10% gain
+        
+        # STOPPED TRYING STUFF, let's profile the model
     else:
         train(args)
     test(args)
