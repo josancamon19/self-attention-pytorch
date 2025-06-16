@@ -7,7 +7,7 @@ additional sources of data, or if you change how the Quora dataset is processed 
 """
 
 import csv
-
+import os
 import re
 import torch
 
@@ -30,7 +30,19 @@ class ParaphraseDetectionDataset(Dataset):
     def __init__(self, dataset, args):
         self.dataset = dataset
         self.p = args
-        self.tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+        
+        # Use cached tokenizer path if available
+        tokenizer_path = getattr(args, 'cache_dir', None)
+        if tokenizer_path and tokenizer_path.endswith('/gpt2'):
+            # Local tokenizer files
+            self.tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_path, local_files_only=True)
+        elif tokenizer_path:
+            # Cache directory
+            self.tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=tokenizer_path)
+        else:
+            # Default behavior
+            self.tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+            
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
     def __len__(self):
@@ -74,7 +86,19 @@ class ParaphraseDetectionTestDataset(Dataset):
     def __init__(self, dataset, args):
         self.dataset = dataset
         self.p = args
-        self.tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+        
+        # Use cached tokenizer path if available
+        tokenizer_path = getattr(args, 'cache_dir', None)
+        if tokenizer_path and tokenizer_path.endswith('/gpt2'):
+            # Local tokenizer files
+            self.tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_path, local_files_only=True)
+        elif tokenizer_path:
+            # Cache directory
+            self.tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=tokenizer_path)
+        else:
+            # Default behavior
+            self.tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+            
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
     def __len__(self):
@@ -144,8 +168,18 @@ def load_paraphrase_data(paraphrase_filename, split="train"):
 
 
 class SonnetsDataset(Dataset):
-    def __init__(self, file_path):
-        self.tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+    def __init__(self, file_path, args=None):
+        # Try to use local tokenizer first
+        local_tokenizer_path = "./.cache/huggingface/tokenizers/gpt2"
+        try:
+            if args and hasattr(args, 'cache_dir') and args.cache_dir.endswith('/gpt2'):
+                self.tokenizer = GPT2Tokenizer.from_pretrained(args.cache_dir, local_files_only=True)
+            elif os.path.exists(local_tokenizer_path):
+                self.tokenizer = GPT2Tokenizer.from_pretrained(local_tokenizer_path, local_files_only=True)
+            else:
+                self.tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+        except:
+            self.tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
 
         self.tokenizer.pad_token = self.tokenizer.eos_token
         self.sonnets = self._load_sonnets(file_path)
