@@ -34,25 +34,6 @@ from torch import autocast
 TQDM_DISABLE = False
 
 
-def _get_lora_config(inference: bool, r=32):
-    return LoraConfig(
-        target_modules=[
-            "query",
-            "key",
-            "value",
-            "attention_dense",
-            # if only interm_dense, has issue with interm*4, instead of custom *3 of ours, why?
-            "gpt.gpt_layers.*.interm_dense",
-            "gpt.gpt_layers.*.out_dense",
-        ],
-        task_type=TaskType.CAUSAL_LM, # semantic label, not functional
-        inference_mode=False,
-        r=r,
-        lora_alpha=r * 2,
-        lora_dropout=0.1,
-    )
-
-
 # Fix the random seed.
 def seed_everything(seed=11711):
     random.seed(seed)
@@ -167,20 +148,6 @@ class SonnetGPT(nn.Module):
         }
 
 
-def save_model(model, optimizer, args):
-    save_info = {
-        "model": model.state_dict(),
-        "optim": optimizer.state_dict(),
-        "args": args,
-        "system_rng": random.getstate(),
-        "numpy_rng": np.random.get_state(),
-        "torch_rng": torch.random.get_rng_state(),
-    }
-    torch.save(save_info, args.filepath)
-    print(f"save the model to {args.filepath}")
-    if args.peft:
-        model.save_pretrained("./.models/sonnet")
-
 
 def train(args):
     """Train GPT-2 for paraphrase detection on the Quora dataset."""
@@ -291,72 +258,6 @@ def generate_submission_sonnets(args):
         for sonnet in generated_sonnets:
             f.write(f"\n{sonnet[0]}\n")
             f.write(sonnet[1])
-
-
-def get_args():
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument("--sonnet_path", type=str, default="data/sonnets.txt")
-    parser.add_argument(
-        "--held_out_sonnet_path", type=str, default="data/sonnets_held_out.txt"
-    )
-    parser.add_argument(
-        "--sonnet_out", type=str, default="predictions/generated_sonnets.txt"
-    )
-
-    parser.add_argument("--seed", type=int, default=11711)
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--use_gpu", action="store_true")
-    parser.add_argument("--peft", action="store_true")
-
-    # Generation parameters.
-    parser.add_argument(
-        "--temperature", type=float, help="softmax temperature.", default=1.2
-    )
-    parser.add_argument(
-        "--top_p",
-        type=float,
-        help="Cumulative probability distribution for nucleus sampling.",
-        default=0.9,
-    )
-
-    parser.add_argument(
-        "--batch_size", help="The training batch size.", type=int, default=8
-    )
-    parser.add_argument("--lr", type=float, help="learning rate", default=1e-5)
-    parser.add_argument(
-        "--model_size",
-        type=str,
-        help="The model size as specified on hugging face.",
-        choices=["gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"],
-        default="gpt2",
-    )
-
-    args = parser.parse_args()
-    return args
-
-
-def add_arguments(args):
-    """Add arguments that are deterministic on model size."""
-    if args.model_size == "gpt2":
-        args.d = 768
-        args.l = 12
-        args.num_heads = 12
-    elif args.model_size == "gpt2-medium":
-        args.d = 1024
-        args.l = 24
-        args.num_heads = 16
-    elif args.model_size == "gpt2-large":
-        args.d = 1280
-        args.l = 36
-        args.num_heads = 20
-    elif args.model_size == "gpt2-xl":
-        args.d = 1600
-        args.l = 48
-        args.num_heads = 25
-    else:
-        raise Exception(f"{args.model_size} is not supported.")
-    return args
 
 
 if __name__ == "__main__":
