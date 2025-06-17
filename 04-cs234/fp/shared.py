@@ -1,6 +1,7 @@
 import argparse
 import enum
 import random
+from typing import List
 from einops import rearrange
 import torch
 import os
@@ -16,7 +17,7 @@ from datasets import (
     SonnetsDataset,
     load_paraphrase_data,
 )
-from evaluation import model_eval_paraphrase
+from evaluation import model_eval_paraphrase, test_sonnet
 from optimizer import AdamW
 from peft import LoraConfig, TaskType, get_peft_model
 import torch.distributed as dist
@@ -26,6 +27,7 @@ import functools
 from transformers import GPT2Tokenizer
 from torch import autocast
 import wandb
+from sacrebleu.metrics import CHRF
 
 TQDM_DISABLE = False
 
@@ -143,7 +145,7 @@ def get_model_and_optimizer(args, device, model_class):
     if args.peft:
         model = get_peft_model(model, get_lora_config(False))
         model.print_trainable_parameters()
-    
+
     if args.continue_prev_run:
         saved = torch.load(args.filepath, weights_only=False)
         model.load_state_dict(saved["model"])
@@ -184,6 +186,18 @@ def get_wandb_run(args):
             "epochs": args.epochs,
         },
     )
+
+
+def sonnet_val_loss(generated_sonnets: List[str], dev_dataloader: DataLoader):
+    chrf = CHRF()
+    true_sonnets = [x[1] for x in dev_dataloader.dataset]
+    max_len = min(len(true_sonnets), len(generated_sonnets))
+    true_sonnets = true_sonnets[:max_len]
+    generated_sonnets = generated_sonnets[:max_len]
+
+    # compute chrf
+    chrf_score = chrf.corpus_score(generated_sonnets, [true_sonnets])
+    return float(chrf_score.score)
 
 
 def train_epoch(
@@ -268,12 +282,28 @@ def train_epoch(
                 f"Epoch {epoch}: train loss :: {train_loss:.3f}, dev acc :: {dev_acc:.3f}"
             )
     else:
-        # TODO: consider a stopping condition to prevent overfitting on the small dataset of sonnets.
+        model.eval()
+        predictions = []
         print(f"Epoch {epoch}: train loss :: {train_loss:.3f}")
+        print("evaluating sonnets:")
+        for i, batch in enumerate(dev_dataloader.dataset):
+            print("i", i, "batch:", batch)
+            encoding = model.tokenizer(
+                batch[1], return_tensors="pt", padding=True, truncation=True
+            ).to(device)
+            output = model.generate(
+                encoding["input_ids"], temperature=args.temperature, top_p=args.top_p
+            )
+            predictions.append(output)
+            # print(f"{batch[1]}{output[1]}\n\n")
+        val_loss = sonnet_val_loss(predictions, dev_dataloader)
+        print("sonnets val_loss:", val_loss)
+        if val_loss < best_dev_acc: # avoid renaming but as is loss, we want it lower.
+            model_to_save = model.module if hasattr(model, "module") else model
+            save_model(model_to_save, optimizer, args)
         if wandb_run:
-            wandb_run.log({"train_loss": train_loss})
-        model_to_save = model.module if hasattr(model, "module") else model
-        save_model(model_to_save, optimizer, args)
+            wandb_run.log({"train_loss": train_loss, "val_loss": val_loss})
+        
 
     if rank is not None:  # TODO: not needed when sonnet, no dev acc
         best_dev_acc_tensor = torch.tensor(best_dev_acc).cuda()
@@ -413,7 +443,7 @@ def get_args(model: ModelTarget):
     parser.add_argument("--lr", type=float, help="learning rate", default=1e-5)
     parser.add_argument("--temperature", type=float, default=1.2)
     parser.add_argument("--top_p", type=float, default=0.9)
-    
+
     parser.add_argument("--continue_prev_run", action="store_true", default=False)
     parser.add_argument(
         "--model_size",

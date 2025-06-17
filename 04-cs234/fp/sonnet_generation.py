@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from evaluation import test_sonnet
 from transformers import GPT2Tokenizer
 from datasets import SonnetsDataset
 from models.gpt2 import GPT2Model
@@ -156,6 +157,7 @@ def generate_submission_sonnets(args):
         for sonnet in generated_sonnets:
             f.write(f"\n{sonnet[0]}\n")
             f.write(sonnet[1])
+    
 
 
 if __name__ == "__main__":
