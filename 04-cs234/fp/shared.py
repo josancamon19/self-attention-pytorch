@@ -25,6 +25,7 @@ import time
 import functools
 from transformers import GPT2Tokenizer
 from torch import autocast
+import wandb
 
 TQDM_DISABLE = False
 
@@ -164,6 +165,22 @@ def save_model(model, optimizer, args):
     print(f"save the model to {args.filepath}")
 
 
+def get_wandb_run(args):
+    return wandb.init(
+        entity="josancamon19-cifrato",
+        project="cs224n",
+        config={
+            "target": f"{args.model}",
+            "learning_rate": args.lr,
+            "peft": args.peft,
+            "distributed": False,
+            "base_model": args.model_size,
+            "gradient_accumulation": args.gradient_accumulation,
+            "epochs": args.epochs,
+        },
+    )
+
+
 def train_epoch(
     args,
     model,
@@ -177,6 +194,7 @@ def train_epoch(
     train_sampler=None,
     gradient_accumulation_steps=1,
     use_bf16=False,
+    wandb_run=None,
 ):
     # is necessary to make shuffling work properly across multiple epochs.
     # # Otherwise, the same ordering will be used in each epoch.
@@ -239,16 +257,20 @@ def train_epoch(
                 best_dev_acc = dev_acc
                 model_to_save = model.module if hasattr(model, "module") else model
                 save_model(model_to_save, optimizer, args)
+            if wandb_run:
+                wandb_run.log({"best_dev_acc": best_dev_acc, "train_loss": train_loss})
             print(
                 f"Epoch {epoch}: train loss :: {train_loss:.3f}, dev acc :: {dev_acc:.3f}"
             )
     else:
         # TODO: consider a stopping condition to prevent overfitting on the small dataset of sonnets.
         print(f"Epoch {epoch}: train loss :: {train_loss:.3f}")
+        if wandb_run:
+            wandb_run.log({"train_loss": train_loss})
         model_to_save = model.module if hasattr(model, "module") else model
         save_model(model_to_save, optimizer, args)
 
-    if rank is not None:
+    if rank is not None:  # TODO: not needed when sonnet, no dev acc
         best_dev_acc_tensor = torch.tensor(best_dev_acc).cuda()
         dist.broadcast(best_dev_acc_tensor, src=0)
         best_dev_acc = best_dev_acc_tensor.item()
@@ -264,6 +286,8 @@ def train(args, model_class):
     model, optimizer = get_model_and_optimizer(args, device, model_class)
     best_dev_acc = 0
 
+    wandb_run = get_wandb_run(args)
+
     for epoch in range(args.epochs):
         best_dev_acc = train_epoch(
             args,
@@ -278,6 +302,7 @@ def train(args, model_class):
             None,
             args.gradient_accumulation,
             args.use_bf16,
+            wandb_run,
         )
 
 
@@ -381,6 +406,8 @@ def get_args(model: ModelTarget):
     parser.add_argument("--gradient_accumulation", type=int, default=1)
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--lr", type=float, help="learning rate", default=1e-5)
+    parser.add_argument("--temperature", type=float, default=1.2)
+    parser.add_argument("--top_p", type=float, default=0.9)
     parser.add_argument(
         "--model_size",
         type=str,

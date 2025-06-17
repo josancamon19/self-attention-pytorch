@@ -25,7 +25,7 @@ class SonnetGPT(nn.Module):
         for param in self.gpt.parameters():
             param.requires_grad = True
 
-        self.generation_config = SimpleNamespace(temperature=0.7, top_p=0.9)
+        self.generation_config = SimpleNamespace(temperature=0.7, top_p=0.9) # peft
 
     @property
     def config(self):

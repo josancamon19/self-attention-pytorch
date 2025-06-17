@@ -10,3 +10,4 @@ runs
 outputs
 *.bin
 *.params
+*wandb/
