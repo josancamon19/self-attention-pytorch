@@ -1,18 +1,4 @@
-"""
-Paraphrase detection for GPT starter code.
-
-Consider:
- - ParaphraseGPT: Your implementation of the GPT-2 classification model.
- - train: Training procedure for ParaphraseGPT on the Quora paraphrase detection dataset.
- - test: Test procedure. This function generates the required files for your submission.
-
-Running:
-  `python paraphrase_detection.py --use_gpu`
-trains and evaluates your ParaphraseGPT model and writes the required submission files.
-"""
-
 import torch
-import os
 
 from torch import nn
 from torch.utils.data import DataLoader
@@ -25,15 +11,11 @@ from datasets import (
 from evaluation import model_eval_paraphrase, model_test_paraphrase
 from models.gpt2 import GPT2Model
 import shared as utils
-from sonnet_generation import _get_lora_config
 from peft import get_peft_model
 from types import SimpleNamespace
 import torch.multiprocessing as mp
 
 TQDM_DISABLE = False
-
-hf_cache_dir = "./.cache/huggingface"
-os.makedirs(hf_cache_dir, exist_ok=True)
 
 
 class ParaphraseGPT(nn.Module):
@@ -70,7 +52,7 @@ def test(args):
 
     model = ParaphraseGPT(saved["args"])
     if args.peft:
-        model = get_peft_model(model, _get_lora_config(True))
+        model = get_peft_model(model, utils.get_lora_config(True))
     else:
         model.load_state_dict(saved["model"])
 
@@ -116,35 +98,34 @@ def test(args):
             f.write(f"{p}, {s} \n")
 
 
-if __name__ == "__main__":
-    args = utils.get_args()
-    args = utils.add_arguments(args)
-    args.filepath = f"./.models/paraphrase/{args.model_size}-{args.lr}.pt"
+# DISTRIBUTED LEARNINGS
+# use torchrun instead of mp.spawn
+# python process controlling other python processes.
+# fuck, so DDP is a bad idea here, communication overhead is bigger than comp gain.
+# python paraphrase_detection.py --use_gpu --batch_size 160 --distributed, 345 samples second
+# python paraphrase_detection.py --use_gpu --batch_size 52, 100*52/16 = 325 samples per second
 
+# with gradient accumulation 3, 360 samples per second
+# single gpu, gradient accum: 338 samples per second
+
+# maybe here, there's a slight 5/10% gain
+
+# STOPPED TRYING STUFF, let's profile the model
+# nvm profiling is so confusing,
+
+# bf16, 2x as fast, 1/2 memory, wtf. (single GPU)
+# now I'm confused, distributed is not the same? why, wtf
+# now distributed doesn't work at all, after 10% fails, gpu memory full. Prob gradient accumulation, fuck
+
+# TODO: I don't know yet if distributed communication/loss/training is working, solve
+
+if __name__ == "__main__":
+    # 0.86 default settings 10-1e-05-paraphrase.pt
+    args = utils.get_args(utils.ModelTarget.paraphrase)
     if args.distributed:
         gpus = torch.cuda.device_count()
         print("loading distributed training, gpus:", gpus)
         mp.spawn(utils.train_dist, args=(args, ParaphraseGPT, True), nprocs=gpus)
-        # use torchrun instead of mp.spawn
-        # python process controlling other python processes.
-        # fuck, so DDP is a bad idea here, communication overhead is bigger than comp gain.
-        # python paraphrase_detection.py --use_gpu --batch_size 160 --distributed, 345 samples second
-        # python paraphrase_detection.py --use_gpu --batch_size 52, 100*52/16 = 325 samples per second
-
-        # with gradient accumulation 3, 360 samples per second
-        # single gpu, gradient accum: 338 samples per second
-
-        # maybe here, there's a slight 5/10% gain
-
-        # STOPPED TRYING STUFF, let's profile the model
-        # nvm profiling is so confusing,
-
-        # bf16, 2x as fast, 1/2 memory, wtf. (single GPU)
-        # now I'm confused, distributed is not the same? why, wtf
-        # now distributed doesn't work at all, after 10% fails, gpu memory full. Prob gradient accumulation, fuck
-
-        # TODO: I don't know yet if distributed communication/loss/training is working, solve
     else:
-        utils.train(args, ParaphraseGPT, True)
+        utils.train(args, ParaphraseGPT)
     test(args)
-    # 0.86 default settings 10-1e-05-paraphrase.pt
