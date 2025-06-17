@@ -29,6 +29,7 @@ from models.gpt2 import GPT2Model
 from optimizer import AdamW
 from peft import LoraConfig, TaskType, get_peft_model
 from types import SimpleNamespace
+from torch import autocast
 
 TQDM_DISABLE = False
 
@@ -222,14 +223,16 @@ def train(args):
 
             # Compute the loss, gradients, and update the model's parameters.
             optimizer.zero_grad()
-            logits = model(b_ids, b_mask)
-            logits = rearrange(
-                logits[:, :-1].contiguous(), "b t d -> (b t) d"
-            )  # Ignore the last prediction in the sequence.
-            labels = (
-                b_ids[:, 1:].contiguous().flatten()
-            )  # Ignore the first token to compose the labels.
-            loss = F.cross_entropy(logits, labels, reduction="mean")
+            with autocast(device_type='cuda', dtype=torch.bfloat16, enabled=args.use_bf16):
+                logits = model(b_ids, b_mask)
+                logits = rearrange(
+                    logits[:, :-1].contiguous(), "b t d -> (b t) d"
+                )  # Ignore the last prediction in the sequence.
+                labels = (
+                    b_ids[:, 1:].contiguous().flatten()
+                )  # Ignore the first token to compose the labels.
+                loss = F.cross_entropy(logits, labels, reduction="mean")
+                
             loss.backward()
             optimizer.step()
 
