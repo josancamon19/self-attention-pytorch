@@ -1,5 +1,7 @@
 import argparse
+import enum
 import random
+from einops import rearrange
 import torch
 import os
 import numpy as np
@@ -28,8 +30,6 @@ TQDM_DISABLE = False
 
 hf_cache_dir = "./.cache/huggingface"
 os.makedirs(hf_cache_dir, exist_ok=True)
-os.makedirs("./.models/paraphrase", exist_ok=True)
-os.makedirs("./.models/sonnet", exist_ok=True)
 
 
 def timeit(func):
@@ -86,11 +86,10 @@ def get_lora_config(inference: bool, r=32):
 @timeit
 def get_train_datasets(
     args,
-    paraphrase_dataset: bool = True,
     is_distributed: bool = False,
     rank: int = None,
 ):
-    if paraphrase_dataset:
+    if args.model == "paraphrase":
         train_data = load_paraphrase_data(args.para_train)
         dev_data = load_paraphrase_data(args.para_dev)
         train_data = ParaphraseDetectionDataset(train_data, args)
@@ -161,8 +160,7 @@ def save_model(model, optimizer, args):
 
     torch.save(save_info, args.filepath)
     if args.peft:
-        model.save_pretrained("./.models/paraphrase")
-        # "./.models/sonnet" TODO
+        model.save_pretrained(f"./.models/{args.model}")
     print(f"save the model to {args.filepath}")
 
 
@@ -172,8 +170,8 @@ def train_epoch(
     epoch,
     device,
     optimizer,
-    para_train_dataloader,
-    para_dev_dataloader,
+    train_dataloader,
+    dev_dataloader,
     best_dev_acc,
     rank=None,
     train_sampler=None,
@@ -191,17 +189,25 @@ def train_epoch(
     optimizer.zero_grad()
 
     for batch_idx, batch in enumerate(
-        tqdm(para_train_dataloader, desc=f"train-{epoch}", disable=TQDM_DISABLE)
+        tqdm(train_dataloader, desc=f"train-{epoch}", disable=TQDM_DISABLE)
     ):
         # Get the input and move it to the gpu (I do not recommend training this model on CPU).
         b_ids, b_mask, labels = (
             batch["token_ids"].to(device),
             batch["attention_mask"].to(device),
-            batch["labels"].flatten().to(device),
+            # .torch empty for sonnets
+            batch.get("labels", torch.empty((0, 0))).flatten().to(device),
         )
+        if args.model == "sonnet":
+            # Ignore the first token to compose the labels.
+            labels = b_ids[:, 1:].contiguous().flatten()
 
         with autocast(device_type="cuda", dtype=torch.bfloat16, enabled=use_bf16):
             logits = model(b_ids, b_mask)
+            if args.model == "sonnet":
+                # Ignore the last prediction in the sequence.
+                logits = rearrange(logits[:, :-1].contiguous(), "b t d -> (b t) d")
+
             loss = F.cross_entropy(logits, labels, reduction="mean")
             loss = loss / gradient_accumulation_steps
 
@@ -226,15 +232,21 @@ def train_epoch(
         dist.all_reduce(train_loss_tensor, op=dist.ReduceOp.SUM)
         train_loss = train_loss_tensor.item() / dist.get_world_size()
 
-    if rank is None or rank == 0:
-        dev_acc, dev_f1, *_ = model_eval_paraphrase(para_dev_dataloader, model, device)
-        if dev_acc > best_dev_acc:
-            best_dev_acc = dev_acc
-            model_to_save = model.module if hasattr(model, "module") else model
-            save_model(model_to_save, optimizer, args)
-        print(
-            f"Epoch {epoch}: train loss :: {train_loss:.3f}, dev acc :: {dev_acc:.3f}"
-        )
+    if model == "paraphrase":
+        if rank is None or rank == 0:
+            dev_acc, dev_f1, *_ = model_eval_paraphrase(dev_dataloader, model, device)
+            if dev_acc > best_dev_acc:
+                best_dev_acc = dev_acc
+                model_to_save = model.module if hasattr(model, "module") else model
+                save_model(model_to_save, optimizer, args)
+            print(
+                f"Epoch {epoch}: train loss :: {train_loss:.3f}, dev acc :: {dev_acc:.3f}"
+            )
+    else:
+        # TODO: consider a stopping condition to prevent overfitting on the small dataset of sonnets.
+        print(f"Epoch {epoch}: train loss :: {train_loss:.3f}")
+        model_to_save = model.module if hasattr(model, "module") else model
+        save_model(model_to_save, optimizer, args)
 
     if rank is not None:
         best_dev_acc_tensor = torch.tensor(best_dev_acc).cuda()
@@ -244,11 +256,11 @@ def train_epoch(
     return best_dev_acc
 
 
-def train(args, model_class, is_paraphrase):
+def train(args, model_class):
     """Train GPT-2 for paraphrase detection on the Quora dataset."""
 
     device = torch.device("cuda") if args.use_gpu else torch.device("cpu")
-    para_train_dataloader, para_dev_dataloader = get_train_datasets(args, is_paraphrase)
+    para_train_dataloader, para_dev_dataloader = get_train_datasets(args)
     model, optimizer = get_model_and_optimizer(args, device, model_class)
     best_dev_acc = 0
 
@@ -264,12 +276,12 @@ def train(args, model_class, is_paraphrase):
             best_dev_acc,
             None,
             None,
-            1,
+            args.gradient_accumulation,
             args.use_bf16,
         )
 
 
-def train_dist(rank, args, model_class, is_paraphrase: bool):
+def train_dist(rank, args, model_class):
     try:
         world_size = torch.cuda.device_count()
         dist.init_process_group(
@@ -280,9 +292,7 @@ def train_dist(rank, args, model_class, is_paraphrase: bool):
             world_size=world_size,
         )
         torch.cuda.set_device(rank)
-        train_dataloader, dev_dataloader = get_train_datasets(
-            args, is_paraphrase, True, rank
-        )
+        train_dataloader, dev_dataloader = get_train_datasets(args, True, rank)
         device = torch.device(f"cuda:{rank}")
 
         model, optimizer = get_model_and_optimizer(args, device, model_class)
@@ -306,7 +316,7 @@ def train_dist(rank, args, model_class, is_paraphrase: bool):
                 best_dev_acc,
                 rank,
                 train_dataloader.sampler,
-                3,
+                args.gradient_accumulation,
                 args.use_bf16,
             )
             dist.barrier()
@@ -318,7 +328,12 @@ def train_dist(rank, args, model_class, is_paraphrase: bool):
             dist.destroy_process_group()
 
 
-def get_args():
+class ModelTarget(enum.Enum):
+    paraphrase = "paraphrase"
+    sonnet = "sonnet"
+
+
+def get_args(model: ModelTarget):
     parser = argparse.ArgumentParser()
 
     # paratrain
@@ -342,15 +357,11 @@ def get_args():
 
     parser.add_argument("--seed", type=int, default=11711)
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--use_gpu", action="store_true")
-    parser.add_argument("--peft", action="store_true")
-    parser.add_argument("--distributed", action="store_true")
-
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=8,
-    )
+    parser.add_argument("--use_gpu", action="store_true", default=False)
+    parser.add_argument("--peft", action="store_true", default=False)
+    parser.add_argument("--distributed", action="store_true", default=False)
+    parser.add_argument("--gradient_accumulation", type=int, default=1)
+    parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--lr", type=float, help="learning rate", default=1e-5)
     parser.add_argument(
         "--model_size",
@@ -364,6 +375,10 @@ def get_args():
     args.cache_dir = hf_cache_dir
     seed_everything(args.seed)
     args.use_bf16 = check_bf16_support()
+    args.model = model.value
+    args.filepath = f"./.models/{args.model}/{args.model_size}-{args.lr}.pt"
+    os.makedirs(f"./.models/{args.model}", exist_ok=True)
+    add_arguments(args)
     return args
 
 
@@ -400,3 +415,4 @@ def check_bf16_support():
         else:
             print("❌ BF16 not supported on this GPU (need Ampere or newer)")
             return False
+    return False
