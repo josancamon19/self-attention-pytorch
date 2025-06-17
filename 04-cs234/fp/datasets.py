@@ -30,7 +30,7 @@ class ParaphraseDetectionDataset(Dataset):
     def __init__(self, dataset, args):
         self.dataset = dataset
         self.p = args
-        
+
         # Use cached tokenizer path if available
         self.tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=args.cache_dir)
         self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -76,7 +76,7 @@ class ParaphraseDetectionTestDataset(Dataset):
     def __init__(self, dataset, args):
         self.dataset = dataset
         self.p = args
-        
+
         # Use cached tokenizer path if available
         self.tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=args.cache_dir)
         self.tokenizer.pad_token = self.tokenizer.eos_token
