@@ -281,6 +281,24 @@ def train(args, model_class):
         )
 
 
+def dpo():
+    # - before collect train loss to wandb and visualize loss curves
+    # - anything you can infer related to it?
+    # -- sonnet has no dev set, how to, how to estimate how really good/bad is?
+    # -- need a separate dev dataset?
+
+    # - collect a bunch of input prompts (first few lines as input, or instruction tunned) (generate with GPT)
+    # - sample outputs from the model (), multiple temperature
+    # - label those sample pairs with GPT (pref, not pref)
+    # - with (x, yw), (x, yl) train the model
+    # - - save model to hf, do inference with runpod vllm, or try serving yourself directly with vllm
+
+    # - train loop
+    # - loss computed: -log(sigmoid(beta * (log*model(yw | x) - log*model(yl | x))))
+    # - backprop.
+    pass
+
+
 def train_dist(rank, args, model_class):
     try:
         world_size = torch.cuda.device_count()
