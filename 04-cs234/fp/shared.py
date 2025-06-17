@@ -88,7 +88,7 @@ def get_lora_config(inference: bool, r=32):
 def get_train_datasets(
     args,
     is_distributed: bool = False,
-    rank: int = None,
+    rank: int | None = None,
 ):
     if args.model == "paraphrase":
         train_data = load_paraphrase_data(args.para_train)
@@ -140,11 +140,16 @@ def get_train_datasets(
 
 def get_model_and_optimizer(args, device, model_class):
     model = model_class(args)
-    model = model.to(device)
     if args.peft:
         model = get_peft_model(model, get_lora_config(False))
         model.print_trainable_parameters()
+    
+    if args.continue_prev_run:
+        saved = torch.load(args.filepath, weights_only=False)
+        model.load_state_dict(saved["model"])
+        print("get_model_and_optimizer, pre-loaded:", args.filepath)
 
+    model = model.to(device)
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.0)
     return model, optimizer
 
@@ -408,6 +413,8 @@ def get_args(model: ModelTarget):
     parser.add_argument("--lr", type=float, help="learning rate", default=1e-5)
     parser.add_argument("--temperature", type=float, default=1.2)
     parser.add_argument("--top_p", type=float, default=0.9)
+    
+    parser.add_argument("--continue_prev_run", action="store_true", default=False)
     parser.add_argument(
         "--model_size",
         type=str,
