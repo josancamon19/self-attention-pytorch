@@ -7,3 +7,4 @@
 out/
 *.models*
 data/small-*
+wandb/*
