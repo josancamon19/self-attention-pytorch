@@ -5,7 +5,7 @@ from datasets import SonnetsDataset
 from models.gpt2 import GPT2Model
 from peft import get_peft_model
 from types import SimpleNamespace
-from shared import ModelTarget, get_args, get_lora_config, train
+from shared import ModelTarget, get_args, get_lora_config, hf_cache_dir, train
 
 TQDM_DISABLE = False
 
@@ -16,7 +16,12 @@ class SonnetGPT(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.gpt = GPT2Model.from_pretrained(
-            model=args.model_size, d=args.d, l=args.l, num_heads=args.num_heads
+            model=args.model_size,
+            d=args.d,
+            l=args.l,
+            num_heads=args.num_heads,
+            cache_dir=hf_cache_dir,
+            # model_path=args.filepath if args.continue_prev_run else None,
         )
         self.tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
         self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -25,7 +30,7 @@ class SonnetGPT(nn.Module):
         for param in self.gpt.parameters():
             param.requires_grad = True
 
-        self.generation_config = SimpleNamespace(temperature=0.7, top_p=0.9) # peft
+        self.generation_config = SimpleNamespace(temperature=0.7, top_p=0.9)  # peft
 
     @property
     def config(self):
@@ -119,9 +124,12 @@ def generate_submission_sonnets(args):
     saved = torch.load(args.filepath, weights_only=False)
 
     model = SonnetGPT(saved["args"])
-    if args.peft:
-        model = get_peft_model(model, get_lora_config(False))
-    # model.load_state_dict(saved["model"])
+    if saved["args"].peft:
+        model = get_peft_model(model, get_lora_config(True))
+        model.load_state_dict(saved["model"])
+    else:
+        model.load_state_dict(saved["model"])
+        
     model = model.to(device)
     model.eval()
 

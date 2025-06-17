@@ -127,7 +127,8 @@ class GPT2Model(GPTPreTrainedModel):
         return output
 
     @classmethod
-    def from_pretrained(cls, model="gpt2", d=768, l=12, num_heads=12, cache_dir=None):
+    def from_pretrained(cls, model="gpt2", d=768, l=12, num_heads=12, cache_dir=None, model_path=None):
+        # Load from OpenAI's pretrained model
         gpt_model = OpenAIGPT2Model.from_pretrained(model, cache_dir=cache_dir).eval()
         our_model = GPT2Model(
             GPT2Config(
