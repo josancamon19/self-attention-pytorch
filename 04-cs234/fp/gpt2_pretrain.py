@@ -122,11 +122,14 @@ def get_model():
     optimizer = AdamW(model.parameters())
     return model, optimizer
 
-def train(model, optimizer, train_dataloader):
+def train(model, optimizer,device, train_dataloader):
     epochs = 10
     for epoch in range(epochs):
-        for sample in train_dataloader:
-            print(sample)
+        for batch in train_dataloader:
+            input_ids = batch["input_id"].to(device)
+            attention_masks = batch["attention_mask"].to(device)
+            pred = model(input_ids, attention_masks)
+            print(pred["last_hidden_state"].shape)
             break
         break        
 
