@@ -169,7 +169,7 @@ def save_model(model, optimizer, args):
     torch.save(save_info, args.filepath)
     if args.peft:
         model.save_pretrained(f"./.models/{args.model}")
-    print(f"save the model to {args.filepath}")
+    print(f"saved model to {args.filepath}")
 
 
 def get_wandb_run(args):
@@ -178,6 +178,7 @@ def get_wandb_run(args):
         project="cs224n",
         config={
             "target": f"{args.model}",
+            "tags": [args.model],
             "learning_rate": args.lr,
             "peft": args.peft,
             "distributed": False,
@@ -289,14 +290,12 @@ def train_eval(
             args, model, device, dev_input_dataset, dev_dataloader.dataset
         )
         val_perplexity = compute_validation_perplexity(model, dev_dataloader, device)
-        # TODO: try peft
-
         print("sonnets chrf_score, val_perplexity:", chrf_score, val_perplexity)
-        # # TODO: use val perplexity instead
-        if chrf_score > best_dev_acc:  # higher better. 
+
+        if val_perplexity < best_dev_acc:
             model_to_save = model.module if hasattr(model, "module") else model
             save_model(model_to_save, optimizer, args)
-            best_dev_acc = chrf_score
+            best_dev_acc = val_perplexity
 
         if wandb_run:
             wandb_run.log(
@@ -405,7 +404,7 @@ def train(args, model_class):
     device = torch.device("cuda") if args.use_gpu else torch.device("cpu")
     train_dataloader, dev_dataloader = get_train_datasets(args)
     model, optimizer = get_model_and_optimizer(args, device, model_class)
-    best_dev_acc = 0
+    best_dev_acc = 0 if args.model == "paraphrase" else float("inf")
 
     wandb_run = get_wandb_run(args)
 
