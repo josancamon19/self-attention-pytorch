@@ -90,7 +90,7 @@ def get_lora_config(inference: bool, r=32):
 def get_train_datasets(
     args,
     is_distributed: bool = False,
-    rank: int | None = None,
+    rank: int = None,
 ):
     if args.model == "paraphrase":
         train_data = load_paraphrase_data(args.para_train)
@@ -99,7 +99,7 @@ def get_train_datasets(
         dev_data = ParaphraseDetectionDataset(dev_data, args)
     else:
         train_data = SonnetsDataset(args.sonnet_path)
-        dev_data = SonnetsDataset(args.held_out_sonnet_path)
+        dev_data = SonnetsDataset(args.held_out_sonnet_dev_true_path)
 
     if is_distributed:
         if rank == 0:  # print only once
@@ -188,16 +188,125 @@ def get_wandb_run(args):
     )
 
 
-def validation_chrf_score(generated_sonnets: List[str], dev_dataloader: DataLoader):
+def compute_validation_perplexity(model, dev_dataloader, device):
+    model.eval()
+    total_loss = 0
+    total_tokens = 0
+
+    with torch.no_grad():
+        for sample in dev_dataloader:
+            b_ids = sample["token_ids"].to(device)
+            b_mask = sample["attention_mask"].to(device)
+            labels = b_ids[:, 1:].contiguous().flatten()
+            logits = model(b_ids, b_mask)
+            logits = logits[:, :-1].contiguous()
+            logits = rearrange(logits, "b t d -> (b t) d")
+
+            loss = F.cross_entropy(logits, labels, reduction="sum")
+            valid_tokens = (labels != model.tokenizer.pad_token_id).sum().item()
+
+            total_loss += loss.item()
+            total_tokens += valid_tokens
+
+    avg_loss = total_loss / total_tokens
+    perplexity = torch.exp(torch.tensor(avg_loss)).item()
+
+    return perplexity
+
+
+def validation_chrf_score(
+    args,
+    model,
+    device,
+    dev_input_dataset: SonnetsDataset,
+    dev_true_dataset: SonnetsDataset,
+):
+    predictions = []
+    with torch.inference_mode():
+        for sample in dev_input_dataset:
+            encoding = model.tokenizer(
+                sample[1],
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+            )
+            output = model.generate(
+                encoding.to(device)["input_ids"],
+                temperature=args.temperature,
+                top_p=args.top_p,
+            )
+            predictions.append(output[1])
     chrf = CHRF()
-    true_sonnets = [x[1] for x in dev_dataloader.dataset]
-    max_len = min(len(true_sonnets), len(generated_sonnets))
+    true_sonnets = [x[1] for x in dev_true_dataset]
+    print("validation_chrf_score")
+    print("true_sonnets[0]\n-\n", true_sonnets[0])
+    print("generated_sonnets[0]\n-\n", predictions[0])
+    print("\n")
+    max_len = min(len(true_sonnets), len(predictions))
     true_sonnets = true_sonnets[:max_len]
-    generated_sonnets = generated_sonnets[:max_len]
+    generated_sonnets = predictions[:max_len]
 
     # compute chrf
     chrf_score = chrf.corpus_score(generated_sonnets, [true_sonnets])
     return float(chrf_score.score)
+
+
+def train_eval(
+    rank,
+    args,
+    model,
+    optimizer,
+    dev_dataloader,
+    device,
+    epoch,
+    train_loss,
+    best_dev_acc,
+    wandb_run,
+):
+    if args.model == "paraphrase":
+        if rank is None or rank == 0:
+            dev_acc, dev_f1, *_ = model_eval_paraphrase(dev_dataloader, model, device)
+            if dev_acc > best_dev_acc:
+                best_dev_acc = dev_acc
+                model_to_save = model.module if hasattr(model, "module") else model
+                save_model(model_to_save, optimizer, args)
+            if wandb_run:
+                wandb_run.log({"best_dev_acc": best_dev_acc, "train_loss": train_loss})
+            print(
+                f"Epoch {epoch}: train loss :: {train_loss:.3f}, dev acc :: {dev_acc:.3f}"
+            )
+    else:
+        # if epoch % 2 == 0:  # too few data, evaluate every 2 training runs
+        # return best_dev_acc
+        model.eval()
+
+        print(f"Epoch {epoch}: train loss :: {train_loss:.3f}")
+        print("evaluating sonnets:")
+
+        # TODO: should compute excluding first 3 input lines?
+        dev_input_dataset = SonnetsDataset(args.held_out_sonnet_dev_path)
+        chrf_score = validation_chrf_score(
+            args, model, device, dev_input_dataset, dev_dataloader.dataset
+        )
+        val_perplexity = compute_validation_perplexity(model, dev_dataloader, device)
+        # TODO: try peft
+
+        print("sonnets chrf_score, val_perplexity:", chrf_score, val_perplexity)
+        # # TODO: use val perplexity instead
+        if chrf_score > best_dev_acc:  # higher better. 
+            model_to_save = model.module if hasattr(model, "module") else model
+            save_model(model_to_save, optimizer, args)
+            best_dev_acc = chrf_score
+
+        if wandb_run:
+            wandb_run.log(
+                {
+                    "train_loss": train_loss,
+                    "chrf_score": chrf_score,
+                    "val_perplexity": val_perplexity,
+                }
+            )
+    return best_dev_acc
 
 
 def train_epoch(
@@ -269,44 +378,20 @@ def train_epoch(
         dist.all_reduce(train_loss_tensor, op=dist.ReduceOp.SUM)
         train_loss = train_loss_tensor.item() / dist.get_world_size()
 
-    if args.model == "paraphrase":
-        if rank is None or rank == 0:
-            dev_acc, dev_f1, *_ = model_eval_paraphrase(dev_dataloader, model, device)
-            if dev_acc > best_dev_acc:
-                best_dev_acc = dev_acc
-                model_to_save = model.module if hasattr(model, "module") else model
-                save_model(model_to_save, optimizer, args)
-            if wandb_run:
-                wandb_run.log({"best_dev_acc": best_dev_acc, "train_loss": train_loss})
-            print(
-                f"Epoch {epoch}: train loss :: {train_loss:.3f}, dev acc :: {dev_acc:.3f}"
-            )
-    else:
-        model.eval()
-        predictions = []
-        print(f"Epoch {epoch}: train loss :: {train_loss:.3f}")
-        print("evaluating sonnets:")
-        
-        with torch.inference_mode():
-            for sample in dev_dataloader.dataset:
-                encoding = model.tokenizer(
-                    sample[1], return_tensors="pt", padding=True, truncation=True
-                ).to(device)
-                output = model.generate(
-                    encoding["input_ids"], temperature=args.temperature, top_p=args.top_p
-                )
-                predictions.append(output[1])
-                # print(f"{batch[1]}{output[1]}------\n\n")
+    best_dev_acc = train_eval(
+        rank,
+        args,
+        model,
+        optimizer,
+        dev_dataloader,
+        device,
+        epoch,
+        train_loss,
+        best_dev_acc,
+        wandb_run,
+    )
 
-        score = validation_chrf_score(predictions, dev_dataloader)
-        print("sonnets chrf_score:", score)
-        if score > best_dev_acc:  # higher better.
-            model_to_save = model.module if hasattr(model, "module") else model
-            save_model(model_to_save, optimizer, args)
-        if wandb_run:
-            wandb_run.log({"train_loss": train_loss, "chrf_score": score})
-
-    if rank is not None:  # TODO: not needed when sonnet, no dev acc
+    if rank is not None:
         best_dev_acc_tensor = torch.tensor(best_dev_acc).cuda()
         dist.broadcast(best_dev_acc_tensor, src=0)
         best_dev_acc = best_dev_acc_tensor.item()
@@ -318,7 +403,7 @@ def train(args, model_class):
     """Train GPT-2 for paraphrase detection on the Quora dataset."""
 
     device = torch.device("cuda") if args.use_gpu else torch.device("cpu")
-    para_train_dataloader, para_dev_dataloader = get_train_datasets(args)
+    train_dataloader, dev_dataloader = get_train_datasets(args)
     model, optimizer = get_model_and_optimizer(args, device, model_class)
     best_dev_acc = 0
 
@@ -331,8 +416,8 @@ def train(args, model_class):
             epoch,
             device,
             optimizer,
-            para_train_dataloader,
-            para_dev_dataloader,
+            train_dataloader,
+            dev_dataloader,
             best_dev_acc,
             None,
             None,
@@ -427,9 +512,21 @@ def get_args(model: ModelTarget):
     )
     # sonnet
     parser.add_argument("--sonnet_path", type=str, default="data/sonnets.txt")
+    # test inputs
     parser.add_argument(
         "--held_out_sonnet_path", type=str, default="data/sonnets_held_out.txt"
     )
+    # dev inputs
+    parser.add_argument(
+        "--held_out_sonnet_dev_path", type=str, default="data/sonnets_held_out_dev.txt"
+    )
+    # dev labels
+    parser.add_argument(
+        "--held_out_sonnet_dev_true_path",
+        type=str,
+        default="data/TRUE_sonnets_held_out_dev.txt",
+    )
+    # dev output sonnet gen from test inputs
     parser.add_argument(
         "--sonnet_out", type=str, default="predictions/generated_sonnets.txt"
     )
@@ -443,7 +540,7 @@ def get_args(model: ModelTarget):
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--lr", type=float, help="learning rate", default=1e-5)
     parser.add_argument("--temperature", type=float, default=1.2)
-    parser.add_argument("--top_p", type=float, default=0.9)
+    parser.add_argument("--top_p", type=float, default=0.8)
 
     parser.add_argument("--continue_prev_run", action="store_true", default=False)
     parser.add_argument(

@@ -105,10 +105,9 @@ class SonnetGPT(nn.Module):
                 dim=1,
             )
 
-        generated_output = self.tokenizer.decode(token_ids[0].cpu().numpy().tolist())[
-            3:
-        ]
-        return token_ids, generated_output
+        generated_output = self.tokenizer.decode(token_ids[0].cpu().numpy().tolist())
+        # print("generated_output:", generated_output)
+        return token_ids, generated_output  # [3:]
 
     def prepare_inputs_for_generation(self, input_ids, attention_mask=None, **kwargs):
         """Required method for PEFT compatibility with causal LM."""
@@ -129,7 +128,7 @@ def generate_submission_sonnets(args):
         model.load_state_dict(saved["model"])
     else:
         model.load_state_dict(saved["model"])
-        
+
     model = model.to(device)
     model.eval()
 
@@ -149,14 +148,13 @@ def generate_submission_sonnets(args):
         full_sonnet = f"{decoded_output}\n\n"
         generated_sonnets.append((sonnet_id, full_sonnet))
 
-        print(batch[1], "\noutput:", decoded_output, "-\n----")
+        print(full_sonnet, "----\n")
 
     with open(args.sonnet_out, "w+") as f:
         f.write("--Generated Sonnets-- \n\n")
         for sonnet in generated_sonnets:
             f.write(f"\n{sonnet[0]}\n")
             f.write(sonnet[1])
-    
 
 
 if __name__ == "__main__":
