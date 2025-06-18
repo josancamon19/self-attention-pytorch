@@ -4,6 +4,7 @@ import requests
 from tqdm import tqdm
 import torch
 from torch.utils.data import Dataset, DataLoader
+import torch.nn.functional as F
 from transformers import GPT2Tokenizer
 from models.gpt2 import GPT2Model
 from config import GPT2Config
@@ -87,7 +88,7 @@ class PreTrainDataset(Dataset):
 
         return {
             "input_ids": input_ids,
-            "attention_mask": attention_mask,
+            "attention_masks": attention_mask,
         }
 
 
@@ -114,28 +115,46 @@ def load_dataset(batch_size: int = 8):
     return train_dataloader, valid_dataloader
 
 
-def get_model():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def get_model(device):
     config = GPT2Config()
     model = GPT2Model(config)
     model.to(device)
     optimizer = AdamW(model.parameters())
     return model, optimizer
 
-def train(model, optimizer,device, train_dataloader):
+
+def train(model, optimizer, device, train_dataloader):
     epochs = 10
     for epoch in range(epochs):
-        for batch in train_dataloader:
-            input_ids = batch["input_id"].to(device)
-            attention_masks = batch["attention_mask"].to(device)
+        train_loss = 0
+        for batch in tqdm(train_dataloader, desc=f"train-{epoch}"):
+            input_ids = batch["input_ids"].to(device)
+            labels = input_ids[:, 1:]
+            print("input,labels: ", input_ids.shape, labels.shape)
+            labels = labels.contiguous().flatten()
+            print("labels flattened:", labels.shape)
+            attention_masks = batch["attention_masks"].to(device)
             pred = model(input_ids, attention_masks)
-            print(pred["last_hidden_state"].shape)
-            break
-        break        
+            pred = model.hidden_state_to_token(pred["last_hidden_state"])
+            pred = pred[:, :-1, :]
+            pred = pred.reshape(-1, pred.shape[2])
+            print(pred.shape)
+            # flattening is needed at both sides?
+            loss = F.cross_entropy(pred, labels, reduction="mean")
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+            print("batch_loss", loss)
+            train_loss += loss.item()
+
+        # TODO: validation loss
+        # TODO: saving the model
+
+        print(f"epoch {epoch} train_loss: {train_loss / len(train_dataloader)}")
+
 
 if __name__ == "__main__":
-    # download_datasets()
-    # explore_dataset()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_dataloader, valid_dataloader = load_dataset()
-    model, optimizer = get_model()
-    train(model, optimizer, train_dataloader)
+    model, optimizer = get_model(device)
+    train(model, optimizer, device, train_dataloader)
