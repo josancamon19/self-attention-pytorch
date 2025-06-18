@@ -30,15 +30,16 @@ class ParaphraseGPT(nn.Module):
         for param in self.gpt.parameters():
             param.requires_grad = True
 
+        self.config = self.gpt.config
         self.generation_config = SimpleNamespace(temperature=0.7, top_p=0.9)
 
     def forward(self, input_ids, attention_mask, **kwargs):
         gpt_output: dict = self.gpt(input_ids, attention_mask)
         return self.gpt.hidden_state_to_token(gpt_output["last_hidden_state"])[:, -1, :]
 
-    @property
-    def config(self):
-        return self.gpt.config
+    # @property
+    # def config(self):
+    #     return self.gpt.config
 
     def prepare_inputs_for_generation(self, input_ids, attention_mask=None, **kwargs):
         return {"input_ids": input_ids, "attention_mask": attention_mask}
