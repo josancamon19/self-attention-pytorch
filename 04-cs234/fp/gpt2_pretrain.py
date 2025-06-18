@@ -9,9 +9,10 @@ from transformers import GPT2Tokenizer
 from models.gpt2 import GPT2Model
 from config import GPT2Config
 from optimizer import AdamW
+from torch import autocast
 
-subdir = "data"
-os.makedirs(subdir, exist_ok=True)
+os.makedirs(".models/gpt2/", exist_ok=True)
+os.makedirs("data/", exist_ok=True)
 
 
 def download_datasets():
@@ -34,7 +35,7 @@ def download_datasets():
                 stream=True,
             )
 
-            with open(os.path.join(subdir, filename), "wb") as f:
+            with open(os.path.join("data/", filename), "wb") as f:
                 file_size = int(r.headers["content-length"])
                 chunk_size = 1000
                 with tqdm(
@@ -95,16 +96,21 @@ class PreTrainDataset(Dataset):
 def load_dataset(batch_size: int = 8):
     train_dataset = PreTrainDataset("data/small-117M.train.jsonl")
     valid_dataset = PreTrainDataset("data/small-117M.valid.jsonl")
+    print(
+        "load_dataset train_dataset, valid_dataset",
+        len(train_dataset),
+        len(valid_dataset),
+    )
 
     train_dataloader = DataLoader(
-        train_dataset,
+        train_dataset[:1000],
         batch_size=batch_size,
         shuffle=True,
         collate_fn=train_dataset.collate_fn,
     )
 
     valid_dataloader = DataLoader(
-        valid_dataset,
+        valid_dataset[:100],
         batch_size=batch_size,
         shuffle=False,
         collate_fn=valid_dataset.collate_fn,
@@ -119,42 +125,81 @@ def get_model(device):
     config = GPT2Config()
     model = GPT2Model(config)
     model.to(device)
+    # TODO: learning rate is clearly too big. or maybe not cause the opt changes it
     optimizer = AdamW(model.parameters())
     return model, optimizer
 
 
-def train(model, optimizer, device, train_dataloader):
+def comp_val_loss(model, device, valid_dataloader):
+    model.eval()
+    total_loss = 0
+    with torch.no_grad():
+        for batch in tqdm(valid_dataloader, desc="valid-loss"):
+            input_ids = batch["input_ids"].to(device)
+            attention_masks = batch["attention_masks"].to(device)
+            labels = input_ids[:, 1:].contiguous().flatten()
+            # TODO: should do autocast here?
+            with autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
+                pred = model.hidden_state_to_token(
+                    model(input_ids, attention_masks)["last_hidden_state"]
+                )
+                pred = pred[:, :-1, :].reshape(-1, pred.shape[2])
+                loss = F.cross_entropy(pred, labels, reduction="mean")
+                total_loss += loss.item()
+
+    return total_loss / len(valid_dataloader)
+
+
+def train(model, optimizer, device, train_dataloader, valid_dataloader):
     epochs = 10
+    best_valid_loss = float("inf")
     for epoch in range(epochs):
+        model.train()
         train_loss = 0
         for batch in tqdm(train_dataloader, desc=f"train-{epoch}"):
             input_ids = batch["input_ids"].to(device)
-            labels = input_ids[:, 1:]
-            print("input,labels: ", input_ids.shape, labels.shape)
-            labels = labels.contiguous().flatten()
-            print("labels flattened:", labels.shape)
             attention_masks = batch["attention_masks"].to(device)
-            pred = model(input_ids, attention_masks)
-            pred = model.hidden_state_to_token(pred["last_hidden_state"])
-            pred = pred[:, :-1, :]
-            pred = pred.reshape(-1, pred.shape[2])
-            print(pred.shape)
-            # flattening is needed at both sides?
-            loss = F.cross_entropy(pred, labels, reduction="mean")
+            labels = input_ids[:, 1:].contiguous().flatten()
+            with autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
+                pred = model.hidden_state_to_token(
+                    model(input_ids, attention_masks)["last_hidden_state"]
+                )
+                pred = pred[:, :-1, :].reshape(-1, pred.shape[2])
+                loss = F.cross_entropy(pred, labels, reduction="mean")
+
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
-            print("batch_loss", loss)
             train_loss += loss.item()
 
-        # TODO: validation loss
-        # TODO: saving the model
-
         print(f"epoch {epoch} train_loss: {train_loss / len(train_dataloader)}")
+        valid_loss = comp_val_loss(model, device, valid_dataloader)
+        print(f"validation_loss: {valid_loss}")
+        if valid_loss < best_valid_loss:
+            best_valid_loss = valid_loss
+            state = {
+                "config": model.config,
+                "model": model.state_dict(),
+                "optimizer_state": optimizer.state_dict(),
+            }
+            torch.save(state, ".models/gpt2/model.pt")
+
+
+# TODO: setup wandb
+# TODO: run the full thing while you are out
+
+def inference(device, prompt: str):
+    saved = torch.load(".models/gpt2/model.pt", weights_only=False)
+    model = GPT2Model(GPT2Config())
+    model.load_state_dict(saved["model"])
+    model.to(device)
+    model.eval()
+    with torch.inference():
+        pass
 
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    train_dataloader, valid_dataloader = load_dataset()
+    train_dataloader, valid_dataloader = load_dataset(batch_size=14)
     model, optimizer = get_model(device)
-    train(model, optimizer, device, train_dataloader)
+    train(model, optimizer, device, train_dataloader, valid_dataloader)
