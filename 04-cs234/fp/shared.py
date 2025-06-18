@@ -188,7 +188,7 @@ def get_wandb_run(args):
     )
 
 
-def sonnet_val_loss(generated_sonnets: List[str], dev_dataloader: DataLoader):
+def validation_chrf_score(generated_sonnets: List[str], dev_dataloader: DataLoader):
     chrf = CHRF()
     true_sonnets = [x[1] for x in dev_dataloader.dataset]
     max_len = min(len(true_sonnets), len(generated_sonnets))
@@ -225,15 +225,15 @@ def train_epoch(
     num_batches = 0
     optimizer.zero_grad()
 
-    for batch_idx, batch in enumerate(
+    for batch_idx, sample in enumerate(
         tqdm(train_dataloader, desc=f"train-{epoch}", disable=TQDM_DISABLE)
     ):
         # Get the input and move it to the gpu (I do not recommend training this model on CPU).
         b_ids, b_mask, labels = (
-            batch["token_ids"].to(device),
-            batch["attention_mask"].to(device),
+            sample["token_ids"].to(device),
+            sample["attention_mask"].to(device),
             # .torch empty for sonnets
-            batch.get("labels", torch.empty((0, 0))).flatten().to(device),
+            sample.get("labels", torch.empty((0, 0))).flatten().to(device),
         )
         if args.model == "sonnet":
             # Ignore the first token to compose the labels.
@@ -269,7 +269,7 @@ def train_epoch(
         dist.all_reduce(train_loss_tensor, op=dist.ReduceOp.SUM)
         train_loss = train_loss_tensor.item() / dist.get_world_size()
 
-    if model == "paraphrase":
+    if args.model == "paraphrase":
         if rank is None or rank == 0:
             dev_acc, dev_f1, *_ = model_eval_paraphrase(dev_dataloader, model, device)
             if dev_acc > best_dev_acc:
@@ -286,24 +286,25 @@ def train_epoch(
         predictions = []
         print(f"Epoch {epoch}: train loss :: {train_loss:.3f}")
         print("evaluating sonnets:")
-        for i, batch in enumerate(dev_dataloader.dataset):
-            print("i", i, "batch:", batch)
-            encoding = model.tokenizer(
-                batch[1], return_tensors="pt", padding=True, truncation=True
-            ).to(device)
-            output = model.generate(
-                encoding["input_ids"], temperature=args.temperature, top_p=args.top_p
-            )
-            predictions.append(output)
-            # print(f"{batch[1]}{output[1]}\n\n")
-        val_loss = sonnet_val_loss(predictions, dev_dataloader)
-        print("sonnets val_loss:", val_loss)
-        if val_loss < best_dev_acc: # avoid renaming but as is loss, we want it lower.
+        
+        with torch.inference_mode():
+            for sample in dev_dataloader.dataset:
+                encoding = model.tokenizer(
+                    sample[1], return_tensors="pt", padding=True, truncation=True
+                ).to(device)
+                output = model.generate(
+                    encoding["input_ids"], temperature=args.temperature, top_p=args.top_p
+                )
+                predictions.append(output[1])
+                # print(f"{batch[1]}{output[1]}------\n\n")
+
+        score = validation_chrf_score(predictions, dev_dataloader)
+        print("sonnets chrf_score:", score)
+        if score > best_dev_acc:  # higher better.
             model_to_save = model.module if hasattr(model, "module") else model
             save_model(model_to_save, optimizer, args)
         if wandb_run:
-            wandb_run.log({"train_loss": train_loss, "val_loss": val_loss})
-        
+            wandb_run.log({"train_loss": train_loss, "chrf_score": score})
 
     if rank is not None:  # TODO: not needed when sonnet, no dev acc
         best_dev_acc_tensor = torch.tensor(best_dev_acc).cuda()

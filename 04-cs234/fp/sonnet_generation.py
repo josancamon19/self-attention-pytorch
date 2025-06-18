@@ -1,6 +1,5 @@
 import torch
 from torch import nn
-from evaluation import test_sonnet
 from transformers import GPT2Tokenizer
 from datasets import SonnetsDataset
 from models.gpt2 import GPT2Model
@@ -51,7 +50,7 @@ class SonnetGPT(nn.Module):
         for param in self.gpt.parameters():
             return param.device
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def generate(self, encoding, temperature=0.7, top_p=0.9, max_length=128):
         """
         Generates an original sonnet using top-p sampling and softmax temperature.
