@@ -537,6 +537,7 @@ def get_args(model: ModelTarget):
     parser.add_argument("--distributed", action="store_true", default=False)
     parser.add_argument("--gradient_accumulation", type=int, default=1)
     parser.add_argument("--batch_size", type=int, default=8)
+    # TODO: play with higher learning rate.
     parser.add_argument("--lr", type=float, help="learning rate", default=1e-5)
     parser.add_argument("--temperature", type=float, default=1.2)
     parser.add_argument("--top_p", type=float, default=0.8)
