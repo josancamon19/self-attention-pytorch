@@ -125,7 +125,8 @@ def load_dataset(batch_size: int = 8):
 def get_model(device):
     config = GPT2Config()
     model = GPT2Model(config)
-    model.to(device)
+    model.to(device, dtype=torch.bfloat16)
+    model = torch.compile(model)
     # TODO: learning rate is clearly too big. or maybe not cause Adam changes it
     optimizer = AdamW(model.parameters())
     return model, optimizer
