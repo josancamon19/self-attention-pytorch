@@ -9,7 +9,7 @@ from transformers import GPT2Tokenizer
 from models.gpt2 import GPT2Model
 from config import GPT2Config
 from optimizer import AdamW
-from torch import autocast
+from torch import autocast  # , nn_utils
 import wandb
 
 os.makedirs(".models/gpt2/", exist_ok=True)
@@ -104,7 +104,7 @@ def load_dataset(batch_size: int = 8):
     )
 
     train_dataloader = DataLoader(
-        train_dataset,  # [:10000],
+        train_dataset[:10000],
         batch_size=batch_size,
         shuffle=True,
         collate_fn=train_dataset.collate_fn,
@@ -127,8 +127,7 @@ def get_model(device):
     model = GPT2Model(config)
     model.to(device, dtype=torch.bfloat16)
     model = torch.compile(model)
-    # TODO: learning rate is clearly too big. or maybe not cause Adam changes it
-    optimizer = AdamW(model.parameters())
+    optimizer = AdamW(model.parameters(), lr=1e-4)
     return model, optimizer
 
 
@@ -145,6 +144,7 @@ def comp_val_loss(model, device, valid_dataloader):
                     model(input_ids, attention_masks)["last_hidden_state"]
                 )
                 pred = pred[:, :-1, :].reshape(-1, pred.shape[2])
+                pred = torch.clamp(pred, min=-100, max=100)
                 loss = F.cross_entropy(pred, labels, reduction="mean")
                 total_loss += loss.item()
 
@@ -161,6 +161,7 @@ def train(model, optimizer, device, train_dataloader, valid_dataloader):
     for epoch in range(epochs):
         model.train()
         train_loss = 0
+        step = 1
         for batch in tqdm(train_dataloader, desc=f"train-{epoch}"):
             input_ids = batch["input_ids"].to(device)
             attention_masks = batch["attention_masks"].to(device)
@@ -172,8 +173,19 @@ def train(model, optimizer, device, train_dataloader, valid_dataloader):
                 pred = pred[:, :-1, :].reshape(-1, pred.shape[2])
                 loss = F.cross_entropy(pred, labels, reduction="mean")
 
+                if torch.isnan(loss):  # issues with nan
+                    print(f"NaN loss detected at step {step}")
+                    print(f"Max pred: {pred.max()}, Min pred: {pred.min()}")
+                    print(
+                        f"Max input_ids: {input_ids.max()}, Min input_ids: {input_ids.min()}"
+                    )
+                    break
+
             loss.backward()
+            # nn_utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
             optimizer.step()
+            step += 1
             optimizer.zero_grad()
             train_loss += loss.item()
 
@@ -225,5 +237,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_dataloader, valid_dataloader = load_dataset(batch_size=14)
     model, optimizer = get_model(device)
-    train(model, optimizer, device, train_dataloader, valid_dataloader)
+    valid_loss = comp_val_loss(model, device, valid_dataloader)
+    print(f"validation_loss: {valid_loss}")
+    # train(model, optimizer, device, train_dataloader, valid_dataloader)
     # inference(device, "Hi, my name is", 50)
