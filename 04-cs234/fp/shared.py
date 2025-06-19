@@ -1,7 +1,6 @@
 import argparse
 import enum
 import random
-from typing import List
 from einops import rearrange
 import torch
 import os
@@ -17,7 +16,7 @@ from datasets import (
     SonnetsDataset,
     load_paraphrase_data,
 )
-from evaluation import model_eval_paraphrase, test_sonnet
+from evaluation import model_eval_paraphrase
 from optimizer import AdamW
 from peft import LoraConfig, TaskType, get_peft_model
 import torch.distributed as dist
@@ -364,10 +363,9 @@ def train_epoch(
 
         train_loss += loss.item() * gradient_accumulation_steps
         num_batches += 1
-        
+
         if num_batches % gradient_accumulation_steps != 0:
             torch.cuda.empty_cache()
-            
 
     if num_batches % gradient_accumulation_steps != 0:
         optimizer.step()
@@ -410,7 +408,7 @@ def train(args, model_class):
     model, optimizer = get_model_and_optimizer(args, device, model_class)
     best_dev_acc = 0 if args.model == "paraphrase" else float("inf")
 
-    # wandb_run = get_wandb_run(args)
+    wandb_run = get_wandb_run(args)
 
     for epoch in range(args.epochs):
         best_dev_acc = train_epoch(
@@ -426,8 +424,8 @@ def train(args, model_class):
             None,
             args.gradient_accumulation,
             args.use_bf16,
-            # wandb_run,
-            None,
+            wandb_run,
+            # None,
         )
 
 
