@@ -10,6 +10,7 @@ from models.gpt2 import GPT2Model
 from config import GPT2Config
 from optimizer import AdamW
 from torch import autocast
+import wandb
 
 os.makedirs(".models/gpt2/", exist_ok=True)
 os.makedirs("data/", exist_ok=True)
@@ -103,14 +104,14 @@ def load_dataset(batch_size: int = 8):
     )
 
     train_dataloader = DataLoader(
-        train_dataset[:1000],
+        train_dataset,  # [:10000],
         batch_size=batch_size,
         shuffle=True,
         collate_fn=train_dataset.collate_fn,
     )
 
     valid_dataloader = DataLoader(
-        valid_dataset[:100],
+        valid_dataset,  # [:1500],
         batch_size=batch_size,
         shuffle=False,
         collate_fn=valid_dataset.collate_fn,
@@ -125,7 +126,7 @@ def get_model(device):
     config = GPT2Config()
     model = GPT2Model(config)
     model.to(device)
-    # TODO: learning rate is clearly too big. or maybe not cause the opt changes it
+    # TODO: learning rate is clearly too big. or maybe not cause Adam changes it
     optimizer = AdamW(model.parameters())
     return model, optimizer
 
@@ -138,7 +139,6 @@ def comp_val_loss(model, device, valid_dataloader):
             input_ids = batch["input_ids"].to(device)
             attention_masks = batch["attention_masks"].to(device)
             labels = input_ids[:, 1:].contiguous().flatten()
-            # TODO: should do autocast here?
             with autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
                 pred = model.hidden_state_to_token(
                     model(input_ids, attention_masks)["last_hidden_state"]
@@ -153,6 +153,10 @@ def comp_val_loss(model, device, valid_dataloader):
 def train(model, optimizer, device, train_dataloader, valid_dataloader):
     epochs = 10
     best_valid_loss = float("inf")
+    run = wandb.init(
+        entity="josancamon19-cifrato",
+        project="pretrain-gpt2",
+    )
     for epoch in range(epochs):
         model.train()
         train_loss = 0
@@ -172,9 +176,11 @@ def train(model, optimizer, device, train_dataloader, valid_dataloader):
             optimizer.zero_grad()
             train_loss += loss.item()
 
-        print(f"epoch {epoch} train_loss: {train_loss / len(train_dataloader)}")
+        train_loss = train_loss / len(train_dataloader)
+        print(f"epoch {epoch} train_loss: {train_loss}")
         valid_loss = comp_val_loss(model, device, valid_dataloader)
         print(f"validation_loss: {valid_loss}")
+        run.log({"train_loss": train_loss, "val_loss": valid_loss})
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
             state = {
@@ -185,17 +191,33 @@ def train(model, optimizer, device, train_dataloader, valid_dataloader):
             torch.save(state, ".models/gpt2/model.pt")
 
 
-# TODO: setup wandb
-# TODO: run the full thing while you are out
+def inference(device, prompt: str, completion_tokens: int):
+    tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir="./.cache/huggingface")
+    tokenizer.pad_token = tokenizer.eos_token
 
-def inference(device, prompt: str):
     saved = torch.load(".models/gpt2/model.pt", weights_only=False)
     model = GPT2Model(GPT2Config())
     model.load_state_dict(saved["model"])
     model.to(device)
     model.eval()
-    with torch.inference():
-        pass
+    with torch.inference_mode():
+        encoded = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
+        input_ids, attention_mask = (
+            encoded["input_ids"].to(device),
+            encoded["attention_mask"].to(device),
+        )
+        for _ in range(completion_tokens):
+            output = model(input_ids, attention_mask)
+            next_token_pred = model.hidden_state_to_token(output["last_token"])
+            next_token = torch.argmax(next_token_pred, dim=-1)
+            # print("argmax:", next_token, "decoded:", tokenizer.decode(next_token.item()))
+            next_token = next_token.unsqueeze(0)
+            input_ids = torch.cat([input_ids, next_token], dim=1)
+            attention_mask = torch.cat(
+                [attention_mask, torch.ones_like(next_token).to(device)], dim=1
+            )
+
+    print(tokenizer.decode(input_ids[0]))
 
 
 if __name__ == "__main__":
@@ -203,3 +225,4 @@ if __name__ == "__main__":
     train_dataloader, valid_dataloader = load_dataset(batch_size=14)
     model, optimizer = get_model(device)
     train(model, optimizer, device, train_dataloader, valid_dataloader)
+    # inference(device, "Hi, my name is", 50)
