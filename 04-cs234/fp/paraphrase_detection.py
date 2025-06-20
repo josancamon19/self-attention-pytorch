@@ -54,9 +54,8 @@ def test(args):
     model = ParaphraseGPT(saved["args"])
     if args.peft:
         model = get_peft_model(model, utils.get_lora_config(True))
-    else:
-        model.load_state_dict(saved["model"])
 
+    model.load_state_dict(saved["model"])
     model = model.to(device)
     model.eval()
     print(f"Loaded model to test from {args.filepath}")
