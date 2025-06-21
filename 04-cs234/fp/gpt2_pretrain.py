@@ -5,11 +5,13 @@ from tqdm import tqdm
 import torch
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
+# from torch.nn import nn_utils
 from transformers import GPT2Tokenizer
 from models.gpt2 import GPT2Model
 from config import GPT2Config
 from optimizer import AdamW
 from torch import autocast  # , nn_utils
+import torch.nn.utils as nn_utils
 import wandb
 
 os.makedirs(".models/gpt2/", exist_ok=True)
@@ -104,7 +106,7 @@ def load_dataset(batch_size: int = 8):
     )
 
     train_dataloader = DataLoader(
-        train_dataset[:10000],
+        train_dataset, # [:25000],
         batch_size=batch_size,
         shuffle=True,
         collate_fn=train_dataset.collate_fn,
@@ -126,8 +128,8 @@ def get_model(device):
     config = GPT2Config()
     model = GPT2Model(config)
     model.to(device, dtype=torch.bfloat16)
-    model = torch.compile(model)
-    optimizer = AdamW(model.parameters(), lr=1e-4)
+    # model = torch.compile(model)
+    optimizer = AdamW(model.parameters(), lr=3e-4, weight_decay=0.01)
     return model, optimizer
 
 
@@ -144,8 +146,10 @@ def comp_val_loss(model, device, valid_dataloader):
                     model(input_ids, attention_masks)["last_hidden_state"]
                 )
                 pred = pred[:, :-1, :].reshape(-1, pred.shape[2])
-                pred = torch.clamp(pred, min=-100, max=100)
                 loss = F.cross_entropy(pred, labels, reduction="mean")
+                if torch.isnan(loss):
+                    print("comp_val_loss skpping_nan")
+                    continue
                 total_loss += loss.item()
 
     return total_loss / len(valid_dataloader)
@@ -153,6 +157,8 @@ def comp_val_loss(model, device, valid_dataloader):
 
 def train(model, optimizer, device, train_dataloader, valid_dataloader):
     epochs = 10
+    grad_accum_steps = 8
+    
     best_valid_loss = float("inf")
     run = wandb.init(
         entity="josancamon19-cifrato",
@@ -161,8 +167,7 @@ def train(model, optimizer, device, train_dataloader, valid_dataloader):
     for epoch in range(epochs):
         model.train()
         train_loss = 0
-        step = 1
-        for batch in tqdm(train_dataloader, desc=f"train-{epoch}"):
+        for batch_idx, batch in enumerate(tqdm(train_dataloader, desc=f"train-{epoch}")):
             input_ids = batch["input_ids"].to(device)
             attention_masks = batch["attention_masks"].to(device)
             labels = input_ids[:, 1:].contiguous().flatten()
@@ -172,22 +177,21 @@ def train(model, optimizer, device, train_dataloader, valid_dataloader):
                 )
                 pred = pred[:, :-1, :].reshape(-1, pred.shape[2])
                 loss = F.cross_entropy(pred, labels, reduction="mean")
-
-                if torch.isnan(loss):  # issues with nan
-                    print(f"NaN loss detected at step {step}")
-                    print(f"Max pred: {pred.max()}, Min pred: {pred.min()}")
-                    print(
-                        f"Max input_ids: {input_ids.max()}, Min input_ids: {input_ids.min()}"
-                    )
-                    break
-
+                # TODO: says loss function is calculated on padding tokens, so it's wrong
+                # if torch.isnan(loss):  # issues with nan
+                #     print("trainining skpping_nan")
+                #     optimizer.zero_grad()
+                #     continue
+            
+            loss /= grad_accum_steps
             loss.backward()
-            # nn_utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
-            optimizer.step()
-            step += 1
-            optimizer.zero_grad()
-            train_loss += loss.item()
+            
+            if (batch_idx + 1) % grad_accum_steps == 0:
+                nn_utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()
+                optimizer.zero_grad()
+                
+            train_loss += loss.item() * grad_accum_steps
 
         train_loss = train_loss / len(train_dataloader)
         print(f"epoch {epoch} train_loss: {train_loss}")
@@ -237,7 +241,10 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_dataloader, valid_dataloader = load_dataset(batch_size=14)
     model, optimizer = get_model(device)
-    valid_loss = comp_val_loss(model, device, valid_dataloader)
-    print(f"validation_loss: {valid_loss}")
-    # train(model, optimizer, device, train_dataloader, valid_dataloader)
+    train(model, optimizer, device, train_dataloader, valid_dataloader)
+    
+    # saved = torch.load(".models/gpt2/model.pt", weights_only=False)
+    # model.load_state_dict(saved["model"])
+    # model.to(device)
+    # print(comp_val_loss(model, device, valid_dataloader))
     # inference(device, "Hi, my name is", 50)
