@@ -5,6 +5,7 @@ from tqdm import tqdm
 import torch
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
+
 # from torch.nn import nn_utils
 from transformers import GPT2Tokenizer
 from models.gpt2 import GPT2Model
@@ -106,7 +107,7 @@ def load_dataset(batch_size: int = 8):
     )
 
     train_dataloader = DataLoader(
-        train_dataset, # [:25000],
+        train_dataset,  # [:25000],
         batch_size=batch_size,
         shuffle=True,
         collate_fn=train_dataset.collate_fn,
@@ -158,7 +159,7 @@ def comp_val_loss(model, device, valid_dataloader):
 def train(model, optimizer, device, train_dataloader, valid_dataloader):
     epochs = 10
     grad_accum_steps = 8
-    
+
     best_valid_loss = float("inf")
     run = wandb.init(
         entity="josancamon19-cifrato",
@@ -167,7 +168,9 @@ def train(model, optimizer, device, train_dataloader, valid_dataloader):
     for epoch in range(epochs):
         model.train()
         train_loss = 0
-        for batch_idx, batch in enumerate(tqdm(train_dataloader, desc=f"train-{epoch}")):
+        for batch_idx, batch in enumerate(
+            tqdm(train_dataloader, desc=f"train-{epoch}")
+        ):
             input_ids = batch["input_ids"].to(device)
             attention_masks = batch["attention_masks"].to(device)
             labels = input_ids[:, 1:].contiguous().flatten()
@@ -182,15 +185,15 @@ def train(model, optimizer, device, train_dataloader, valid_dataloader):
                 #     print("trainining skpping_nan")
                 #     optimizer.zero_grad()
                 #     continue
-            
+
             loss /= grad_accum_steps
             loss.backward()
-            
+
             if (batch_idx + 1) % grad_accum_steps == 0:
                 nn_utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
                 optimizer.zero_grad()
-                
+
             train_loss += loss.item() * grad_accum_steps
 
         train_loss = train_loss / len(train_dataloader)
@@ -242,9 +245,29 @@ if __name__ == "__main__":
     train_dataloader, valid_dataloader = load_dataset(batch_size=14)
     model, optimizer = get_model(device)
     train(model, optimizer, device, train_dataloader, valid_dataloader)
-    
+
     # saved = torch.load(".models/gpt2/model.pt", weights_only=False)
     # model.load_state_dict(saved["model"])
     # model.to(device)
     # print(comp_val_loss(model, device, valid_dataloader))
     # inference(device, "Hi, my name is", 50)
+
+
+## CLAUDE CODE
+#   Critical fixes needed:
+#   1. Fix loss masking for padding tokens (lines 143, 173, 179)
+#   2. Use proper training dataset (WebText, not model outputs)
+#   3. Add learning rate scheduler with warmup
+#   4. Increase effective batch size
+#   5. Fix loss logging in gradient accumulation
+
+#   Your model won't train optimally due to:
+#   - Training on wrong data (model outputs vs raw text)
+#   - Loss computed on padding tokens
+#   - No learning rate scheduling
+#   - Batch size too small for stable training
+
+#   The loss masking bug is preventing proper convergence - this should be your first fix.
+
+# paraphrase, train 1 epoch, and check how accurate is it at paraphrasing
+# train/test inference data have different inputs?
