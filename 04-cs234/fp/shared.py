@@ -1,7 +1,6 @@
 import argparse
 import enum
 import random
-from typing import List
 from einops import rearrange
 import torch
 import os
@@ -17,7 +16,7 @@ from datasets import (
     SonnetsDataset,
     load_paraphrase_data,
 )
-from evaluation import model_eval_paraphrase, test_sonnet
+from evaluation import model_eval_paraphrase
 from optimizer import AdamW
 from peft import LoraConfig, TaskType, get_peft_model
 import torch.distributed as dist
@@ -124,7 +123,7 @@ def get_train_datasets(
     # dataloader, grain python.
 
     train_dataloader = DataLoader(
-        train_data,
+        train_data, # [:1000],
         shuffle=(train_sampler is None),
         batch_size=args.batch_size,
         collate_fn=train_data.collate_fn,
@@ -151,7 +150,7 @@ def get_model_and_optimizer(args, device, model_class):
         model.load_state_dict(saved["model"])
         print("get_model_and_optimizer, pre-loaded:", args.filepath)
 
-    model = model.to(device)
+    model = model.to(device, dtype=torch.bfloat16 if args.use_bf16 else None)
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.0)
     return model, optimizer
 
@@ -266,7 +265,7 @@ def train_eval(
 ):
     if args.model == "paraphrase":
         if rank is None or rank == 0:
-            dev_acc, dev_f1, *_ = model_eval_paraphrase(dev_dataloader, model, device)
+            dev_acc, dev_f1, *_ = model_eval_paraphrase(dev_dataloader, model, device, args.use_bf16)
             if dev_acc > best_dev_acc:
                 best_dev_acc = dev_acc
                 model_to_save = model.module if hasattr(model, "module") else model
@@ -365,7 +364,10 @@ def train_epoch(
         train_loss += loss.item() * gradient_accumulation_steps
         num_batches += 1
 
-    if num_batches % gradient_accumulation_steps == 0:
+        if num_batches % gradient_accumulation_steps != 0:
+            torch.cuda.empty_cache()
+
+    if num_batches % gradient_accumulation_steps != 0:
         optimizer.step()
         optimizer.zero_grad()
 
@@ -423,6 +425,7 @@ def train(args, model_class):
             args.gradient_accumulation,
             args.use_bf16,
             wandb_run,
+            # None,
         )
 
 
@@ -537,7 +540,6 @@ def get_args(model: ModelTarget):
     parser.add_argument("--distributed", action="store_true", default=False)
     parser.add_argument("--gradient_accumulation", type=int, default=1)
     parser.add_argument("--batch_size", type=int, default=8)
-    # TODO: play with higher learning rate.
     parser.add_argument("--lr", type=float, help="learning rate", default=1e-5)
     parser.add_argument("--temperature", type=float, default=1.2)
     parser.add_argument("--top_p", type=float, default=0.8)
