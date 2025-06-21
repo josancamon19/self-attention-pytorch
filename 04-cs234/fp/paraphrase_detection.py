@@ -1,6 +1,6 @@
 import torch
 
-from torch import nn
+from torch import nn, autocast
 from torch.utils.data import DataLoader
 
 from datasets import (
@@ -14,6 +14,8 @@ import shared as utils
 from peft import get_peft_model
 from types import SimpleNamespace
 import torch.multiprocessing as mp
+from transformers import GPT2Tokenizer
+import numpy as np
 
 TQDM_DISABLE = False
 
@@ -56,7 +58,7 @@ def test(args):
         model = get_peft_model(model, utils.get_lora_config(True))
 
     model.load_state_dict(saved["model"])
-    model = model.to(device)
+    model = model.to(device, dtype=torch.bfloat16)
     model.eval()
     print(f"Loaded model to test from {args.filepath}")
 
@@ -80,11 +82,11 @@ def test(args):
     )
 
     dev_para_acc, _, dev_para_y_pred, _, dev_para_sent_ids = model_eval_paraphrase(
-        para_dev_dataloader, model, device
+        para_dev_dataloader, model, device, args.use_bf16
     )
     print(f"dev paraphrase acc :: {dev_para_acc:.3f}")
     test_para_y_pred, test_para_sent_ids = model_test_paraphrase(
-        para_test_dataloader, model, device
+        para_test_dataloader, model, device, args.use_bf16
     )
 
     with open(args.para_dev_out, "w+") as f:
@@ -96,6 +98,54 @@ def test(args):
         f.write("id \t Predicted_Is_Paraphrase \n")
         for p, s in zip(test_para_sent_ids, test_para_y_pred):
             f.write(f"{p}, {s} \n")
+
+
+def inference(args):
+    tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=args.cache_dir)
+    tokenizer.pad_token = tokenizer.eos_token
+    yes_token_id = tokenizer.encode("yes", add_special_tokens=False)[0]
+    no_token_id = tokenizer.encode("no", add_special_tokens=False)[0]
+    print(yes_token_id, no_token_id)
+    # return
+    
+    
+    device = torch.device("cuda") if args.use_gpu else torch.device("cpu")
+    saved = torch.load(args.filepath, weights_only=False)
+    model = ParaphraseGPT(saved["args"])
+    model.load_state_dict(saved["model"])
+    model = model.to(device, dtype=torch.bfloat16)
+    model.eval()
+    
+    
+    print(f"Loaded model to test from {args.filepath}")
+
+    para_dev_data = load_paraphrase_data(args.para_dev)
+    for item in para_dev_data:
+        print(item)
+        s1, s2, same, sid = item[0], item[1], item[2], item[3]
+        prompt = f'Is "{s1}" a paraphrase of "{s2}"? Answer "yes" or "no": '
+        encoding = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
+        token_ids = torch.LongTensor(encoding["input_ids"]).to(device)
+        attention_mask = torch.LongTensor(encoding["attention_mask"]).to(device)
+        
+        print(token_ids.shape)        
+
+        with autocast(device_type="cuda", dtype=torch.bfloat16, enabled=args.use_bf16):
+            logits = model(token_ids, attention_mask)
+        
+        logits = logits.float().detach().cpu().numpy()
+        print("logits:", logits.shape, logits[0,:10])
+        print()
+        # Get top 10 predictions instead of just argmax
+        top_10_preds = np.argsort(logits, axis=1)[:, -10:]  # Get indices of top 10 values
+        print(top_10_preds.shape)
+        print(top_10_preds)
+        top_10_values = np.take_along_axis(logits, top_10_preds, axis=1)  # Get corresponding values
+        print(top_10_values)
+        preds = top_10_preds[:, -1]  # Keep original behavior for compatibility
+        print(preds)
+        print(tokenizer.decode(preds))
+        break
 
 
 # DISTRIBUTED LEARNINGS
@@ -122,10 +172,11 @@ def test(args):
 if __name__ == "__main__":
     # 0.86 default settings 10-1e-05-paraphrase.pt
     args = utils.get_args(utils.ModelTarget.paraphrase)
-    if args.distributed:
-        gpus = torch.cuda.device_count()
-        print("loading distributed training, gpus:", gpus)
-        mp.spawn(utils.train_dist, args=(args, ParaphraseGPT, True), nprocs=gpus)
-    else:
-        utils.train(args, ParaphraseGPT)
-    test(args)
+    # if args.distributed:
+    #     gpus = torch.cuda.device_count()
+    #     print("loading distributed training, gpus:", gpus)
+    #     mp.spawn(utils.train_dist, args=(args, ParaphraseGPT, True), nprocs=gpus)
+    # else:
+    # utils.train(args, ParaphraseGPT)
+    # test(args)  
+    inference(args)

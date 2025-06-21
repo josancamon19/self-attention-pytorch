@@ -39,8 +39,6 @@ def model_eval_paraphrase(dataloader, model, device, use_bf16):
         logits = logits.float().cpu().numpy()
         preds = np.argmax(logits, axis=1).flatten()
         
-        # print(logits, preds)
-
         y_true.extend(labels)
         y_pred.extend(preds)
         sent_ids.extend(b_sent_ids)
@@ -52,7 +50,7 @@ def model_eval_paraphrase(dataloader, model, device, use_bf16):
 
 
 @torch.no_grad()
-def model_test_paraphrase(dataloader, model, device):
+def model_test_paraphrase(dataloader, model, device, use_bf16):
     model.eval()  # Switch to eval model, will turn off randomness like dropout.
     y_true, y_pred, sent_ids = [], [], []
     for step, batch in enumerate(tqdm(dataloader, desc=f"eval", disable=TQDM_DISABLE)):
@@ -65,7 +63,10 @@ def model_test_paraphrase(dataloader, model, device):
         b_ids = b_ids.to(device)
         b_mask = b_mask.to(device)
 
-        logits = model(b_ids, b_mask).cpu().numpy()
+        with autocast(device_type="cuda", dtype=torch.bfloat16, enabled=use_bf16):
+            logits = model(b_ids, b_mask)
+        
+        logits = logits.float().cpu().numpy()
         preds = np.argmax(logits, axis=1).flatten()
 
         y_pred.extend(preds)
