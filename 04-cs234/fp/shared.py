@@ -123,7 +123,7 @@ def get_train_datasets(
     # dataloader, grain python.
 
     train_dataloader = DataLoader(
-        train_data, # [:1000],
+        train_data,  # [:1000],
         shuffle=(train_sampler is None),
         batch_size=args.batch_size,
         collate_fn=train_data.collate_fn,
@@ -265,7 +265,12 @@ def train_eval(
 ):
     if args.model == "paraphrase":
         if rank is None or rank == 0:
-            dev_acc, dev_f1, *_ = model_eval_paraphrase(dev_dataloader, model, device, args.use_bf16)
+            dev_acc, dev_f1, y_pred, y_true, _ = model_eval_paraphrase(
+                dev_dataloader, model, device, args.use_bf16
+            )
+            print("model_eval_paraphrase")
+            print("preds:", y_pred[:20])
+            print("true:", y_true[:20])
             if dev_acc > best_dev_acc:
                 best_dev_acc = dev_acc
                 model_to_save = model.module if hasattr(model, "module") else model
