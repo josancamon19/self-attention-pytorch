@@ -35,10 +35,14 @@ class ParaphraseGPT(nn.Module):
         self.config = self.gpt.config
         self.generation_config = SimpleNamespace(temperature=0.7, top_p=0.9)
 
+        self.dropout = nn.Dropout(0.1)
+        self.classifier = nn.Linear(self.config.hidden_size, 2)
+
     def forward(self, input_ids, attention_mask, **kwargs):
         gpt_output: dict = self.gpt(input_ids, attention_mask)
-        return self.gpt.hidden_state_to_token(gpt_output["last_token"])
-        # self.gpt.hidden_state_to_token(gpt_output["last_hidden_state"])[:, -1, :]
+        return self.classifier(self.dropout(gpt_output["last_token"]))
+        # return self.gpt.hidden_state_to_token(gpt_output["last_token"]) # weight tying
+        # return self.gpt.hidden_state_to_token(gpt_output["last_hidden_state"])[:, -1, :]
 
     def prepare_inputs_for_generation(self, input_ids, attention_mask=None, **kwargs):
         return {"input_ids": input_ids, "attention_mask": attention_mask}
@@ -55,7 +59,7 @@ def test(args):
     if args.peft:
         model = get_peft_model(model, utils.get_lora_config(True))
 
-    # model.load_state_dict(saved["model"])
+    model.load_state_dict(saved["model"])
     model = model.to(device, dtype=torch.bfloat16)
     model.eval()
     print(f"Loaded model to test from {args.filepath}")
@@ -106,7 +110,7 @@ def inference(args):
     print(yes_token_id, no_token_id)
 
     device = torch.device("cuda") if args.use_gpu else torch.device("cpu")
-    # saved = torch.load(args.filepath, weights_only=False)
+    saved = torch.load(args.filepath, weights_only=False)
     # model = ParaphraseGPT(saved["args"])
     # model.load_state_dict(saved["model"])
     model = ParaphraseGPT(args)
@@ -130,52 +134,28 @@ def inference(args):
             logits = model(token_ids, attention_mask)
 
         logits = logits.float().detach().cpu().numpy()
-        # print("logits:", logits.shape, logits[0, :10])
+        print("logits:", logits.shape, logits[0, :10])
         # top_10_preds = np.argsort(logits, axis=1)[:, -10:]
         # print("top 10 preds:", top_10_preds.shape, top_10_preds)
         # top_10_values = np.take_along_axis(logits, top_10_preds, axis=1)
         # print(top_10_values)
-        preds = np.argmax(logits, axis=1).flatten()
-        print("prediction:", preds, f"\"{tokenizer.decode(preds)}\"")
+        pred = np.argmax(logits, axis=1).flatten()
+        print("prediction:", pred, f'"{tokenizer.decode(pred)}"')
         print("-------\n")
-        if i == 100:
+        if i == 1:
             break
         # break
 
 
-# DISTRIBUTED LEARNINGS
-# use torchrun instead of mp.spawn
-# python process controlling other python processes.
-# fuck, so DDP is a bad idea here, communication overhead is bigger than comp gain.
-# python paraphrase_detection.py --use_gpu --batch_size 160 --distributed, 345 samples second
-# python paraphrase_detection.py --use_gpu --batch_size 52, 100*52/16 = 325 samples per second
-
-# with gradient accumulation 3, 360 samples per second
-# single gpu, gradient accum: 338 samples per second
-
-# maybe here, there's a slight 5/10% gain
-
-# STOPPED TRYING STUFF, let's profile the model
-# nvm profiling is so confusing,
-
-# bf16, 2x as fast, 1/2 memory, wtf. (single GPU)
-# now I'm confused, distributed is not the same? why, wtf
-# now distributed doesn't work at all, after 10% fails, gpu memory full. Prob gradient accumulation, fuck
-
-# TODO: I don't know yet if distributed communication/loss/training is working, solve
-
 if __name__ == "__main__":
-    # 0.86 default settings 10-1e-05-paraphrase.pt
     args = utils.get_args(utils.ModelTarget.paraphrase)
-    # if args.distributed:
-    #     gpus = torch.cuda.device_count()
-    #     print("loading distributed training, gpus:", gpus)
-    #     mp.spawn(utils.train_dist, args=(args, ParaphraseGPT, True), nprocs=gpus)
-    # else:
-    # ok, apparently gpt2-large has 0% accuracy, not trained.
-    utils.train(args, ParaphraseGPT)
-    # TODO: gpt2 saturated super fast (2nd epoch, 0.64 val loss), is train data, distributed? model seem to be predicting always 3919
-    # -- imbalanced?
-    # -- does a classifier head works best?
-    test(args)
+    if args.distributed:
+        gpus = torch.cuda.device_count()
+        print("loading distributed training, gpus:", gpus)
+        mp.spawn(utils.train_dist, args=(args, ParaphraseGPT, True), nprocs=gpus)
+    else:
+        utils.train(args, ParaphraseGPT)
+        # pass
+
+    # test(args)
     # inference(args)
