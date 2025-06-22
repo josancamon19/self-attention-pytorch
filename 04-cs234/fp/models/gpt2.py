@@ -122,6 +122,7 @@ class GPT2Model(GPTPreTrainedModel):
 
           return hidden_state(s) * E^T
         """
+        # print("self.word_embedding.weight", self.word_embedding.weight.shape)
         output = hidden_state @ self.word_embedding.weight.T
         # print("hidden_state_to_token", output.shape)
         return output

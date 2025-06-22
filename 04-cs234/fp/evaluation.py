@@ -22,7 +22,7 @@ TQDM_DISABLE = False
 def model_eval_paraphrase(dataloader, model, device, use_bf16):
     model.eval()  # Switch to eval model, will turn off randomness like dropout.
     y_true, y_pred, sent_ids = [], [], []
-    for step, batch in enumerate(tqdm(dataloader, desc=f"eval", disable=TQDM_DISABLE)):
+    for step, batch in enumerate(tqdm(dataloader, desc="eval", disable=TQDM_DISABLE)):
         b_ids, b_mask, b_sent_ids, labels = (
             batch["token_ids"],
             batch["attention_mask"],
