@@ -120,10 +120,9 @@ def get_train_datasets(
     train_sampler = (
         DistributedSampler(train_data, shuffle=True) if is_distributed else None
     )
-    # dataloader, grain python.
 
     train_dataloader = DataLoader(
-        train_data,  # [:1000],
+        train_data,  # [:10000],
         shuffle=(train_sampler is None),
         batch_size=args.batch_size,
         collate_fn=train_data.collate_fn,
@@ -270,7 +269,7 @@ def train_eval(
             )
             print("model_eval_paraphrase")
             print("preds:", y_pred[:20])
-            print("true:", y_true[:20])
+            print("true: ", [int(x) for x in y_true[:20]])
             if dev_acc > best_dev_acc:
                 best_dev_acc = dev_acc
                 model_to_save = model.module if hasattr(model, "module") else model
@@ -444,7 +443,7 @@ def dpo():
     # - sample outputs from the model (), multiple temperature
     # - label those sample pairs with GPT (pref, not pref)
     # - with (x, yw), (x, yl) train the model
-    # - - save model to hf, do inference with runpod vllm, or try serving yourself directly with vllm
+    # - - save0. model to hf, do inference with runpod vllm, or try serving yourself directly with vllm
 
     # - train loop
     # - loss computed: -log(sigmoid(beta * (log*model(yw | x) - log*model(yl | x))))

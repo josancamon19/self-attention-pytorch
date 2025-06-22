@@ -26,8 +26,34 @@ def preprocess_string(s):
     )
 
 
+def get_balanced_dataset(dataset):
+    true = sum([item[2] for item in dataset])
+    false = len(dataset) - true
+    print(f"ParaphraseDetectionDataset.__init__ len(true): {true} len(false): {false}")
+    balanced = min(true, false)
+    balanced_dataset = []
+    count_true = count_false = 0
+    for item in dataset:
+        if item[2] == 1 and count_true == balanced:
+            continue
+        elif item[2] == 0 and count_false == balanced:
+            continue
+        balanced_dataset.append(item)
+
+        if item[2] == 1:
+            count_true += 1
+        else:
+            count_false += 1
+    print(
+        f"ParaphraseDetectionDataset.__init__ llen(dataset): {len(dataset)} len(balanced_dataset): {len(balanced_dataset)}"
+    )
+    return balanced_dataset
+
+
 class ParaphraseDetectionDataset(Dataset):
     def __init__(self, dataset, args):
+        dataset = get_balanced_dataset(dataset)
+
         self.dataset = dataset
         self.p = args
 
@@ -44,11 +70,11 @@ class ParaphraseDetectionDataset(Dataset):
     def collate_fn(self, all_data):
         sent1 = [x[0] for x in all_data]
         sent2 = [x[1] for x in all_data]
-        # labels = torch.LongTensor([x[2] for x in all_data])
-        labels = ["yes" if label == 1 else "no" for label in [x[2] for x in all_data]]
-        labels = self.tokenizer(
-            labels, return_tensors="pt", padding=True, truncation=True
-        )["input_ids"]
+        labels = torch.LongTensor([x[2] for x in all_data])
+        # labels = ["yes" if label == 1 else "no" for label in [x[2] for x in all_data]]
+        # labels = self.tokenizer(
+        #     labels, return_tensors="pt", padding=True, truncation=True
+        # )["input_ids"]
         sent_ids = [x[3] for x in all_data]
 
         cloze_style_sents = [
