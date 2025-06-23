@@ -1,0 +1,10 @@
+*pretest
+*~
+*.pyc
+*.pt
+*.pkl
+.idea/
+out/
+*.models*
+data/small-*
+wandb/*

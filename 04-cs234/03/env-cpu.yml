@@ -1,9 +1,0 @@
-name: cs224n-cpu
-channels:
-  - defaults
-  - nvidia
-dependencies:
-  - python==3.10
-  - pip
-  - pip:
-    - -r requirements.txt
