@@ -52,7 +52,7 @@ def get_balanced_dataset(dataset):
 
 class ParaphraseDetectionDataset(Dataset):
     def __init__(self, dataset, args):
-        dataset = get_balanced_dataset(dataset)
+        # dataset = get_balanced_dataset(dataset)
 
         self.dataset = dataset
         self.p = args

@@ -27,6 +27,7 @@ from transformers import GPT2Tokenizer
 from torch import autocast
 import wandb
 from sacrebleu.metrics import CHRF
+from torch.optim.lr_scheduler import OneCycleLR
 
 TQDM_DISABLE = False
 
@@ -150,7 +151,19 @@ def get_model_and_optimizer(args, device, model_class):
         print("get_model_and_optimizer, pre-loaded:", args.filepath)
 
     model = model.to(device, dtype=torch.bfloat16 if args.use_bf16 else None)
-    optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.0)
+    if args.model == ModelTarget.paraphrase:
+        optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
+    else:
+        optimizer = AdamW(
+            [
+                {"params": model.gpt.parameters(), "lr": args.lr},
+                {
+                    "params": model.classifier.parameters(),
+                    "lr": args.lr * 50,
+                },
+            ],
+            lr=args.lr,
+        )
     return model, optimizer
 
 
@@ -413,6 +426,14 @@ def train(args, model_class):
     best_dev_acc = 0 if args.model == "paraphrase" else float("inf")
 
     wandb_run = get_wandb_run(args)
+    # scheduler = OneCycleLR(
+    #     optimizer,
+    #     max_lr=[args.lr * 3, args.lr * 50],  # Different max for each param group
+    #     epochs=args.epochs,
+    #     steps_per_epoch=len(train_dataloader),
+    #     pct_start=0.2,  # 20% warmup
+    #     anneal_strategy="cos",
+    # )
 
     for epoch in range(args.epochs):
         best_dev_acc = train_epoch(
