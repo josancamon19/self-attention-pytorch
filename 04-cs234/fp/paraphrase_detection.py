@@ -37,7 +37,7 @@ class ParaphraseGPT(nn.Module):
 
         self.dropout = nn.Dropout(0.1)
         self.classifier = nn.Linear(self.config.hidden_size, 2)
-        
+
         # nn.init.xavier_uniform_(self.classifier.weight, gain=0.1)
         # nn.init.zeros_(self.classifier.bias)
 
@@ -140,7 +140,7 @@ def inference(args):
         # top_10_values = np.take_along_axis(logits, top_10_preds, axis=1)
         # print(top_10_values)
         pred = np.argmax(logits, axis=1).flatten()
-        print("prediction:", pred[0], f'expected: {same}')
+        print("prediction:", pred[0], f"expected: {same}")
         print("-------\n")
         if i == 50:
             break
@@ -149,12 +149,14 @@ def inference(args):
 
 if __name__ == "__main__":
     args = utils.get_args(utils.ModelTarget.paraphrase)
+    args.filepath = ".models/paraphrase/gpt2-large-1e-04-0.902-val-acc.pt"
+
     if args.distributed:
         gpus = torch.cuda.device_count()
         print("loading distributed training, gpus:", gpus)
         mp.spawn(utils.train_dist, args=(args, ParaphraseGPT, True), nprocs=gpus)
     else:
-        utils.train(args, ParaphraseGPT)
+        # utils.train(args, ParaphraseGPT)
         # 0.39 train loss 0.833 validation accuracy with classifier head + `python paraphrase_detection.py  --use_gpu --model_size gpt2-large --batch_size 24` + data balanced
         # validation dataset not balanced, 0.804 actually. 3rd epoch didn't gain almost anything.
         # training again without data balancing
@@ -164,10 +166,12 @@ if __name__ == "__main__":
         # - trying higher lr's
         # - weight decay adam
         # --- with this 2, 0.81 0.822 0.827, prob can go higher.
-        # - different lr's for gpt and classifier
+        # - different lr's for gpt and classifier, this increased by a lot.
+        # --- I guess the question is what's the intuition on lr's, intuition on layers to finetune or not depending on data, compute, lora, etc.
+        # - left to try more.
         # - different init classifier values
         # - lr scheduler and/or warm up
         pass
 
-    # test(args)
-    # inference(args)
+    test(args)
+    inference(args)
