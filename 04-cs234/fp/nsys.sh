@@ -1,1 +1,0 @@
-../../.venv/bin/python paraphrase_detection.py --use_gpu --batch_size 48

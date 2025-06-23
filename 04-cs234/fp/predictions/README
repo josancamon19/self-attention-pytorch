@@ -1,2 +1,0 @@
-By default, `classifier.py` will write your model predictions into this folder.
-Before running `prepare_submit.py`, make sure that this directory has been populated!
