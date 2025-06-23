@@ -37,6 +37,9 @@ class ParaphraseGPT(nn.Module):
 
         self.dropout = nn.Dropout(0.1)
         self.classifier = nn.Linear(self.config.hidden_size, 2)
+        
+        # nn.init.xavier_uniform_(self.classifier.weight, gain=0.1)
+        # nn.init.zeros_(self.classifier.bias)
 
     def forward(self, input_ids, attention_mask, **kwargs):
         gpt_output: dict = self.gpt(input_ids, attention_mask)
@@ -55,7 +58,6 @@ def test(args):
     saved = torch.load(args.filepath, weights_only=False)
     model = ParaphraseGPT(saved["args"])
 
-    # model = ParaphraseGPT(args)
     if args.peft:
         model = get_peft_model(model, utils.get_lora_config(True))
 
@@ -111,9 +113,8 @@ def inference(args):
 
     device = torch.device("cuda") if args.use_gpu else torch.device("cpu")
     saved = torch.load(args.filepath, weights_only=False)
-    # model = ParaphraseGPT(saved["args"])
-    # model.load_state_dict(saved["model"])
-    model = ParaphraseGPT(args)
+    model = ParaphraseGPT(saved["args"])
+    model.load_state_dict(saved["model"])
     model = model.to(device, dtype=torch.bfloat16)
     model.eval()
 
@@ -128,21 +129,20 @@ def inference(args):
         token_ids = torch.LongTensor(encoding["input_ids"]).to(device)
         attention_mask = torch.LongTensor(encoding["attention_mask"]).to(device)
 
-        print("tokens_id:", token_ids.shape)
-
+        # print("tokens_id:", token_ids.shape)
         with autocast(device_type="cuda", dtype=torch.bfloat16, enabled=args.use_bf16):
             logits = model(token_ids, attention_mask)
 
         logits = logits.float().detach().cpu().numpy()
-        print("logits:", logits.shape, logits[0, :10])
+        # print("logits:", logits.shape, logits[0, :10])
         # top_10_preds = np.argsort(logits, axis=1)[:, -10:]
         # print("top 10 preds:", top_10_preds.shape, top_10_preds)
         # top_10_values = np.take_along_axis(logits, top_10_preds, axis=1)
         # print(top_10_values)
         pred = np.argmax(logits, axis=1).flatten()
-        print("prediction:", pred, f'"{tokenizer.decode(pred)}"')
+        print("prediction:", pred[0], f'expected: {same}')
         print("-------\n")
-        if i == 1:
+        if i == 50:
             break
         # break
 
@@ -155,7 +155,19 @@ if __name__ == "__main__":
         mp.spawn(utils.train_dist, args=(args, ParaphraseGPT, True), nprocs=gpus)
     else:
         utils.train(args, ParaphraseGPT)
-        # pass
+        # 0.39 train loss 0.833 validation accuracy with classifier head + `python paraphrase_detection.py  --use_gpu --model_size gpt2-large --batch_size 24` + data balanced
+        # validation dataset not balanced, 0.804 actually. 3rd epoch didn't gain almost anything.
+        # training again without data balancing
+        # - no balancing, 0.385 loss + 0.823 val acc
+        # ---
+        # for both, 1 epoch is all it gets, then goes super slow
+        # - trying higher lr's
+        # - weight decay adam
+        # --- with this 2, 0.81 0.822 0.827, prob can go higher.
+        # - different lr's for gpt and classifier
+        # - different init classifier values
+        # - lr scheduler and/or warm up
+        pass
 
     # test(args)
     # inference(args)
