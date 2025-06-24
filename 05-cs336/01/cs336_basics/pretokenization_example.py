@@ -48,8 +48,24 @@ def find_chunk_boundaries(file: BinaryIO, desired_num_chunks: int, split_special
 
 import multiprocessing  # noqa: E402
 import regex as re  # noqa: E402
+import time
+from functools import wraps
 
 num_processes = multiprocessing.cpu_count()
+
+
+def timeit(func):
+    """Decorator to measure execution time of a function."""
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        print(f"{func.__name__} took {end_time - start_time:.4f} seconds to execute")
+        return result
+
+    return wrapper
 
 
 def pretokenize(text: str):
@@ -59,32 +75,29 @@ def pretokenize(text: str):
 
 def init_vocabulary():
     vocab = {i: bytes([i]) for i in range(256)}
-    return vocab, set(vocab.values()), len(vocab)
+    return vocab, set(vocab.values())
 
 
-def get_word_in_vocab_bytes(vocab: set, pretokenized: list[str]) -> list[list[bytes]]:
+def pretokenized_to_vocab_bytes(vocab: set, pretokenized: list[str]) -> list[list[bytes]]:
     # print(f"get_word_in_vocab_bytes: vocab {len(vocab)} pretokenized: {len(pretokenized)}")
     pretokenized_bytes = []
-
     for word in pretokenized:
-        i, j = 0, 1
+        i, j = 0, len(word)
         vocab_word = []
-        while j <= len(word):
+        while i < j:
             subword = word[i:j].encode("utf-8")
-            if subword not in vocab:
-                vocab_word.append(word[i : j - 1].encode("utf-8"))
-                i = j - 1
-                # wtf, models think here I should put j = i+1 ???
-            elif j == len(word):
+            if subword in vocab:
                 vocab_word.append(subword)
-                j += 1
+                i = j
+                j = len(word)
             else:
-                j += 1
+                j -= 1
 
         pretokenized_bytes.append(vocab_word)
     return pretokenized_bytes
 
 
+@timeit
 def merge_step(
     vocab: set,
     vocab_dict: dict,
@@ -92,76 +105,68 @@ def merge_step(
 ) -> tuple[bytes, bytes]:
     """
     return merge step made,
-
     pretokenized: list of sentences, each one split with the pretokenized
     """
-    pretokenized_bytes = [get_word_in_vocab_bytes(vocab, sent) for sent in pretokenized]
+    pretokenized_bytes = [pretokenized_to_vocab_bytes(vocab, sent) for sent in pretokenized]
     # print(f"pretokenized_bytes: {pretokenized_bytes}")
     common = defaultdict(int)
     for sentence in pretokenized_bytes:
         for word in sentence:
             for i in range(len(word) - 1):
                 common[(word[i], word[i + 1])] += 1
-
+    if not common:
+        return None
     max_value = max(common.values())
     new_vocab_item = max([k for k, v in common.items() if v == max_value])
     print("new_vocab_item", new_vocab_item, "count_value", max_value)
+    vocab_dict[len(vocab)] = new_vocab_item[0] + new_vocab_item[1]
     vocab.add(new_vocab_item[0] + new_vocab_item[1])
-    vocab_dict[len(vocab) + 1] = new_vocab_item[0] + new_vocab_item[1]
     return new_vocab_item
 
 
 def get_tokenizer(
     input_text_file: str = "data/TinyStoriesV2-GPT4-valid.txt",
-    target_vocab_size: int = 1000,
-    special_tokens: list[str] = [],
+    target_vocab_size: int = 300,
+    special_tokens: list[str] = ["<|endoftext|>"],
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     """returns: vocab, merges"""
-    # TODO: remove special tokens before regex pretokenization, avoid merging outside the margin it puts ??
 
-    sep = "<|endoftext|>"
+    assert "<|endoftext|>" in special_tokens
+
     chunks = []
     with open(input_text_file, "rb") as f:
-        boundaries = find_chunk_boundaries(f, num_processes, sep.encode("utf-8"))
-        # The following is a serial implementation, but you can parallelize this
-        # by sending each start/end pair to a set of processes.
+        boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
         for start, end in zip(boundaries[:-1], boundaries[1:]):
             f.seek(start)
             chunk = f.read(end - start).decode("utf-8", errors="ignore")
-            # print(start, end, len(chunk.split(sep)))
             chunks.append(chunk)
             # Run pre-tokenization on your chunk and store the counts for each pre-token
     print(f"split_chunks: {len(chunks)} chunks")
-    print(f"split_chunks len(chunks[0].split(sep)): {len(chunks[0].split(sep))}")
-    print(f'split_chunks chunks[0].split(sep)[0]: "{chunks[0].split(sep)[0]}"')
-    # TODO: should \n be cleaned by trimming?
 
-    # ----
-    # sample = chunks[0].split(sep)[0]
-    # matches = pretokenize(sample)
-    # pretokenized = [match.group() for match in matches]
-    # print(f"pretokenized: {pretokenized}")
+    vocab_dict, vocab = init_vocabulary()
+    for st in special_tokens:
+        vocab_dict[len(vocab)] = st
+        vocab.add(st)
 
-    # chunk_0 = [[m.group() for m in pretokenize(sample)] for sample in chunks[0].split(sep)]
-    # chunk_0 += ["👀", "は"]
-    # vocab = init_vocabulary([chunk_0])
-    vocab_dict, vocab, vocab_size = init_vocabulary()
-    # while vocab_size < target_vocab_size:
-    #     merge_step(vocab, vocab_dict, [pretokenized])
-    #     break
-    # merges = []
-    # for _ in range(12):
-    #     merged: tuple[bytes, bytes] = merge_step(vocab, vocab_dict, [pretokenized])
-    #     merges.append(merged)
-    vocab.add(b"o")
-    vocab.add(b"le")
-    vocab.add(b"ole")
-    pretokenized_bytes = get_word_in_vocab_bytes(vocab, ["mole"])
-    print(f"pretokenized_bytes: {pretokenized_bytes}")
+    def pretokenize_all():
+        # removing/splitting on any special token
+        pattern = "|".join(re.escape(token) for token in special_tokens)
+        chunk_samples = re.split(pattern, chunks[0])
+        print(chunk_samples[0])
+        return [[match.group() for match in pretokenize(sample)] for sample in chunk_samples]
 
-    # now with chunks and parallelization what?
-    # -- am I processing the vocabulary separately?
-    # special tokens and secondary stuff
+    pretokenized = pretokenize_all()
+    merges = []
+    while len(vocab) < target_vocab_size:
+        # TODO: parallelizing, suggesting to do bytes pretoken from here, then merge separate
+        merged = merge_step(vocab, vocab_dict, pretokenized)
+        if not merged:
+            break
+        merges.append(merged)
+    
+    # TODO: how to in parallel?
+
+    return vocab_dict, merges
 
 
 get_tokenizer()
