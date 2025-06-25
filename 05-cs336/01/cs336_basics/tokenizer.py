@@ -186,29 +186,38 @@ def pretokenize_all(
     if special_tokens:
         split_special_tokens = "|".join(re.escape(token) for token in special_tokens)
         chunk_sentences = re.split(split_special_tokens, chunk)
+
+        # Keep track of the order of special tokens used for splitting, only when encoding
+        special_token_order = (
+            [[m.group().encode("utf-8")] for m in re.finditer(split_special_tokens, chunk)] if encoding else []
+        )
+
     else:
         chunk_sentences = [chunk]
+        special_token_order = []
 
     PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
-    if encoding:
-        return [[match.group().encode("utf-8") for match in re.finditer(PAT, s)] for s in chunk_sentences]
-
     pretokenized = []
-    for sentence in chunk_sentences:
+    for i, sentence in enumerate(chunk_sentences):
         sentence_pretokenized = []
         for match in re.finditer(PAT, sentence):
-            word = []
-            for char in match.group():
-                word.append(char.encode("utf-8"))
-            sentence_pretokenized.append(word)
+            if encoding:  # no char by char
+                sentence_pretokenized.append(match.group().encode("utf-8"))
+            else:
+                word = [char.encode("utf-8") for char in match.group()]
+                sentence_pretokenized.append(word)
 
         pretokenized.append(sentence_pretokenized)
+
+        if encoding and i + 1 < len(chunk_sentences):
+            pretokenized.append(special_token_order[i])
+
     return pretokenized
 
 
 @timeit
-def get_tokenizer(
+def train_tokenizer(
     input_text_file: str = "data/TinyStoriesV2-GPT4-valid.txt",
     target_vocab_size: int = 350,
     special_tokens: list[str] = ["<|endoftext|>"],
@@ -244,7 +253,6 @@ def get_tokenizer(
     return vocab_dict, merges
 
 
-# get_tokenizer()
 class Tokenizer:
     # 35 minutes
     def __init__(
@@ -267,27 +275,31 @@ class Tokenizer:
 
     def encode(self, input_text: str) -> list[int]:
         print("[Tokenizer.encode] input_text:", input_text)
-        pretokenized = pretokenize_all(input_text, self.special_tokens, True)[0]
+        pretokenized = pretokenize_all(input_text, self.special_tokens, True)
         print("[Tokenizer.encode] pretokenized:", pretokenized)
         tokenized = []
-        for word in pretokenized:
-            i = 0
-            j = len(word)
-            while i < j:
-                if word[i:j] in self.vocab_reversed:
-                    tokenized.append(self.vocab_reversed[word[i:j]])
-                    i = j
-                    j = len(word)
-                else:
-                    j -= 1
+        for i, part in enumerate(pretokenized):
+            for word in part:
+                i = 0
+                j = len(word)
+                while i < j:
+                    if word[i:j] in self.vocab_reversed:
+                        tokenized.append(self.vocab_reversed[word[i:j]])
+                        i = j
+                        j = len(word)
+                    else:
+                        j -= 1
+
+        print("[Tokenizer.encode] tokenized.pre:", [self.vocab[i] for i in tokenized])
         print("[Tokenizer.encode] tokenized:", tokenized)
         return tokenized
 
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
         pass
 
-    def decode(self, encoded):
-        decoded_bytes = b"".join([self.vocab[_id] for _id in encoded])
+    def decode(self, ids: list[int]):
+        print("[Tokenizer.decode] ids:", ids)
+        decoded_bytes = b"".join([self.vocab[_id] for _id in ids])
         decoded = decoded_bytes.decode("utf-8")
         print("[Tokenizer.decode] decoded:", decoded)
         return decoded

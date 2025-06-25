@@ -2,7 +2,7 @@ import json
 import time
 
 from .adapters import run_train_bpe
-from cs336_basics.pretokenization_example import print_execution_summary
+from cs336_basics.tokenizer import print_execution_summary
 from .common import FIXTURES_PATH, gpt2_bytes_to_unicode
 
 
