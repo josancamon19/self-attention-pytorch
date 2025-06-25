@@ -6,18 +6,58 @@ from functools import wraps
 import regex as re
 
 
+# Global dictionary to track execution statistics for each function
+execution_stats = {}
+
+
 def timeit(func):
-    """Decorator to measure execution time of a function."""
+    """Decorator to measure execution time of a function and track cumulative statistics."""
 
     @wraps(func)
     def wrapper(*args, **kwargs):
         start_time = time.time()
         result = func(*args, **kwargs)
         end_time = time.time()
-        print(f"{func.__name__} took {end_time - start_time:.4f} seconds to execute")
+
+        execution_time = end_time - start_time
+
+        # Initialize stats for this function if not exists
+        if func.__name__ not in execution_stats:
+            execution_stats[func.__name__] = {
+                "total_time": 0.0,
+                "call_count": 0,
+                "min_time": float("inf"),
+                "max_time": 0.0,
+            }
+
+        # Update statistics
+        stats = execution_stats[func.__name__]
+        stats["total_time"] += execution_time
+        stats["call_count"] += 1
+        stats["min_time"] = min(stats["min_time"], execution_time)
+        stats["max_time"] = max(stats["max_time"], execution_time)
+
+        # print(f"{func.__name__} took {execution_time:.4f} seconds to execute")
         return result
 
     return wrapper
+
+
+def print_execution_summary():
+    """Print a summary of all function execution statistics."""
+    print("\n" + "=" * 60)
+    print("EXECUTION SUMMARY")
+    print("=" * 60)
+
+    for func_name, stats in execution_stats.items():
+        avg_time = stats["total_time"] / stats["call_count"] if stats["call_count"] > 0 else 0
+        print(f"{func_name}:")
+        print(f"  Total calls: {stats['call_count']}")
+        print(f"  Total time: {stats['total_time']:.4f}s")
+        print(f"  Average time: {avg_time:.4f}s")
+        print(f"  Min time: {stats['min_time']:.4f}s")
+        print(f"  Max time: {stats['max_time']:.4f}s")
+        print()
 
 
 def find_chunk_boundaries(file: BinaryIO, desired_num_chunks: int, split_special_token: bytes) -> list[int]:
@@ -73,39 +113,30 @@ def init_vocabulary():
     return vocab, set(vocab.values())
 
 
-# @timeit
-# def pretokenized_to_vocab_bytes(vocab: set, pretokenized: list[bytes]) -> list[list[bytes]]:
-#     # print(f"get_word_in_vocab_bytes: vocab {len(vocab)} pretokenized: {len(pretokenized)}")
-#     pretokenized_bytes = []
-#     for word in pretokenized:
-#         i, j = 0, len(word)
-#         vocab_word = []
-#         while i < j:
-#             subword = word[i:j].encode("utf-8")
-#             if subword in vocab:
-#                 vocab_word.append(subword)
-#                 i = j
-#                 j = len(word)
-#             else:
-#                 j -= 1
-
-#         pretokenized_bytes.append(vocab_word)
-#     return pretokenized_bytes
+# ========================================
+# ========================================
+# ========================================
 
 
 def update_pretokenized_with_new_merge(
-    prev_merge: tuple[bytes, bytes],
+    _merge: tuple[bytes, bytes],
     sample: list[list[bytes]],  # sentence, each word, as a list of bytes
 ) -> list[list[bytes]]:
-    merge = prev_merge[0] + prev_merge[1]
-    # print("update_pretokenized_with_new_merge", prev_merge, merge, sample)
-    # print(f"get_word_in_vocab_bytes: vocab {len(vocab)} pretokenized: {len(pretokenized)}")
+    merge_first, merge_second = _merge
+    merge = merge_first + merge_second
+
     pretokenized_merged = []
     for word in sample:
+        if len(word) == 1:
+            # this stupid thing, reduced 1 whole second!!
+            pretokenized_merged.append(word)
+            continue
+
         merged_word = []
         i = 0
         while i < len(word):
-            if i + 1 < len(word) and (word[i] + word[i + 1]) == merge:
+            # 0.3 seconds reduced, instead of (word[i] + word[j]) == merge, creating a new byte
+            if i + 1 < len(word) and (word[i] == merge_first and word[i + 1] == merge_second):
                 merged_word.append(merge)
                 i += 2
             else:
@@ -127,22 +158,33 @@ def merge_step(
     return merge step made,
     pretokenized: list of sentences, each one split with the pretokenized
     """
-    # print(f"pretokenized_bytes: {pretokenized_bytes}")
-    common = defaultdict(int)
-    for sample in pretokenized:
-        for word in sample:
-            for i in range(len(word) - 1):
-                common[(word[i], word[i + 1])] += 1
+
+    @timeit
+    def count_bigrams():  # 99% of the function time
+        common = defaultdict(int)
+        for sample in pretokenized:
+            for word in sample:
+                for i in range(len(word) - 1):
+                    common[(word[i], word[i + 1])] += 1
+        return common
+
+    common = count_bigrams()
 
     if not common:
         return None
-    # max_value = max(common.values())
-    # new_vocab_item = max([k for k, v in common.items() if v == max_value])
-    # print("new_vocab_item", new_vocab_item, "count_value", max_value)
-    new_vocab_item = max(common.items(), key=lambda x: x[1])[0]
-    vocab_dict[len(vocab)] = new_vocab_item[0] + new_vocab_item[1]
-    vocab.add(new_vocab_item[0] + new_vocab_item[1])
-    return new_vocab_item
+    merge = max(common.items(), key=lambda x: x[1])[0]
+    vocab_dict[len(vocab)] = merge[0] + merge[1]
+    vocab.add(merge[0] + merge[1])
+    return merge
+
+
+@timeit
+def update_pretokenized_with_merge(
+    merge: tuple[bytes, bytes],
+    pretokenized: list[list[list[bytes]]],
+):
+    print("update_pretokenized_with_merge")
+    return [update_pretokenized_with_new_merge(merge, s) for s in pretokenized]
 
 
 @timeit
@@ -163,14 +205,13 @@ def get_tokenizer(
             chunk = f.read(end - start).decode("utf-8", errors="ignore")
             chunks.append(chunk)
         # Run pre-tokenization on your chunk and store the counts for each pre-token
-    print(f"split_chunks: {len(chunks)} chunks")
-    print(f"split_chunks: chunks[0] len: {len(chunks[0].split('<|endoftext|>'))}")
 
     vocab_dict, vocab = init_vocabulary()
     for st in special_tokens:
         vocab_dict[len(vocab)] = st.encode("utf-8")
         vocab.add(st.encode("utf-8"))
 
+    @timeit
     def pretokenize_all(chunk) -> list[list[list[bytes]]]:
         pattern = "|".join(re.escape(token) for token in special_tokens)
         chunk_samples = re.split(pattern, chunk)  # [:1]
@@ -178,19 +219,15 @@ def get_tokenizer(
             [[c.encode("utf-8") for c in match.group()] for match in pretokenize(sample)] for sample in chunk_samples
         ]
 
-    @timeit
-    def update_pretokenized_with_merge(merged, pretokenized):
-        return [update_pretokenized_with_new_merge(merged, s) for s in pretokenized]
-
     chunk = chunks[0]
     pretokenized = pretokenize_all(chunk)
     merges = []
     while len(vocab) < target_vocab_size:
-        merged = merge_step(vocab, vocab_dict, pretokenized)
-        if not merged:
+        merge = merge_step(vocab, vocab_dict, pretokenized)
+        if not merge:
             break
-        merges.append(merged)
-        pretokenized = update_pretokenized_with_merge(merged, pretokenized)
+        merges.append(merge)
+        pretokenized = update_pretokenized_with_merge(merge, pretokenized)
 
     return vocab_dict, merges
 

@@ -2,6 +2,7 @@ import json
 import time
 
 from .adapters import run_train_bpe
+from cs336_basics.pretokenization_example import print_execution_summary
 from .common import FIXTURES_PATH, gpt2_bytes_to_unicode
 
 
@@ -20,6 +21,7 @@ def test_train_bpe_speed():
         vocab_size=500,
         special_tokens=["<|endoftext|>"],
     )
+    print_execution_summary()
     end_time = time.time()
     assert end_time - start_time < 1.5
 
