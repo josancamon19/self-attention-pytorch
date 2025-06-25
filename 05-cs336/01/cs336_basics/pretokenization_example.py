@@ -1,6 +1,6 @@
 from collections import defaultdict
 import os
-from typing import BinaryIO
+from typing import BinaryIO, Iterable, Iterator
 import time
 from functools import wraps
 import regex as re
@@ -178,11 +178,22 @@ def update_pretokenized_with_merge(
 
 
 @timeit
-def pretokenize_all(chunk: str, special_tokens: list[str]) -> list[list[list[bytes]]]:
-    split_special_tokens = "|".join(re.escape(token) for token in special_tokens)
-    chunk_sentences = re.split(split_special_tokens, chunk)
+def pretokenize_all(
+    chunk: str,
+    special_tokens: list[str],
+    encoding: bool = False,
+) -> list[list[list[bytes]]]:
+    if special_tokens:
+        split_special_tokens = "|".join(re.escape(token) for token in special_tokens)
+        chunk_sentences = re.split(split_special_tokens, chunk)
+    else:
+        chunk_sentences = [chunk]
 
     PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+
+    if encoding:
+        return [[match.group().encode("utf-8") for match in re.finditer(PAT, s)] for s in chunk_sentences]
+
     pretokenized = []
     for sentence in chunk_sentences:
         sentence_pretokenized = []
@@ -234,3 +245,53 @@ def get_tokenizer(
 
 
 # get_tokenizer()
+class Tokenizer:
+    # 35 minutes
+    def __init__(
+        self,
+        vocab: dict[int, bytes],
+        merges: list[tuple[bytes, bytes]],
+        special_tokens: list[str] | None = None,
+    ):
+        print(
+            f"[Tokenizer.__init__] vocab_size: {len(vocab)}, merges_size: {len(merges)}, special_tokens: {special_tokens}",
+        )
+        special_tokens = special_tokens or []
+        for st in special_tokens:
+            vocab[len(vocab)] = st.encode("utf-8")
+
+        self.vocab = vocab
+        self.vocab_reversed = {v: k for k, v in vocab.items()}
+        self.merges = merges
+        self.special_tokens = special_tokens
+
+    def encode(self, input_text: str) -> list[int]:
+        print("[Tokenizer.encode] input_text:", input_text)
+        pretokenized = pretokenize_all(input_text, self.special_tokens, True)[0]
+        print("[Tokenizer.encode] pretokenized:", pretokenized)
+        tokenized = []
+        for word in pretokenized:
+            i = 0
+            j = len(word)
+            while i < j:
+                if word[i:j] in self.vocab_reversed:
+                    tokenized.append(self.vocab_reversed[word[i:j]])
+                    i = j
+                    j = len(word)
+                else:
+                    j -= 1
+        print("[Tokenizer.encode] tokenized:", tokenized)
+        return tokenized
+
+    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+        pass
+
+    def decode(self, encoded):
+        decoded_bytes = b"".join([self.vocab[_id] for _id in encoded])
+        decoded = decoded_bytes.decode("utf-8")
+        print("[Tokenizer.decode] decoded:", decoded)
+        return decoded
+
+    @staticmethod
+    def from_files(vocab_filepath, merges_filepath, special_tokens=None):
+        pass
