@@ -103,11 +103,6 @@ def find_chunk_boundaries(file: BinaryIO, desired_num_chunks: int, split_special
     return sorted(set(chunk_boundaries))
 
 
-def pretokenize(text: str):
-    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-    return re.finditer(PAT, text)
-
-
 def init_vocabulary():
     vocab = {i: bytes([i]) for i in range(256)}
     return vocab, set(vocab.values())
@@ -116,36 +111,6 @@ def init_vocabulary():
 # ========================================
 # ========================================
 # ========================================
-
-
-def update_pretokenized_with_new_merge(
-    _merge: tuple[bytes, bytes],
-    sample: list[list[bytes]],  # sentence, each word, as a list of bytes
-) -> list[list[bytes]]:
-    merge_first, merge_second = _merge
-    merge = merge_first + merge_second
-
-    pretokenized_merged = []
-    for word in sample:
-        if len(word) == 1:
-            # this stupid thing, reduced 1 whole second!!
-            pretokenized_merged.append(word)
-            continue
-
-        merged_word = []
-        i = 0
-        while i < len(word):
-            # 0.3 seconds reduced, instead of (word[i] + word[j]) == merge, creating a new byte
-            if i + 1 < len(word) and (word[i] == merge_first and word[i + 1] == merge_second):
-                merged_word.append(merge)
-                i += 2
-            else:
-                merged_word.append(word[i])
-                i += 1
-        pretokenized_merged.append(merged_word)
-        # print(merged_word)
-
-    return pretokenized_merged
 
 
 @timeit
@@ -180,11 +145,55 @@ def merge_step(
 
 @timeit
 def update_pretokenized_with_merge(
-    merge: tuple[bytes, bytes],
+    _merge: tuple[bytes, bytes],
     pretokenized: list[list[list[bytes]]],
 ):
-    print("update_pretokenized_with_merge")
-    return [update_pretokenized_with_new_merge(merge, s) for s in pretokenized]
+    merge_first, merge_second = _merge
+    merge = merge_first + merge_second
+
+    updated_pretokenized = []
+    for sentence in pretokenized:
+        new_sentence = []
+        for word in sentence:
+            if len(word) == 1:
+                # this stupid thing, reduced 1 whole second!!
+                new_sentence.append(word)
+                continue
+
+            new_word = []
+            i = 0
+            while i < len(word):
+                # 0.3 seconds reduced, instead of (word[i] + word[j]) == merge, creating a new byte
+                if i + 1 < len(word) and (word[i] == merge_first and word[i + 1] == merge_second):
+                    new_word.append(merge)
+                    i += 2
+                else:
+                    new_word.append(word[i])
+                    i += 1
+            new_sentence.append(new_word)
+            # print(merged_word)
+        updated_pretokenized.append(new_sentence)
+
+    return updated_pretokenized
+
+
+@timeit
+def pretokenize_all(chunk: str, special_tokens: list[str]) -> list[list[list[bytes]]]:
+    split_special_tokens = "|".join(re.escape(token) for token in special_tokens)
+    chunk_sentences = re.split(split_special_tokens, chunk)
+
+    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    pretokenized = []
+    for sentence in chunk_sentences:
+        sentence_pretokenized = []
+        for match in re.finditer(PAT, sentence):
+            word = []
+            for char in match.group():
+                word.append(char.encode("utf-8"))
+            sentence_pretokenized.append(word)
+
+        pretokenized.append(sentence_pretokenized)
+    return pretokenized
 
 
 @timeit
@@ -197,6 +206,11 @@ def get_tokenizer(
 
     assert "<|endoftext|>" in special_tokens
 
+    vocab_dict, vocab = init_vocabulary()
+    for st in special_tokens:
+        vocab_dict[len(vocab)] = st.encode("utf-8")
+        vocab.add(st.encode("utf-8"))
+
     chunks = []
     with open(input_text_file, "rb") as f:
         boundaries = find_chunk_boundaries(f, 1, b"<|endoftext|>")
@@ -206,21 +220,8 @@ def get_tokenizer(
             chunks.append(chunk)
         # Run pre-tokenization on your chunk and store the counts for each pre-token
 
-    vocab_dict, vocab = init_vocabulary()
-    for st in special_tokens:
-        vocab_dict[len(vocab)] = st.encode("utf-8")
-        vocab.add(st.encode("utf-8"))
-
-    @timeit
-    def pretokenize_all(chunk) -> list[list[list[bytes]]]:
-        pattern = "|".join(re.escape(token) for token in special_tokens)
-        chunk_samples = re.split(pattern, chunk)  # [:1]
-        return [
-            [[c.encode("utf-8") for c in match.group()] for match in pretokenize(sample)] for sample in chunk_samples
-        ]
-
     chunk = chunks[0]
-    pretokenized = pretokenize_all(chunk)
+    pretokenized = pretokenize_all(chunk, special_tokens)
     merges = []
     while len(vocab) < target_vocab_size:
         merge = merge_step(vocab, vocab_dict, pretokenized)
