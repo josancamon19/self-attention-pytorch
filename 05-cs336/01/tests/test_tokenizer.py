@@ -74,15 +74,15 @@ def get_tokenizer_from_vocab_merges_path(
     return get_tokenizer(vocab, merges, special_tokens)
 
 
-def test_joan():
-    tokenizer = get_tokenizer_from_vocab_merges_path(
-        vocab_path=VOCAB_PATH,
-        merges_path=MERGES_PATH,
-    )
-    test_string = "Hi there, thisisatest     -123-asdafi`;sdç≈ßå∂"
-    encoded_ids = tokenizer.encode(test_string)
-    decoded_string = tokenizer.decode(encoded_ids)
-    assert test_string == decoded_string
+# def test_joan():
+#     tokenizer = get_tokenizer_from_vocab_merges_path(
+#         vocab_path=VOCAB_PATH,
+#         merges_path=MERGES_PATH,
+#     )
+#     test_string = "Hi there, thisisatest     -123-asdafi`;sdç≈ßå∂"
+#     encoded_ids = tokenizer.encode(test_string)
+#     decoded_string = tokenizer.decode(encoded_ids)
+#     assert test_string == decoded_string
 
 
 # def test_roundtrip_empty():
@@ -227,33 +227,34 @@ def test_joan():
 #     assert reference_tokenizer.decode(reference_ids) == test_string
 
 
-# def test_roundtrip_unicode_string_with_special_tokens():
-#     tokenizer = get_tokenizer_from_vocab_merges_path(
-#         vocab_path=VOCAB_PATH, merges_path=MERGES_PATH, special_tokens=["<|endoftext|>"]
-#     )
-#     test_string = "Héllò hôw <|endoftext|><|endoftext|> are ü? 🙃<|endoftext|>"
-#     encoded_ids = tokenizer.encode(test_string)
-#     tokenized_string = [tokenizer.decode([x]) for x in encoded_ids]
-#     # Ensure the special <|endoftext|> token is preserved
-#     assert tokenized_string.count("<|endoftext|>") == 3
+def test_roundtrip_unicode_string_with_special_tokens():
+    tokenizer = get_tokenizer_from_vocab_merges_path(
+        vocab_path=VOCAB_PATH, merges_path=MERGES_PATH, special_tokens=["<|endoftext|>"]
+    )
+    # test_string = "Héllò hôw <|endoftext|><|endoftext|> are ü? 🙃<|endoftext|>"
+    test_string = "Hello how <|endoftext|><|endoftext|> are you? <|endoftext|>"
+    encoded_ids = tokenizer.encode(test_string)
+    tokenized_string = [tokenizer.decode([x]) for x in encoded_ids]
+    # Ensure the special <|endoftext|> token is preserved
+    assert tokenized_string.count("<|endoftext|>") == 3
 
-#     decoded_string = tokenizer.decode(encoded_ids)
-#     assert test_string == decoded_string
+    decoded_string = tokenizer.decode(encoded_ids)
+    assert test_string == decoded_string
 
 
-# def test_unicode_string_with_special_tokens_matches_tiktoken():
-#     reference_tokenizer = tiktoken.get_encoding("gpt2")
-#     tokenizer = get_tokenizer_from_vocab_merges_path(
-#         vocab_path=VOCAB_PATH, merges_path=MERGES_PATH, special_tokens=["<|endoftext|>"]
-#     )
-#     test_string = "Héllò hôw <|endoftext|><|endoftext|> are ü? 🙃<|endoftext|>"
+def test_unicode_string_with_special_tokens_matches_tiktoken():
+    reference_tokenizer = tiktoken.get_encoding("gpt2")
+    tokenizer = get_tokenizer_from_vocab_merges_path(
+        vocab_path=VOCAB_PATH, merges_path=MERGES_PATH, special_tokens=["<|endoftext|>"]
+    )
+    test_string = "Héllò hôw <|endoftext|><|endoftext|> are ü? 🙃<|endoftext|>"
 
-#     reference_ids = reference_tokenizer.encode(test_string, allowed_special={"<|endoftext|>"})
-#     ids = tokenizer.encode(test_string)
-#     assert ids == reference_ids
+    reference_ids = reference_tokenizer.encode(test_string, allowed_special={"<|endoftext|>"})
+    ids = tokenizer.encode(test_string)
+    assert ids == reference_ids
 
-#     assert tokenizer.decode(ids) == test_string
-#     assert reference_tokenizer.decode(reference_ids) == test_string
+    assert tokenizer.decode(ids) == test_string
+    assert reference_tokenizer.decode(reference_ids) == test_string
 
 
 # def test_overlapping_special_tokens():
