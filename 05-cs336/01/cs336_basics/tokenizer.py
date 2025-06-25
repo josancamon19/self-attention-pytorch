@@ -137,7 +137,11 @@ def merge_step(
 
     if not common:
         return None
-    merge = max(common.items(), key=lambda x: x[1])[0]
+
+    # choose by value, then by lex
+    merge = max(common.items(), key=lambda x: (x[1], x[0])) 
+    # print("merge_step:", merge)
+    merge = merge[0]
     vocab_dict[len(vocab)] = merge[0] + merge[1]
     vocab.add(merge[0] + merge[1])
     return merge
