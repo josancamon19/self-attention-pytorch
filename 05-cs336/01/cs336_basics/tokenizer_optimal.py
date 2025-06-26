@@ -35,12 +35,40 @@ def initialize(text: str, special_tokens: list[str]):
     return pairs_count, pairs_to_sentence_idx, pretokenized_sentences
 
 
+def get_pq_lex_key(pair):
+    return tuple(-b for b in pair[0]) + tuple(-b for b in pair[1])
+
+
 def get_max_priority_queue(priority_queue):
     # wrong, cause not lexicographically bigger, enough for tests
     count, _, pair = heapq.heappop(priority_queue)
     count = -count
-    print("merge:", count, pair)
     return count, pair
+
+
+def update_pairs_count_after_merge(
+    priority_queue,
+    new_created_pairs_count,
+    affected_pairs_count,
+):
+    # print("update_pairs_count_after_merge")
+    # print("new_created_pairs_count:", len(new_created_pairs_count))
+
+    for pair, count in new_created_pairs_count.items():
+        # print("pair, count", pair, count)
+        priority_queue.append((-count, get_pq_lex_key(pair), pair))
+
+    # print("#")
+    # print("affected_pairs_count:", len(affected_pairs_count))
+    for i, item in enumerate(priority_queue):
+        count, pair = -item[0], item[2]
+        if pair in affected_pairs_count:
+            new_count = -(count - affected_pairs_count[pair])
+            # print("pair, prev_count, new_count:", pair, count, -new_count)
+            priority_queue[i] = (new_count, get_pq_lex_key(pair), pair)
+
+    # print("----")
+    heapq.heapify(priority_queue)
 
 
 @timeit
@@ -56,16 +84,12 @@ def train_tokenizer(
     vocab = {i: bytes([i]) for i in range(256)}
     for token in special_tokens:
         vocab[len(vocab)] = token.encode("utf-8")
+    vocab_set = set(vocab.keys())
 
     pairs_count, pairs_to_sentence_idx, pretokenized_sentences = initialize(text, special_tokens)
-    priority_queue = []
+    priority_queue = [(-count, get_pq_lex_key(pair), pair) for pair, count in pairs_count.items()]
+    heapq.heapify(priority_queue)
     merges = []
-
-    def get_pq_lex_key(pair):
-        return tuple(-b for b in pair[0]) + tuple(-b for b in pair[1])
-
-    for pair, count in pairs_count.items():
-        heapq.heappush(priority_queue, (-count, get_pq_lex_key(pair), pair))
 
     while len(vocab) < target_vocab_size:
         count, pair = get_max_priority_queue(priority_queue)
@@ -74,45 +98,43 @@ def train_tokenizer(
         print("merge:", count, pair, pair_bytes)
         merges.append(pair)
         vocab[len(vocab)] = pair_bytes
-        # print("pairs_to_sentence_idx[pair]", pairs_to_sentence_idx[pair])
+        vocab_set.add(pair_bytes)
 
-        # simulate a "merge", then count new pairs such as (merge-1, merge) and (merge, merge+1)
         new_created_pairs_count = defaultdict(int)
-        # the "merge" decreases the count of prev pairs that do not exist anymore
-        # e.g. after merging "he", on every finding of the word "the", the pair (t,h) doesn't exist anymore
-        # so we gotta decrease this counter from our priotiy queue.
         affected_pairs_count = defaultdict(int)
 
-        # why could index 3 be different
+        # why starting index 3 is different (?)
+        # -- 'he' merge is probably not removing the counts of ' t', 'h' + e, right!
 
+        # -- another issue, is only looking at prev and next characters when creating new pairs here.
+
+        #  ==== MERGE ====
         for s_idx in pairs_to_sentence_idx[pair]:
             sentence = pretokenized_sentences[s_idx]
             for word in sentence:
                 i = 0
-                # TODO: update pairs, and same variables, but consider vocabulary size
-                # -- not only -1, pair, and pair, + 1, cause maybe +1 alone doesn't exist anymore, is another vocab.
-                # -- find the merge, go from 0 to i, and (n,j) finding the vocabulary pair
                 while i < len(word) - new_pair_length + 1:
                     if word[i : i + new_pair_length] == pair_bytes:
+                        # TODO: edge case here, what if next bytes, same as pair
                         if i > 0:
-                            j = 0
                             prev_bytes = word[i - 1 : i]
-                            # while j < i:
-                            #     if word[j:i] in vocab:
-                            #         prev_bytes = word[j:i]
-                            #     j += 1
-
+                            j = 0
+                            while j < i:
+                                if word[j:i] in vocab_set:
+                                    prev_bytes = word[j:i]
+                                    break
+                                j += 1
                             new_created_pairs_count[(prev_bytes, pair_bytes)] += 1
                             affected_pairs_count[(prev_bytes, pair[0])] += 1
 
                         if i + new_pair_length < len(word):
-                            j = len(word)
                             next_bytes = word[i + new_pair_length : i + new_pair_length + 1]
-
-                            # while i + new_pair_length < j:
-                            #     if word[i + new_pair_length : j] in vocab:
-                            #         next_bytes = word[i + new_pair_length : j]
-                            #     j -= 1
+                            j = len(word)
+                            while i + new_pair_length < j:
+                                if word[i + new_pair_length + 1 : j] in vocab_set:
+                                    prev_bytes = word[j:i]
+                                    break
+                                j -= 1
 
                             new_created_pairs_count[(pair_bytes, next_bytes)] += 1
                             affected_pairs_count[(pair[1], next_bytes)] += 1
@@ -120,22 +142,14 @@ def train_tokenizer(
                     else:
                         i += 1
 
-        # print("new_created_pairs_count:", len(new_created_pairs_count))
-        # print("new_created_pairs_count:", new_created_pairs_count)
-        # print("affected_pairs_count:", len(affected_pairs_count))
-        # print("affected_pairs_count:", affected_pairs_count)
-        for pair, count in new_created_pairs_count.items():
-            priority_queue.append((-count, get_pq_lex_key(pair), pair))
-
-        for i, item in enumerate(priority_queue):
-            count, pair = -item[0], item[2]
-            if pair in affected_pairs_count:
-                priority_queue[i] = (-(count - affected_pairs_count[pair]), get_pq_lex_key(pair), pair)
-
-        heapq.heapify(priority_queue)
-
-        # if len(merges) == 5:
+        update_pairs_count_after_merge(
+            priority_queue,
+            new_created_pairs_count,
+            affected_pairs_count,
+        )
+        # if len(merges) == 4:
         #     break
+
     return vocab, merges
 
 

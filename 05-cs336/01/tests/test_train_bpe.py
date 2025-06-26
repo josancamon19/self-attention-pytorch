@@ -54,9 +54,9 @@ def test_train_bpe():
         print(f"Length mismatch! merges has {len(merges)} items, reference_merges has {len(reference_merges)} items")
     else:
         print("Lists have same length, checking for content differences...")
-        for i, (merge, ref_merge) in enumerate(zip(merges[:10], reference_merges[:10])):
-            # if merge != ref_merge:
-            print(f"Difference at index {i}: merge={merge}, reference_merge={ref_merge}")
+        for i, (merge, ref_merge) in enumerate(zip(merges, reference_merges)):
+            if merge != ref_merge:
+                print(f"Difference at index {i}: merge={merge}, reference_merge={ref_merge}")
     assert merges == reference_merges
 
     # Compare the vocab to the expected output vocab
