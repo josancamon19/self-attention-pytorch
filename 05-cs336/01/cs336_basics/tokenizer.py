@@ -4,7 +4,7 @@ import regex as re
 from shared import timeit, init_vocabulary, find_chunk_boundaries
 
 
-@timeit
+# @timeit
 def merge_step(
     vocab: set,
     vocab_dict: dict,
@@ -15,7 +15,7 @@ def merge_step(
     pretokenized: list of sentences, each one split with the pretokenized
     """
 
-    @timeit
+    # @timeit
     def count_bigrams():  # 99% of the function time
         common = defaultdict(int)
         for sample in pretokenized:
@@ -38,7 +38,7 @@ def merge_step(
     return merge
 
 
-@timeit
+# @timeit
 def update_pretokenized_with_merge(
     _merge: tuple[bytes, bytes],
     pretokenized: list[list[list[bytes]]],
@@ -72,7 +72,7 @@ def update_pretokenized_with_merge(
     return updated_pretokenized
 
 
-@timeit
+# @timeit
 def pretokenize_all(
     chunk: str,
     special_tokens: list[str],
@@ -111,7 +111,7 @@ def pretokenize_all(
     return pretokenized
 
 
-@timeit
+# @timeit
 def train_tokenizer(
     input_text_file: str = "data/TinyStoriesV2-GPT4-valid.txt",
     target_vocab_size: int = 350,
