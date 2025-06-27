@@ -12,34 +12,33 @@ import heapq
 @profile
 def initialize(text: str, special_tokens: list[str]):
     split_special_tokens = "|".join(re.escape(token) for token in special_tokens)
-    sentences = re.split(split_special_tokens, text)  # [:1]
+    strings = re.split(split_special_tokens, text)  # [:1]
     PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
 
-    pairs_to_sentence_idx = defaultdict(set[int])
     pairs_count = defaultdict(int)
+    pretokens_to_split = {}  # b"hi": [b"h", b"i"]
+    pretokens_counts = defaultdict(int)
+    pairs_to_pretokens = defaultdict(set)
 
-    pretokenized_sentences = []
-    for i, sentence in enumerate(sentences):
-        pretokenized_sentence = []
+    for string in strings:
+        for match in PAT.finditer(string):
+            pretoken_bytes = match.group().encode("utf-8")
+            if len(pretoken_bytes) == 1:
+                continue
 
-        for match in PAT.finditer(sentence):
-            word_bytes = match.group().encode("utf-8")
-            if len(word_bytes) == 1:
-                continue  # saves 0.04 seconds on test1
-            # print(word_bytes)
-            # pretokenized_sentence.append(word_bytes)
-            word = []
-            for j in range(len(word_bytes) - 1):
-                pair = (word_bytes[j : j + 1], word_bytes[j + 1 : j + 2])
-                pairs_to_sentence_idx[pair].add(i)
-                pairs_count[pair] += 1
-                word.append(word_bytes[j : j + 1])
+            pretoken_split = []
+            for j in range(len(pretoken_bytes)):
+                pretoken_split.append(pretoken_bytes[j : j + 1])
 
-            word.append(word_bytes[len(word_bytes) - 1 :])
-            pretokenized_sentence.append(word)
+                if j + 1 < len(pretoken_bytes):
+                    pair = (pretoken_bytes[j : j + 1], pretoken_bytes[j + 1 : j + 2])
+                    pairs_count[pair] += 1
+                    pairs_to_pretokens[pair].add(pretoken_bytes)
 
-        pretokenized_sentences.append(pretokenized_sentence)
-    return pairs_count, pairs_to_sentence_idx, pretokenized_sentences
+            pretokens_to_split[pretoken_bytes] = pretoken_split
+            pretokens_counts[pretoken_bytes] += 1
+
+    return pairs_count, pretokens_to_split, pretokens_counts, pairs_to_pretokens
 
 
 @timeit
@@ -98,7 +97,7 @@ def train_tokenizer(
         vocab[len(vocab)] = token.encode("utf-8")
     vocab_set = set(vocab.values())
 
-    pairs_count, pairs_to_sentence_idx, pretokenized_sentences = initialize(text, special_tokens)
+    pairs_count, pretokens_to_split, pretokens_counts, pairs_to_pretokens = initialize(text, special_tokens)
     priority_queue = [(-count, pair) for pair, count in pairs_count.items()]
     heapq.heapify(priority_queue)
     merges = []
@@ -115,42 +114,42 @@ def train_tokenizer(
         affected_pairs_count = defaultdict(int)
 
         #  ==== MERGE ====
-        indices = pairs_to_sentence_idx[pair]
-        for s_idx in list(indices):
-            sentence = pretokenized_sentences[s_idx]
+        matching_pretokens = pairs_to_pretokens[pair]
+        for pretoken in matching_pretokens:
+            split = pretokens_to_split[pretoken]  # [b"h", b"i"]
+            count = pretokens_counts[pretoken]
 
-            for w_idx, word in enumerate(sentence):
-                i = 0
-                updated_word = []
-                while i < len(word):
-                    if i + 1 < len(word) and word[i] == pair[0] and word[i + 1] == pair[1]:
-                        updated_word.append(pair_bytes)
-                        i += 2
-                    else:
-                        updated_word.append(word[i])
-                        i += 1
+            i = 0
+            updated_split = []
+            while i < len(split):
+                if i + 1 < len(split) and split[i] == pair[0] and split[i + 1] == pair[1]:
+                    updated_split.append(pair_bytes)
+                    i += 2
+                else:
+                    updated_split.append(split[i])
+                    i += 1
 
-                pretokenized_sentences[s_idx][w_idx] = updated_word
+            pretokens_to_split[pretoken] = updated_split
 
-                for i in range(len(updated_word)):
-                    if updated_word[i] == pair_bytes:
-                        if i > 0:
-                            old_pair = (updated_word[i - 1], pair[0])
-                            affected_pairs_count[old_pair] += 1
+            for i in range(len(updated_split)):
+                if updated_split[i] == pair_bytes:
+                    if i > 0:
+                        old_pair = (updated_split[i - 1], pair[0])
+                        affected_pairs_count[old_pair] += count
 
-                            new_pair = (updated_word[i - 1], pair_bytes)
-                            new_created_pairs_count[new_pair] += 1
+                        new_pair = (updated_split[i - 1], pair_bytes)
+                        new_created_pairs_count[new_pair] += count
 
-                            pairs_to_sentence_idx[new_pair].add(s_idx)
+                        pairs_to_pretokens[new_pair].add(pretoken)
 
-                        if i + 1 < len(updated_word):
-                            old_pair = (pair[1], updated_word[i + 1])
-                            affected_pairs_count[old_pair] += 1
+                    if i + 1 < len(updated_split):
+                        old_pair = (pair[1], updated_split[i + 1])
+                        affected_pairs_count[old_pair] += count
 
-                            new_pair = (pair_bytes, updated_word[i + 1])
-                            new_created_pairs_count[new_pair] += 1
+                        new_pair = (pair_bytes, updated_split[i + 1])
+                        new_created_pairs_count[new_pair] += count
 
-                            pairs_to_sentence_idx[new_pair].add(s_idx)
+                        pairs_to_pretokens[new_pair].add(pretoken)
 
         update_pairs_count_after_merge(
             priority_queue,
