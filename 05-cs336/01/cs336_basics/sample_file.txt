@@ -1,0 +1,17 @@
+More specifically, given a sequence of token IDs, the Transformer language model uses a token em-
+bedding layer to produce a sequence of vectors. Each embedding layer takes in a tensor of integers
+of shape (batch_size, sequence_length) and produces a sequence of vectors of shape (batch_size,
+sequence_length, d_model).
+3.1.2 Pre-norm Transformer Block
+After embedding, the activations are processed by several identically structured neural net layers. A standard
+decoder-only Transformer language model consists of num_layers identical layers (commonly called Trans-
+former “blocks”). Each Transformer block takes in an input of shape (batch_size, sequence_length,
+d_model) and returns an output of shape (batch_size, sequence_length, d_model). Each block aggre-
+gates information across the sequence (via self-attention) and non-linearly transforms it (via the feed-forward
+layers).
+3.2 Output Normalization and Embedding
+After num_layers Transformer blocks, we will take the final activations and turn them into a distribution
+over the vocabulary.
+We will implement the “pre-norm” Transformer block (detailed in §3.5), which additionally requires the
+use of layer normalization (detailed below) after the final Transformer block to ensure its outputs are properly
+scaled

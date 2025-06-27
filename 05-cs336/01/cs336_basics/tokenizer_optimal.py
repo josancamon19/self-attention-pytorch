@@ -43,15 +43,22 @@ def get_pq_lex_key(pair):
     combined = pair[0] + pair[1]
     # For reverse lexicographical order, prepend with negative length
     # This ensures longer sequences come first when prefixes match
-    return (-len(combined),) + tuple(combined)
+    # return (-len(combined),) + tuple(combined)
+    return 0
     # return tuple(-b for b in pair[0]) + tuple(-b for b in pair[1])
 
 
-def get_max_priority_queue(priority_queue):
+def get_max_priority_queue(priority_queue: list):
     # wrong, cause not lexicographically bigger, enough for tests
-    count, _, pair = heapq.heappop(priority_queue)
-    count = -count
-    return count, pair
+    # count, _, pair = heapq.heappop(priority_queue)
+    # count = -count
+    # TODO: this is super inefficient
+    min_count = min(item[0] for item in priority_queue)
+    candidates = [item for item in priority_queue if item[0] == min_count]
+    max_item = max(candidates, key=lambda x: x[2])
+    priority_queue.remove(max_item)
+    count = -max_item[0]
+    return count, max_item[2]
 
 
 def update_pairs_count_after_merge(priority_queue, new_created_pairs_count, affected_pairs_count, logs=False):
@@ -60,8 +67,6 @@ def update_pairs_count_after_merge(priority_queue, new_created_pairs_count, affe
         print("new_created_pairs_count:", len(new_created_pairs_count))
 
     for pair, count in new_created_pairs_count.items():
-        if logs:
-            print("pair, count", pair, count)
         priority_queue.append((-count, get_pq_lex_key(pair), pair))
 
     if logs:
@@ -71,48 +76,11 @@ def update_pairs_count_after_merge(priority_queue, new_created_pairs_count, affe
         count, pair = -item[0], item[2]
         if pair in affected_pairs_count:
             new_count = -(count - affected_pairs_count[pair])
-            if logs:
-                print("pair, prev_count, new_count:", pair, count, -new_count)
             priority_queue[i] = (new_count, get_pq_lex_key(pair), pair)
 
     if logs:
         print("----")
     heapq.heapify(priority_queue)
-
-
-## for s_idx in pairs_to_sentence_idx[pair]:
-# sentence = pretokenized_sentences[s_idx]
-# for word in sentence:
-#     i = 0
-#     while i < len(word) - new_pair_length + 1:
-#         if word[i : i + new_pair_length] == pair_bytes:
-#             # TODO: ' and' might have been formed by ' a', 'n', then 'd'
-#             # but we could have another 'nd' that are not related, so on every ' and' we'll find 'nd' when we sholdn't
-#             if i > 0:
-#                 prev_bytes = word[i - 1 : i]
-#                 j = 0
-#                 while j < i:
-#                     if word[j:i] in vocab_set:
-#                         prev_bytes = word[j:i]
-#                         break
-#                     j += 1
-#                 new_created_pairs_count[(prev_bytes, pair_bytes)] += 1
-#                 affected_pairs_count[(prev_bytes, pair[0])] += 1
-
-#             if i + new_pair_length < len(word):
-#                 next_bytes = word[i + new_pair_length : i + new_pair_length + 1]
-#                 j = len(word)
-#                 while i + new_pair_length < j:
-#                     if word[i + new_pair_length + 1 : j] in vocab_set:
-#                         prev_bytes = word[j:i]
-#                         break
-#                     j -= 1
-
-#                 new_created_pairs_count[(pair_bytes, next_bytes)] += 1
-#                 affected_pairs_count[(pair[1], next_bytes)] += 1
-#             i += new_pair_length
-#         else:
-#             i += 1
 
 
 @timeit
@@ -131,6 +99,7 @@ def train_tokenizer(
     vocab_set = set(vocab.values())
 
     pairs_count, pairs_to_sentence_idx, pretokenized_sentences = initialize(text, special_tokens)
+    # print("pretokenized_sentences", pretokenized_sentences)
     priority_queue = [(-count, get_pq_lex_key(pair), pair) for pair, count in pairs_count.items()]
     heapq.heapify(priority_queue)
     merges = []
@@ -148,46 +117,63 @@ def train_tokenizer(
 
         #  ==== MERGE ====
         indices = pairs_to_sentence_idx[pair]
-        for s_idx in indices:
+        # print("pairs_to_sentence_idx",pairs_to_sentence_idx)
+        for s_idx in list(indices):
             sentence = pretokenized_sentences[s_idx]
             for w_idx, word in enumerate(sentence):
                 i = 0
                 updated_word = []
-                while i + 1 < len(word):
-                    if word[i] == pair[0] and word[i + 1] == pair[1]:
+                while i < len(word):
+                    if i + 1 < len(word) and word[i] == pair[0] and word[i + 1] == pair[1]:
                         updated_word.append(pair_bytes)
 
                         if i > 0:
                             old_pair = (word[i - 1], pair[0])
                             new_pair = (word[i - 1], pair_bytes)
-                            print(old_pair, new_pair)
                             affected_pairs_count[old_pair] += 1
                             new_created_pairs_count[new_pair] += 1
-                            # pairs_to_sentence_idx[old_pair].remove(s_idx)
-                            # pairs_to_sentence_idx[new_pair].add(s_idx)
+
+                            pairs_to_sentence_idx[new_pair].add(s_idx)
+                            try:
+                                pairs_to_sentence_idx[old_pair].remove(s_idx)
+                            except KeyError:
+                                pass
 
                         if i + 2 < len(word):
                             old_pair = (pair[1], word[i + 2])
                             new_pair = (pair_bytes, word[i + 2])
                             affected_pairs_count[old_pair] += 1
                             new_created_pairs_count[new_pair] += 1
-                            # pairs_to_sentence_idx[old_pair].remove(s_idx)
-                            # pairs_to_sentence_idx[new_pair].add(s_idx)
 
-                            # TODO: also when updating forward, what if word[i+2] has to be removed as well, cause pair is 'hi' but found is 'hihi'
+                            pairs_to_sentence_idx[new_pair].add(s_idx)
+                            try:
+                                pairs_to_sentence_idx[old_pair].remove(s_idx)
+                            except KeyError:
+                                pass
 
                         i += 2
                     else:
                         updated_word.append(word[i])
                         i += 1
 
+                # print(word, "---", updated_word)
                 pretokenized_sentences[s_idx][w_idx] = updated_word
         # break
-        update_pairs_count_after_merge(priority_queue, new_created_pairs_count, affected_pairs_count, True)
-        if len(merges) == 4:
-            break
+        update_pairs_count_after_merge(
+            priority_queue,
+            new_created_pairs_count,
+            affected_pairs_count,
+            False,
+        )
+        # print(priority_queue)
 
     return vocab, merges
 
 
-# train_tokenizer()
+# FUCK, hadn't I really test this way, fuck me.
+
+file = "cs336_basics/sample_file.txt"
+print("merges_current:", train_tokenizer(file, 300)[1])
+from cs336_basics.tokenizer import train_tokenizer as correct
+
+print("correct merges:", correct(file, 300)[1])
