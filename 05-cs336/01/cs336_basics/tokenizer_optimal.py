@@ -5,9 +5,6 @@ import regex as re
 import heapq
 
 
-# TODO: can improve performance by keeping (sentence, pair) = [word_indices]
-
-
 @timeit
 @profile
 def initialize(text: str, special_tokens: list[str]):
@@ -56,8 +53,21 @@ def get_max_priority_queue(priority_queue: list):
     while priority_queue and priority_queue[0][0] == min_count:
         min_items.append(heapq.heappop(priority_queue))
 
+    # Log when n-a and n-n are both candidates
+    # na_pair = (b"n", b"a")
+    # nn_pair = (b"n", b"n")
+    # has_na = any(item[1] == na_pair for item in min_items)
+    # has_nn = any(item[1] == nn_pair for item in min_items)
+
+    # if has_na and has_nn:
+    #     print(f"\nTIE-BREAKER: Both na and nn have count={-min_count}")
+    #     print(f"Candidates with same count: {[item[1] for item in min_items]}")
+
     # Find lexicographically maximum among them
     max_item = max(min_items, key=lambda x: x[1])
+
+    # if (has_na or has_nn) and (max_item[1] == na_pair or max_item[1] == nn_pair):
+    #     print(f"Selected: {max_item[1]} (lexicographic max)")
 
     # Push back the others
     for item in min_items:
@@ -102,19 +112,39 @@ def train_tokenizer(
     heapq.heapify(priority_queue)
     merges = []
 
+    # na_pair = (b"n", b"a")
+    # nn_pair = (b"n", b"n")
+    # print(f"Initial pair counts: na={pairs_count.get(na_pair, 0)}, nn={pairs_count.get(nn_pair, 0)}")
+
     while len(vocab) < target_vocab_size:
         count, pair = get_max_priority_queue(priority_queue)
         pair_bytes = pair[0] + pair[1]
-        # print("merge:", count, pair, pair_bytes)
+        # print(f"merge {len(merges) + 1}:", count, pair)
         merges.append(pair)
         vocab[len(vocab)] = pair_bytes
         vocab_set.add(pair_bytes)
+
+        # Log when we're about to merge n-a or n-n
+        # if pair == na_pair or pair == nn_pair:
+        #     print(f"\n=== Merge #{len(merges)}: Merging {pair} -> {pair_bytes}, count={count} ===")
+        #     # Show top 10 items in priority queue
+        #     temp_pq = sorted(priority_queue, key=lambda x: (x[0], x[1]))[:25]
+        #     print("Top 10 pairs in queue:")
+        #     for i, (neg_count, p) in enumerate(temp_pq):
+        #         print(f"  {i + 1}. {p} -> {p[0] + p[1]}, count={-neg_count}")
 
         new_created_pairs_count = defaultdict(int)
         affected_pairs_count = defaultdict(int)
 
         #  ==== MERGE ====
         matching_pretokens = pairs_to_pretokens[pair]
+        # if pair == na_pair or pair == nn_pair:
+        #     print(f"Pretokens containing {pair}:")
+        #     for pt in list(matching_pretokens)[:5]:  # Show first 5
+        #         print(f"  {pt} (count={pretokens_counts[pt]})")
+        #     if len(matching_pretokens) > 5:
+        #         print(f"  ... and {len(matching_pretokens) - 5} more")
+
         for pretoken in matching_pretokens:
             split = pretokens_to_split[pretoken]  # [b"h", b"i"]
             count = pretokens_counts[pretoken]
@@ -151,17 +181,19 @@ def train_tokenizer(
 
                         pairs_to_pretokens[new_pair].add(pretoken)
 
+        # if pair == na_pair or pair == nn_pair:
+        #     print(f"Affected pairs: {dict(affected_pairs_count)}")
+        #     print(f"New created pairs: {dict(new_created_pairs_count)}")
+
         update_pairs_count_after_merge(
             priority_queue,
             new_created_pairs_count,
             affected_pairs_count,
             False,
         )
+        # if len(merges) < 450:  # First 10 merges
+        #     na_count = next((-item[0] for item in priority_queue if item[1] == na_pair), 0)
+        #     nn_count = next((-item[0] for item in priority_queue if item[1] == nn_pair), 0)
+        #     print(f"After merge #{len(merges)} {pair}: na count = {na_count}")
+        #     print(f"After merge #{len(merges)} {pair}: nn count = {nn_count}")
     return vocab, merges
-
-
-# file = "cs336_basics/sample_file.txt"
-# print(train_tokenizer(file, 350)[1])
-# from cs336_basics.tokenizer import train_tokenizer as correct
-
-# print(correct(file, 350)[1])

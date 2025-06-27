@@ -22,7 +22,7 @@ def test_train_bpe_speed():
         special_tokens=["<|endoftext|>"],
     )
     end_time = time.time()
-    # print_execution_summary()
+    print_execution_summary()
     assert end_time - start_time < 1.5
 
 
@@ -94,7 +94,7 @@ def test_train_bpe_special_tokens(snapshot):
     for word_bytes in vocabs_without_specials:
         assert b"<|" not in word_bytes
 
-    print(vocabs_without_specials)
+    # print(vocabs_without_specials)
     snapshot.assert_match(
         {
             "vocab_keys": set(vocab.keys()),
