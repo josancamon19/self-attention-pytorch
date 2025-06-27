@@ -41,55 +41,40 @@ class Tokenizer:
         else:
             strings, special_tokens_sep = [input_text], []
 
-        tokenized = []
+        pretokens = set()
+        pretokenized_strings = []
         for si, string in enumerate(strings):
-            # print("[Tokenizer.encode] si, string:", si, f'"{string}"')
-            # make it faster
-            # pretokens = [match.group() for match in self.PAT.finditer(string)]
+            pretokenized = []
             for match in self.PAT.finditer(string):
                 pretoken_bytes = match.group().encode("utf-8")
-                # print("pretoken_bytes", pretoken_bytes)
-                # if len(pretoken_bytes) == 1 :
-                #     tokenized.append(self.vocab_reversed[pretoken_bytes])
-                #     continue
+                pretokens.add(pretoken_bytes)
+                pretokenized.append(pretoken_bytes)
+            pretokenized_strings.append(pretokenized)
 
-                # merges are supposed to be applied in order.
-                # # need to go from i, j+1, up until j == len(bytes)
-                # # whenever [i: j+1] in vocab, save tuples of (vocab_id, (i, j))
-                # # when i: j+1 not in vocab, get min(tuples)
-                # # append to tokenized
-                # # set i to j, j = i+1 #!!!!!!
+        pretokens_map = {}
+        for pretoken in pretokens:
+            pretoken_bytes = [bytes([b]) for b in pretoken]
+            for merge in self.merges:
+                i = 0
+                while i < len(pretoken_bytes) - 1:
+                    if pretoken_bytes[i] == merge[0] and pretoken_bytes[i + 1] == merge[1]:
+                        pretoken_bytes = pretoken_bytes[:i] + [merge[0] + merge[1]] + pretoken_bytes[i + 2 :]
+                    else:
+                        i += 1
 
-                # wait no, is not even this, is literally applying the merges
-                tokens = [bytes([b]) for b in pretoken_bytes]
-                for merge in self.merges:
-                    i = 0
-                    while i < len(tokens) - 1:
-                        if tokens[i] == merge[0] and tokens[i + 1] == merge[1]:
-                            tokens = tokens[:i] + [merge[0] + merge[1]] + tokens[i + 2 :]
-                        else:
-                            i += 1
+            pretokens_map[pretoken] = [self.vocab_reversed[pb] for pb in pretoken_bytes]
 
-                for token in tokens:
-                    tokenized.append(self.vocab_reversed[token])
-
-                # longest greedy decoding (wrong), no merges order considered
-                # i = 0
-                # j = len(pretoken_bytes)
-                # while i < j:
-                #     print(i, j, pretoken_bytes[i:j] in self.vocab_reversed)
-                #     if pretoken_bytes[i:j] in self.vocab_reversed:
-                #         tokenized.append(self.vocab_reversed[pretoken_bytes[i:j]])
-                #         i = j
-                #         j = len(pretoken_bytes)
-                #     else:
-                #         j -= 1
+        # print(pretokens_map)
+        tokenized = []
+        for si, string in enumerate(pretokenized_strings):
+            for pretoken_bytes in string:
+                tokenized.extend(pretokens_map[pretoken_bytes])
 
             if si < len(strings) - 1:
                 tokenized.append(self.vocab_reversed[special_tokens_sep[si]])
 
-        # print("[Tokenizer.encode] tokenized.pre:", [self.vocab[i] for i in tokenized])
         # print("[Tokenizer.encode] tokenized:", tokenized)
+        # print("[Tokenizer.encode] tokenized.pre:", [self.vocab[i] for i in tokenized])
         return tokenized
 
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:

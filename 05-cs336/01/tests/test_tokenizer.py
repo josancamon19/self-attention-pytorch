@@ -78,7 +78,7 @@ def get_tokenizer_from_vocab_merges_path(
 #     tokenizer = get_tokenizer_from_vocab_merges_path(
 #         vocab_path=VOCAB_PATH, merges_path=MERGES_PATH, special_tokens=["<|endoftext|>"]
 #     )
-#     test_string = "Hi there, thisisatest <|endoftext|>     -123-asdafi`;sdç≈ßå∂"
+#     test_string = "Hi there 09123jioasd#@#@$@#% "
 #     encoded_ids = tokenizer.encode(test_string)
 #     decoded_string = tokenizer.decode(encoded_ids)
 #     assert test_string == decoded_string
