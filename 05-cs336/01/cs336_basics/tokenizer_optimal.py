@@ -1,12 +1,13 @@
 from collections import defaultdict
 from line_profiler import profile
-from cs336_basics.shared import init_vocabulary, timeit
+from cs336_basics.shared import timeit
 import regex as re
 import heapq
 
 
 # TODO: can improve performance by keeping (sentence, pair) = [word_indices]
-# TODO: optimize use of ints/bytes
+
+
 @timeit
 @profile
 def initialize(text: str, special_tokens: list[str]):
@@ -41,25 +42,6 @@ def initialize(text: str, special_tokens: list[str]):
     return pairs_count, pairs_to_sentence_idx, pretokenized_sentences
 
 
-def get_pq_lex_key(pair):
-    combined = pair[0] + pair[1]
-    # For reverse lexicographical order, prepend with negative length
-    # This ensures longer sequences come first when prefixes match
-    return (-len(combined),) + tuple(combined)
-    # return tuple(-b for b in pair[0]) + tuple(-b for b in pair[1])
-
-
-# @profile
-# def get_max_priority_queue(priority_queue: list):
-#     # TODO: this is super inefficient
-#     min_count = min(item[0] for item in priority_queue)
-#     candidates = [item for item in priority_queue if item[0] == min_count]
-#     max_item = max(candidates, key=lambda x: x[2])
-#     priority_queue.remove(max_item)
-#     count = -max_item[0]
-#     return count, max_item[2]
-
-
 @timeit
 @profile
 def get_max_priority_queue(priority_queue: list):
@@ -76,7 +58,7 @@ def get_max_priority_queue(priority_queue: list):
         min_items.append(heapq.heappop(priority_queue))
 
     # Find lexicographically maximum among them
-    max_item = max(min_items, key=lambda x: x[2])
+    max_item = max(min_items, key=lambda x: x[1])
 
     # Push back the others
     for item in min_items:
@@ -84,31 +66,20 @@ def get_max_priority_queue(priority_queue: list):
             heapq.heappush(priority_queue, item)
 
     count = -max_item[0]
-    return count, max_item[2]
+    return count, max_item[1]
 
 
 @timeit
 @profile
 def update_pairs_count_after_merge(priority_queue, new_created_pairs_count, affected_pairs_count, logs=False):
-    # print("update_pairs_count_after_merge")
-    # print("new_created_pairs_count:", len(new_created_pairs_count))
-    # print("new_created_pairs_count:", new_created_pairs_count)
-
     for pair, count in new_created_pairs_count.items():
-        # print("new_pair", pair, count)
-        priority_queue.append((-count, get_pq_lex_key(pair), pair))
+        priority_queue.append((-count, pair))
 
-    # print("#")
-    # print("affected_pairs_count:", len(affected_pairs_count))
-    # print("affected_pairs_count:", affected_pairs_count)
     for i, item in enumerate(priority_queue):
-        count, pair = -item[0], item[2]
+        count, pair = -item[0], item[1]
         if pair in affected_pairs_count:
             new_count = -(count - affected_pairs_count[pair])
-            # print("pair, prev_count, new_count", pair, count, -new_count)
-            priority_queue[i] = (new_count, get_pq_lex_key(pair), pair)
-
-    # print("----")
+            priority_queue[i] = (new_count, pair)
     heapq.heapify(priority_queue)
 
 
@@ -128,7 +99,7 @@ def train_tokenizer(
     vocab_set = set(vocab.values())
 
     pairs_count, pairs_to_sentence_idx, pretokenized_sentences = initialize(text, special_tokens)
-    priority_queue = [(-count, get_pq_lex_key(pair), pair) for pair, count in pairs_count.items()]
+    priority_queue = [(-count, pair) for pair, count in pairs_count.items()]
     heapq.heapify(priority_queue)
     merges = []
 
