@@ -1,5 +1,6 @@
 from collections.abc import Iterable, Iterator
 import regex as re
+import json
 
 
 class Tokenizer:
@@ -77,8 +78,40 @@ class Tokenizer:
         # print("[Tokenizer.encode] tokenized.pre:", [self.vocab[i] for i in tokenized])
         return tokenized
 
+    def encode_(self, input_text: str) -> list[int]:
+        if self.special_tokens:
+            strings = re.split(self.split_special_tokens, input_text)
+            special_tokens_sep = [m.group().encode("utf-8") for m in re.finditer(self.split_special_tokens, input_text)]
+        else:
+            strings, special_tokens_sep = [input_text], []
+
+        tokenized = []
+        for si, string in enumerate(strings):
+            for match in self.PAT.finditer(string):
+                pretoken_bytes = match.group().encode("utf-8")
+
+                tokens = [bytes([b]) for b in pretoken_bytes]
+                for merge in self.merges:
+                    i = 0
+                    while i < len(tokens) - 1:
+                        if tokens[i] == merge[0] and tokens[i + 1] == merge[1]:
+                            tokens = tokens[:i] + [merge[0] + merge[1]] + tokens[i + 2 :]
+                        else:
+                            i += 1
+
+                for token in tokens:
+                    tokenized.append(self.vocab_reversed[token])
+
+            if si < len(strings) - 1:
+                tokenized.append(self.vocab_reversed[special_tokens_sep[si]])
+
+        return tokenized
+
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
-        raise NotImplementedError()
+        for chunk in iterable:
+            # Use existing encode method
+            token_ids = self.encode(chunk)
+            yield from token_ids
 
     def decode(self, ids: list[int]):
         # print("[Tokenizer.decode] ids:", ids)
@@ -87,6 +120,21 @@ class Tokenizer:
         # print("[Tokenizer.decode] decoded:", decoded)
         return decoded
 
-    @staticmethod
-    def from_files(vocab_filepath, merges_filepath, special_tokens=None):
-        raise NotImplementedError()
+    @classmethod
+    def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
+        with open(vocab_filepath, "r") as f:
+            vocab = json.load(f)
+
+        merges = []
+
+        with open(merges_filepath, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and " " in line:
+                    parts = line.split(" ")
+                    assert len(parts) == 2
+                    # Convert merge pairs to bytes
+                    merge1 = parts[0].encode("utf-8")
+                    merge2 = parts[1].encode("utf-8")
+                    merges.append((merge1, merge2))
+        return cls(vocab, merges, special_tokens)
