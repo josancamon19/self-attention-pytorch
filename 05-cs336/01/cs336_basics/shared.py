@@ -34,7 +34,7 @@ def timeit(func):
         stats["min_time"] = min(stats["min_time"], execution_time)
         stats["max_time"] = max(stats["max_time"], execution_time)
 
-        print(f"{func.__name__} took {execution_time:.4f} seconds to execute")
+        # print(f"{func.__name__} took {execution_time:.4f} seconds to execute")
         return result
 
     return wrapper
