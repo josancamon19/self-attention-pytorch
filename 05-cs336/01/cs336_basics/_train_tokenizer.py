@@ -1,5 +1,6 @@
 # ====================================================
 # INITIAL ALGORITHM, doesn't satisfy speed needs, very
+# @DEPRECATED
 # suboptimal, 5.2 seconds compared to test 1 in test_train_bpe.py, benchmark 1.5 secs
 # train_tokenizer.py, does it in 0.18 seconds
 # but this one apparently works lol, at least on test 3, there's 1 difference 'na' 'nn' in the full diff
