@@ -33,6 +33,11 @@ def get_positional_encodings(embed_dim, max_positions=3):
     return pe
 
 
+# TODO: Custom LayerNorm
+# TODO: implement ReLU/SwiGLU
+# TODO: optimize computation MultiHeadSelfAttention batch,layer,seq,embeddings
+
+
 class SelfAttention(nn.Module):
     def __init__(self, embedding_dim, num_heads):
         super().__init__()
@@ -53,18 +58,17 @@ class SelfAttention(nn.Module):
         k = x @ self.K
         v = x @ self.V
 
-        # TODO: Causal Mask
         # print("SelfAttention.forward q.shape:", q.shape)
         attention_scores = q @ k.transpose(1, 2)
-
-        mask = torch.tril(attention_scores) * (padding_mask.unsqueeze(1) if padding_mask is not None else 1)
+        causal_mask = torch.tril(torch.ones((x.shape[1], x.shape[1]))).to(self.Q.device)
+        mask = causal_mask * padding_mask.unsqueeze(1) if padding_mask is not None else causal_mask
         attention_scores = attention_scores.masked_fill(mask == 0, -1e9)
         # print(attention_scores)
-        # TODO: out of 7,7, which i,j refer to which tokens
+        # TODO: figoure out the output of 7,7, which i,j refer to which tokens
 
         # print("SelfAttention.forward attention_scores:", attention_scores.shape)
         attention_weights = torch.softmax(attention_scores / math.sqrt(k.shape[-1]), dim=-1)
-        print(attention_weights)
+        # print(attention_weights)
         # print("SelfAttention.forward attention_weights:", attention_weights.shape)
         output = attention_weights @ v
         # print("SelfAttention.forward output:", output.shape)
@@ -74,7 +78,6 @@ class SelfAttention(nn.Module):
 class MultiHeadSelfAttention(nn.Module):
     def __init__(self, embedding_dim, num_heads):
         super().__init__()
-        # TODO: No need for SelfAttention block, just the other one is more annoying on dimensions, use this one for now
         self.attention = nn.Sequential(*[SelfAttention(embedding_dim, num_heads) for _ in range(num_heads)])
         self.W_O = nn.Parameter(torch.zeros((embedding_dim, embedding_dim)))
 
@@ -90,12 +93,13 @@ class MultiHeadSelfAttention(nn.Module):
 class TransformerBlock(nn.Module):
     def __init__(self, embedding_dim, num_heads):
         super().__init__()
+        self.pre_mhsa_norm = nn.LayerNorm(embedding_dim)
         self.mhsa = MultiHeadSelfAttention(embedding_dim, num_heads)
-        #  3,5,128
-        # pass each seq input through a ffn, `128, 128`?
+
+        self.pre_mlp_norm = nn.LayerNorm(embedding_dim)
         self.mlp_in = nn.Parameter(torch.zeros((embedding_dim, 4 * embedding_dim)))
         self.mlp_in_bias = nn.Parameter(torch.zeros((embedding_dim * 4,)))
-        self.relu = F.relu  # TODO: should be implemented manually I guess, and uses swiGLU iirc
+        self.relu = F.relu
         self.mlp_out = nn.Parameter(torch.zeros((4 * embedding_dim, embedding_dim)))
         self.mlp_out_bias = nn.Parameter(torch.zeros((embedding_dim,)))
 
@@ -103,10 +107,11 @@ class TransformerBlock(nn.Module):
         nn.init.normal_(self.mlp_out, std=0.02)
 
     def forward(self, x, padding_mask):
-        # TODO: normalize
+        x = self.pre_mhsa_norm(x)
         attention = self.mhsa(x, padding_mask) + x
-        # TODO: normalize
-        proj_in = attention @ self.mlp_in + self.mlp_in_bias
+
+        attention_norm = self.pre_mlp_norm(attention)
+        proj_in = attention_norm @ self.mlp_in + self.mlp_in_bias
         proj_in_activated = self.relu(proj_in)
         proj_out = proj_in_activated @ self.mlp_out + self.mlp_out_bias
         output = proj_out + attention
@@ -124,20 +129,23 @@ class Transformer(nn.Module):
     ):
         super().__init__()
         self.embeddings = EmbeddingLayer(vocab_size, embedding_dim)
-        self.pe = get_positional_encodings(embedding_dim, max_sequence_length)
-        # TODO: register pytorch buffer, device movement
+        pe = get_positional_encodings(embedding_dim, max_sequence_length)
+        self.register_buffer("pe", pe)
+
         self.blocks = nn.ModuleList(TransformerBlock(embedding_dim, num_heads) for _ in range(num_layers))
-        # norm
-        self.output = nn.Parameter(torch.zeros(embedding_dim, vocab_size))
+        self.pre_output_norm = nn.LayerNorm(embedding_dim)
+        self.output = nn.Parameter(torch.empty(embedding_dim, vocab_size))
+        nn.init.normal_(self.output, std=0.02)
 
     def forward(self, input_ids, padding_mask):
-        print(self.pe[: len(input_ids), :].shape)
+        # print(self.pe[: len(input_ids), :].shape)
         tokens = self.embeddings(input_ids) + self.pe[: input_ids.shape[-1], :]
         for block in self.blocks:
             tokens = block(tokens, padding_mask)
 
+        tokens = self.pre_output_norm(tokens)
         output = tokens @ self.output
-        # print("output.shape:", output.shape)
+        print("Transformer.forward output.shape:", output.shape)
         # return torch.softmax(output, dim=-1)
         return output  # output logits
 
@@ -155,6 +163,7 @@ tokenized = tokenizer(
     padding=True,
     truncation=True,
 )
-print(tokenized)
+print(f"input:\n{tokenized['input_ids']}")
+print(tokenized["attention_mask"])
 tf = Transformer(tokenizer.vocab_size, max_sequence_length, embedding_dim, num_layers, num_heads)
 prob_dist = tf(tokenized["input_ids"], tokenized["attention_mask"])
