@@ -5,6 +5,7 @@ from torch.nn.parameter import Parameter
 import torch.nn.functional as F
 from transformers import GPT2Tokenizer
 
+
 # We expect you to build these components from scratch. In particular, you may not
 # use any definitions from torch.nn, torch.nn.functional, or torch.optim except for the following:
 # • torch.nn.Parameter
