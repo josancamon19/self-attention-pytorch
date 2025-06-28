@@ -109,7 +109,6 @@ class Tokenizer:
 
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
         for chunk in iterable:
-            # Use existing encode method
             token_ids = self.encode(chunk)
             yield from token_ids
 
@@ -138,3 +137,13 @@ class Tokenizer:
                     merge2 = parts[1].encode("utf-8")
                     merges.append((merge1, merge2))
         return cls(vocab, merges, special_tokens)
+
+
+# TODO: parallelize encode
+# TODO: check difference with repeated characters on test_train_bpe
+# TODO: train on tinystories dataset, vocabsize 10k (store to disk)
+# TODO: profile the code
+# TODO: parallelize training
+
+# TODO: train on openwebtext dataset.
+# TODO: 2.7 experiments.

@@ -19,6 +19,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "wandb>=0.19.7",
     "line-profiler>=4.2.0",
+    "tokenizers>=0.21.2",
 ]
 
 

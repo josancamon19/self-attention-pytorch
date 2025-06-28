@@ -164,3 +164,4 @@ cython_debug/
 
 data/
 profile_output*
+karpathy_minbpe

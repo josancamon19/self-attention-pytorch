@@ -1,4 +1,6 @@
 from collections import defaultdict
+import json
+import os
 from line_profiler import profile
 from cs336_basics.shared import timeit
 import regex as re
@@ -81,14 +83,18 @@ def get_max_priority_queue(priority_queue: list):
 
 @timeit
 @profile
-def update_pairs_count_after_merge(priority_queue, new_created_pairs_count, affected_pairs_count, logs=False):
+def update_pairs_count_after_merge(priority_queue, new_created_pairs_count, affected_pairs_count):
     for pair, count in new_created_pairs_count.items():
         priority_queue.append((-count, pair))
+    # na_pair = (b"n", b"a")
+    # nn_pair = (b"n", b"n")
 
     for i, item in enumerate(priority_queue):
         count, pair = -item[0], item[1]
         if pair in affected_pairs_count:
             new_count = -(count - affected_pairs_count[pair])
+            # if pair == na_pair or pair == nn_pair:
+            #     print(f"affected pair {pair} updated from {count} to {-new_count}")
             priority_queue[i] = (new_count, pair)
     heapq.heapify(priority_queue)
 
@@ -116,11 +122,12 @@ def train_tokenizer(
     # na_pair = (b"n", b"a")
     # nn_pair = (b"n", b"n")
     # print(f"Initial pair counts: na={pairs_count.get(na_pair, 0)}, nn={pairs_count.get(nn_pair, 0)}")
+    print("priority_queue:", priority_queue)
 
     while len(vocab) < target_vocab_size:
         count, pair = get_max_priority_queue(priority_queue)
         pair_bytes = pair[0] + pair[1]
-        # print(f"merge {len(merges) + 1}:", count, pair)
+        print(f"merge {len(merges) + 1}:", count, pair)
         merges.append(pair)
         vocab[len(vocab)] = pair_bytes
         vocab_set.add(pair_bytes)
@@ -155,6 +162,7 @@ def train_tokenizer(
             while i < len(split):
                 if i + 1 < len(split) and split[i] == pair[0] and split[i + 1] == pair[1]:
                     updated_split.append(pair_bytes)
+                    # affected_pairs_count[pair] += count
                     i += 2
                 else:
                     updated_split.append(split[i])
@@ -185,12 +193,15 @@ def train_tokenizer(
         # if pair == na_pair or pair == nn_pair:
         #     print(f"Affected pairs: {dict(affected_pairs_count)}")
         #     print(f"New created pairs: {dict(new_created_pairs_count)}")
+        # if na_pair in affected_pairs_count:
+        #     print("na_pair affected from pair", pair, affected_pairs_count[na_pair])
+        # if nn_pair in affected_pairs_count:
+        #     print("nn_pair affected from pair", pair, affected_pairs_count[nn_pair])
 
         update_pairs_count_after_merge(
             priority_queue,
             new_created_pairs_count,
             affected_pairs_count,
-            False,
         )
         # if len(merges) < 450:  # First 10 merges
         #     na_count = next((-item[0] for item in priority_queue if item[1] == na_pair), 0)
@@ -198,3 +209,34 @@ def train_tokenizer(
         #     print(f"After merge #{len(merges)} {pair}: na count = {na_count}")
         #     print(f"After merge #{len(merges)} {pair}: nn count = {nn_count}")
     return vocab, merges
+
+
+data = "cs336_basics/sample_file.txt"
+size = 270
+vocab, merges1 = train_tokenizer(data, size)
+print([p1 + p2 for p1, p2 in merges1], len(vocab), len(merges1))
+with open(data, "rb") as f:
+    text = f.read().decode("utf-8", errors="ignore")
+
+from tokenizers.trainers import BpeTrainer  # noqa: E402
+from tokenizers.pre_tokenizers import ByteLevel  # noqa: E402
+from tokenizers import Tokenizer  # noqa: E402
+from tokenizers.models import BPE  # noqa: E402
+
+trainer = BpeTrainer(
+    special_tokens=["<|endoftext|>"],
+    vocab_size=270,
+    initial_alphabet=[chr(i) for i in range(256)],
+    show_progress=False,
+)
+tokenizer = Tokenizer(BPE())
+tokenizer.pre_tokenizer = ByteLevel()
+tokenizer.train([data], trainer)
+tokenizer.save("hf.json")
+
+with open("hf.json", "rb") as f:
+    data = json.loads(f.read())["model"]
+    vocab = data["vocab"]
+    merges = data["merges"]
+    merges = [p1 + p2 for p1, p2 in merges]
+    print(merges[: len(merges1)])
