@@ -56,23 +56,8 @@ def get_max_priority_queue(priority_queue: list):
     while priority_queue and priority_queue[0][0] == min_count:
         min_items.append(heapq.heappop(priority_queue))
 
-    # Log when n-a and n-n are both candidates
-    # na_pair = (b"n", b"a")
-    # nn_pair = (b"n", b"n")
-    # has_na = any(item[1] == na_pair for item in min_items)
-    # has_nn = any(item[1] == nn_pair for item in min_items)
-
-    # if has_na and has_nn:
-    #     print(f"\nTIE-BREAKER: Both na and nn have count={-min_count}")
-    #     print(f"Candidates with same count: {[item[1] for item in min_items]}")
-
-    # Find lexicographically maximum among them
     max_item = max(min_items, key=lambda x: x[1])
 
-    # if (has_na or has_nn) and (max_item[1] == na_pair or max_item[1] == nn_pair):
-    #     print(f"Selected: {max_item[1]} (lexicographic max)")
-
-    # Push back the others
     for item in min_items:
         if item != max_item:
             heapq.heappush(priority_queue, item)
@@ -84,17 +69,22 @@ def get_max_priority_queue(priority_queue: list):
 @timeit
 @profile
 def update_pairs_count_after_merge(priority_queue, new_created_pairs_count, affected_pairs_count):
+    na_pair = (b"n", b"a")
+    # if na_pair in affected_pairs_count:
+    #     print("affected_pairs_count:", affected_pairs_count[na_pair])
+
+    # if na_pair in new_created_pairs_count:
+    #     print("new_created_pairs_count:", new_created_pairs_count[na_pair])
+
     for pair, count in new_created_pairs_count.items():
         priority_queue.append((-count, pair))
-    # na_pair = (b"n", b"a")
-    # nn_pair = (b"n", b"n")
 
     for i, item in enumerate(priority_queue):
         count, pair = -item[0], item[1]
         if pair in affected_pairs_count:
             new_count = -(count - affected_pairs_count[pair])
-            # if pair == na_pair or pair == nn_pair:
-            #     print(f"affected pair {pair} updated from {count} to {-new_count}")
+            if pair == na_pair:
+                print("affected_pairs_count: b'na'", count, -new_count)
             priority_queue[i] = (new_count, pair)
     heapq.heapify(priority_queue)
 
@@ -115,43 +105,27 @@ def train_tokenizer(
     vocab_set = set(vocab.values())
 
     pairs_count, pretokens_to_split, pretokens_counts, pairs_to_pretokens = initialize(text, special_tokens)
+    # pairs_count[(b"n", b"a")] = 0
     priority_queue = [(-count, pair) for pair, count in pairs_count.items()]
+
     heapq.heapify(priority_queue)
     merges = []
 
-    # na_pair = (b"n", b"a")
-    # nn_pair = (b"n", b"n")
-    # print(f"Initial pair counts: na={pairs_count.get(na_pair, 0)}, nn={pairs_count.get(nn_pair, 0)}")
-    print("priority_queue:", priority_queue)
+    # print("priority_queue:", priority_queue)
 
     while len(vocab) < target_vocab_size:
-        count, pair = get_max_priority_queue(priority_queue)
+        pcount, pair = get_max_priority_queue(priority_queue)
         pair_bytes = pair[0] + pair[1]
-        print(f"merge {len(merges) + 1}:", count, pair)
+        # print(f"merge {len(merges) + 1}:", pcount, pair)
         merges.append(pair)
         vocab[len(vocab)] = pair_bytes
         vocab_set.add(pair_bytes)
-
-        # Log when we're about to merge n-a or n-n
-        # if pair == na_pair or pair == nn_pair:
-        #     print(f"\n=== Merge #{len(merges)}: Merging {pair} -> {pair_bytes}, count={count} ===")
-        #     # Show top 10 items in priority queue
-        #     temp_pq = sorted(priority_queue, key=lambda x: (x[0], x[1]))[:25]
-        #     print("Top 10 pairs in queue:")
-        #     for i, (neg_count, p) in enumerate(temp_pq):
-        #         print(f"  {i + 1}. {p} -> {p[0] + p[1]}, count={-neg_count}")
 
         new_created_pairs_count = defaultdict(int)
         affected_pairs_count = defaultdict(int)
 
         #  ==== MERGE ====
         matching_pretokens = pairs_to_pretokens[pair]
-        # if pair == na_pair or pair == nn_pair:
-        #     print(f"Pretokens containing {pair}:")
-        #     for pt in list(matching_pretokens)[:5]:  # Show first 5
-        #         print(f"  {pt} (count={pretokens_counts[pt]})")
-        #     if len(matching_pretokens) > 5:
-        #         print(f"  ... and {len(matching_pretokens) - 5} more")
 
         for pretoken in matching_pretokens:
             split = pretokens_to_split[pretoken]  # [b"h", b"i"]
@@ -162,7 +136,7 @@ def train_tokenizer(
             while i < len(split):
                 if i + 1 < len(split) and split[i] == pair[0] and split[i + 1] == pair[1]:
                     updated_split.append(pair_bytes)
-                    # affected_pairs_count[pair] += count
+                    affected_pairs_count[pair] += count
                     i += 2
                 else:
                     updated_split.append(split[i])
@@ -190,53 +164,62 @@ def train_tokenizer(
 
                         pairs_to_pretokens[new_pair].add(pretoken)
 
-        # if pair == na_pair or pair == nn_pair:
-        #     print(f"Affected pairs: {dict(affected_pairs_count)}")
-        #     print(f"New created pairs: {dict(new_created_pairs_count)}")
-        # if na_pair in affected_pairs_count:
-        #     print("na_pair affected from pair", pair, affected_pairs_count[na_pair])
-        # if nn_pair in affected_pairs_count:
-        #     print("nn_pair affected from pair", pair, affected_pairs_count[nn_pair])
-
+        if (b"n", b"a") in affected_pairs_count:
+            print(f"merge {len(merges) + 1}:", pcount, pair)
+            
         update_pairs_count_after_merge(
             priority_queue,
             new_created_pairs_count,
             affected_pairs_count,
         )
-        # if len(merges) < 450:  # First 10 merges
-        #     na_count = next((-item[0] for item in priority_queue if item[1] == na_pair), 0)
-        #     nn_count = next((-item[0] for item in priority_queue if item[1] == nn_pair), 0)
-        #     print(f"After merge #{len(merges)} {pair}: na count = {na_count}")
-        #     print(f"After merge #{len(merges)} {pair}: nn count = {nn_count}")
+    json_path = "result.json"
+    with open(json_path, "w") as f:
+        json.dump(merges, f, indent=2, default=str)
     return vocab, merges
 
 
-data = "cs336_basics/sample_file.txt"
-size = 270
-vocab, merges1 = train_tokenizer(data, size)
-print([p1 + p2 for p1, p2 in merges1], len(vocab), len(merges1))
-with open(data, "rb") as f:
-    text = f.read().decode("utf-8", errors="ignore")
+# data = "cs336_basics/sample_file.txt"
+# size = 270
+# vocab, merges1 = train_tokenizer(data, size)
+# print([p1 + p2 for p1, p2 in merges1], len(vocab), len(merges1))
+
 
 from tokenizers.trainers import BpeTrainer  # noqa: E402
 from tokenizers.pre_tokenizers import ByteLevel  # noqa: E402
 from tokenizers import Tokenizer  # noqa: E402
 from tokenizers.models import BPE  # noqa: E402
 
-trainer = BpeTrainer(
-    special_tokens=["<|endoftext|>"],
-    vocab_size=270,
-    initial_alphabet=[chr(i) for i in range(256)],
-    show_progress=False,
-)
-tokenizer = Tokenizer(BPE())
-tokenizer.pre_tokenizer = ByteLevel()
-tokenizer.train([data], trainer)
-tokenizer.save("hf.json")
 
-with open("hf.json", "rb") as f:
-    data = json.loads(f.read())["model"]
-    vocab = data["vocab"]
-    merges = data["merges"]
-    merges = [p1 + p2 for p1, p2 in merges]
-    print(merges[: len(merges1)])
+def use_hf_tokenizer(
+    input_text_file: str = "data/TinyStoriesV2-GPT4-valid.txt",
+    target_vocab_size: int = 300,
+    special_tokens: list[str] = ["<|endoftext|>"],
+):
+    input_text_file = "tests/fixtures/corpus.en"
+    print("use_hf_tokenizer: ", input_text_file)
+
+    trainer = BpeTrainer(
+        special_tokens=special_tokens,
+        vocab_size=target_vocab_size,
+        # initial_alphabet=[chr(i) for i in range(256)],
+        show_progress=False,
+        min_frequency=2,
+    )
+    tokenizer = Tokenizer(BPE())
+    tokenizer.pre_tokenizer = ByteLevel()
+    tokenizer.train([input_text_file], trainer)
+    tokenizer.save("hf.json")
+
+    with open("hf.json", "rb") as f:
+        data = json.loads(f.read())["model"]
+        vocab = data["vocab"]
+        vocab = {v: k.replace("Ġ", " ").encode("utf-8") for k, v in vocab.items()}
+        merges = data["merges"]
+        merges = [(p1.replace("Ġ", " ").encode("utf-8"), p2.replace("Ġ", " ").encode("utf-8")) for p1, p2 in merges]
+        # print(vocab)
+        print("merges:", len(merges))
+        print("vocab:", len(vocab))
+        return vocab, merges
+
+
+# use_hf_tokenizer()

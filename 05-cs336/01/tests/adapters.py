@@ -591,5 +591,5 @@ def run_train_bpe(
                 representing that <token1> was merged with <token2>.
                 Merges are ordered by order of creation.
     """
-    # return train_tokenizer.train_tokenizer(input_path, vocab_size, special_tokens)
     return train_tokenizer.train_tokenizer(input_path, vocab_size, special_tokens)
+    # return train_tokenizer.use_hf_tokenizer(input_path, vocab_size, special_tokens)
