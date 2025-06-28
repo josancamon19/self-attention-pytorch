@@ -1,8 +1,13 @@
+import torch
 from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
 from transformers import GPT2Tokenizer
 from cs336_basics.transformer import Transformer
 from torch.optim import AdamW
-from torch.nn import CrossEntropyLoss
+import torch.nn.functional as F
+import os
+
+os.makedirs("./models", exist_ok=True)
 
 
 class PretrainDataset(Dataset):
@@ -42,36 +47,62 @@ def train():
     max_sequence_length = 1024
     batch_size = 16
     embedding_dim = 128
+    num_layers = 2
+    num_heads = 8
 
-    dataset = PretrainDataset(tokenizer, "data/owt_valid.txt", max_sequence_length)
-    dataloader = DataLoader(
-        dataset,
-        batch_size,
-        shuffle=True,
-        collate_fn=dataset.collate_fn,
-        pin_memory=True,
+    train_dataset = PretrainDataset(tokenizer, "data/owt_train.txt", max_sequence_length)
+    valid_dataset = PretrainDataset(tokenizer, "data/owt_valid.txt", max_sequence_length)
+    train_dataloader = DataLoader(
+        train_dataset, batch_size, shuffle=True, collate_fn=train_dataset.collate_fn, pin_memory=True
     )
-    model = Transformer(tokenizer.vocab_size, max_sequence_length, embedding_dim, 2, 8)
-    model.train()
+    valid_dataloader = DataLoader(
+        valid_dataset, batch_size, shuffle=False, collate_fn=valid_dataset.collate_fn, pin_memory=True
+    )
+    model = Transformer(tokenizer.vocab_size, max_sequence_length, embedding_dim, num_layers, num_heads)
 
     epochs = 10
-    loss_fn = CrossEntropyLoss()
     optim = AdamW(model.parameters(), lr=1e-4, weight_decay=0.01)
-    for _ in range(epochs):
-        for batch in dataloader:
-            input_ids = batch["input_ids"][:, 1:]
-            labels = batch["input_ids"][:, :-1]  # better way to slice
-            # print("input_ids.shape, labels.shape:", input_ids.shape, labels.shape)
-            attention_mask = batch["attention_mask"][:, 1:]
-            output = model(input_ids, attention_mask)
-            output_flatten = output.view(-1, output.shape[-1])
-            labels = labels.contiguous().view(-1)
-            # print("output, output_flatten, labels:", output.shape, output_flatten.shape, labels.shape)
-            loss = loss_fn(output_flatten, labels)
+
+    def compute_inputs_loss(batch):
+        input_ids = batch["input_ids"][:, :-1]
+        labels = batch["input_ids"][:, 1:]  # better way to slice
+        # print("input_ids.shape, labels.shape:", input_ids.shape, labels.shape)
+        attention_mask = batch["attention_mask"][:, :-1]
+        output = model(input_ids, attention_mask)
+        output_flatten = output.view(-1, output.shape[-1])
+        labels = labels.contiguous().view(-1)
+        # print("output, output_flatten, labels:", output.shape, output_flatten.shape, labels.shape)
+        return F.cross_entropy(output_flatten, labels)
+
+    best_valid_loss = float("inf")
+
+    for i in range(epochs):
+        train_loss = 0
+        model.train()
+
+        for batch in tqdm(train_dataloader, desc=f"train-epoch {i + 1}"):
+            optim.zero_grad()
+            loss = compute_inputs_loss(batch)
+            print("loss:", loss.item())
+            train_loss += loss.item()
             loss.backward()
             optim.step()
-            model.zero_grad()
-            break
+
+        train_loss = train_loss / len(train_dataloader)
+        print(f"epoch {i + 1} train_loss: {train_loss}")
+
+        valid_loss = 0
+        model.eval()
+        with torch.inference_mode():
+            for batch in tqdm(valid_dataloader, desc=f"valid-epoch {i + 1}"):
+                valid_loss += compute_inputs_loss(batch).item()
+
+        valid_loss = valid_loss / len(valid_dataloader)
+        print(f"epoch {i + 1} valid_loss: {valid_loss}")
+        if valid_loss < best_valid_loss:
+            best_valid_loss = valid_loss
+            data = {"model": model.state_dict(), "optimizer": optim.state_dict()}
+            torch.save(data, f"./models/gpt2-epoch-{i + 1}.pt")
 
 
 train()
