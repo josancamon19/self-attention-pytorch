@@ -151,20 +151,20 @@ class Transformer(nn.Module):
         return output  # output logits
 
 
-tokenizer = GPT2Tokenizer.from_pretrained("openai-community/gpt2")
-max_sequence_length = 100
-embedding_dim = 128
-num_layers = 1
-num_heads = 1
+# tokenizer = GPT2Tokenizer.from_pretrained("openai-community/gpt2")
+# max_sequence_length = 100
+# embedding_dim = 128
+# num_layers = 1
+# num_heads = 1
 
-tokenizer.pad_token = "[PAD]"
-tokenized = tokenizer(
-    ["Hi there, this is a test", "hey"],
-    return_tensors="pt",
-    padding=True,
-    truncation=True,
-)
-print(f"input:\n{tokenized['input_ids']}")
-print(tokenized["attention_mask"])
-tf = Transformer(tokenizer.vocab_size, max_sequence_length, embedding_dim, num_layers, num_heads)
-prob_dist = tf(tokenized["input_ids"], tokenized["attention_mask"])
+# tokenizer.pad_token = "[PAD]"
+# tokenized = tokenizer(
+#     ["Hi there, this is a test", "hey"],
+#     return_tensors="pt",
+#     padding=True,
+#     truncation=True,
+# )
+# print(f"input:\n{tokenized['input_ids']}")
+# print(tokenized["attention_mask"])
+# tf = Transformer(tokenizer.vocab_size, max_sequence_length, embedding_dim, num_layers, num_heads)
+# prob_dist = tf(tokenized["input_ids"], tokenized["attention_mask"])
