@@ -35,40 +35,136 @@ class EmbeddingLayer(nn.Module):
 
 
 def get_positional_encodings(embed_dim, max_positions=3):
+    # TODO: get in mored etail
     positions = torch.arange(max_positions).unsqueeze(1)
+    # print(positions)
     dim_indices = torch.arange(0, embed_dim, 2)
+    # print(dim_indices)
     div_term = 10000 ** (dim_indices / embed_dim)
+    # print(div_term)
+    # print(positions / div_term)
 
-    # at every position, compute sin/cos
-    pe = torch.zeros((max_positions, embed_dim))
-    pe[:, 0::2] = torch.sin(positions / div_term[::2])
-    pe[:, 1::2] = torch.cos(positions / div_term[1::2])
-    print(pe)
+    pe = torch.empty((max_positions, embed_dim))
+    pe[:, 0::2] = torch.sin(positions / div_term)
+    pe[:, 1::2] = torch.cos(positions / div_term)
+    # print(pe)
     return pe
 
 
-get_positional_encodings(4, 5)
+# get_positional_encodings(6, 5)
+
+embedding_dim = 128
+sequence_length = 5
+
+seq = torch.tensor([25, 32, 40, 41, 41])
+# TODO: padding mask
+emb = EmbeddingLayer(1000, embedding_dim)
+pos_enc = get_positional_encodings(embedding_dim, 100)
+seq_batched = torch.stack([seq, seq, seq])
+emb_pos_enc = emb(seq) + pos_enc[: len(seq)]
+# print(emb_pos_enc.shape) # 5, embedding_dim
+emb_pos_enc = emb(seq_batched) + pos_enc[: len(seq)]
+print("emb_pos_enc.shape:", emb_pos_enc.shape)  # 3, 5, embedding_dim
 
 
 class SelfAttention(nn.Module):
-    def __init__(self, batch_size, embed_dim, head_count):
+    def __init__(self, embedding_dim, num_heads):
         super().__init__()
-        self.Q = Parameter(nn.init.xavier_uniform(torch.zeros((batch_size,))))
-        self.K = Parameter()
-        self.V = Parameter()
+        head_size = embedding_dim // num_heads
+        shape = (embedding_dim, head_size)
+        # print("SelfAttention.__init__:", shape)
+        self.Q = Parameter(torch.zeros(shape))
+        self.K = Parameter(torch.zeros(shape))
+        self.V = Parameter(torch.zeros(shape))
 
     def forward(self, x):
-        q = self.Q @ x
-        k = self.K @ x
-        v = self.V @ x
+        # batch, seq_length, embedding_dim
+        q = x @ self.Q
+        k = x @ self.K
+        v = x @ self.V
 
-        attention_scores = torch.matmul(q, k)
+        # TODO: Causal Mask
+        # print("SelfAttention.forward q.shape:", q.shape)
+        attention_scores = q @ k.transpose(1, 2)
+        # print("SelfAttention.forward attention_scores:", attention_scores.shape)
         attention_weights = torch.softmax(attention_scores / x.shape[-1], dim=-1)
+        # print("SelfAttention.forward attention_weights:", attention_weights.shape)
+        output = attention_weights @ v
+        # print("SelfAttention.forward output:", output.shape)
+        return output
 
-        return attention_weights @ v
+
+# sa = SelfAttention(128, 8)
+# sa(emb_pos_enc)
+
+
+class MultiHeadSelfAttention(nn.Module):
+    def __init__(self, embedding_dim, num_heads):
+        super().__init__()
+        # TODO: No need for SelfAttention block, just the other one is more annoying on dimensions, use this one for now
+        self.attention = nn.Sequential(*[SelfAttention(embedding_dim, num_heads) for _ in range(num_heads)])
+        self.W_O = nn.Parameter(torch.zeros((embedding_dim, embedding_dim)))
+
+    def forward(self, x):
+        # print(x.shape)
+        output = [head(x) for head in self.attention]
+        output = torch.cat(output, dim=-1)
+        wo = output @ self.W_O
+        print("MultiHeadSelfAttention.forward wo.shape:", wo.shape)
+        return wo
+
+
+mhsa = MultiHeadSelfAttention(embedding_dim, 8)
+mhsa(emb_pos_enc)
+
+
+class TransformerBlock(nn.Module):
+    def __init__(self, embedding_dim, num_heads):
+        super().__init__()
+        self.mhsa = MultiHeadSelfAttention(embedding_dim, num_heads)
+        #  3,5,128
+        # pass each seq input through a ffn, `128, 128`?
+        self.mlp = nn.Parameter(torch.zeros((embedding_dim, embedding_dim)))
+
+    def forward(self, x):
+        # TODO: normalize
+        attention = self.mhsa(x) + x
+        # TODO: normalize
+        output = attention @ self.mlp + x
+        return output
+
+
+# block = TransformerBlock(embedding_dim, 8)
+# block(emb_pos_enc)
 
 
 class Transformer(nn.Module):
-    def __init__(self):
+    def __init__(
+        self,
+        vocab_size: int,
+        max_sequence_length: int,
+        embedding_dim: int,
+        num_layers: int,
+        num_heads: int,
+    ):
         super().__init__()
-        pass
+        self.embeddings = EmbeddingLayer(vocab_size, embedding_dim)
+        self.pe = get_positional_encodings(embedding_dim, max_sequence_length)
+        print(self.pe.shape)
+        self.blocks = [MultiHeadSelfAttention(embedding_dim, num_heads) for _ in range(num_layers)]
+        # norm
+        self.output = nn.Parameter(torch.zeros(embedding_dim, vocab_size))
+
+    def forward(self, input_ids):
+        print(self.pe[: len(input_ids), :].shape)
+        tokens = self.embeddings(input_ids) + self.pe[: input_ids.shape[1], :]
+        for block in self.blocks:
+            tokens = block(tokens)
+
+        output = tokens @ self.output
+        print("output.shape:", output.shape)
+        return torch.softmax(output, dim=-1)
+
+
+tf = Transformer(1000, 100, embedding_dim, 2, 8)
+prob_dist = tf(seq_batched)
