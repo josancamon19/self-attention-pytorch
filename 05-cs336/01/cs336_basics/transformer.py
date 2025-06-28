@@ -87,7 +87,7 @@ class MultiHeadSelfAttention(nn.Module):
         output = [head(x, padding_mask) for head in self.attention]
         output = torch.cat(output, dim=-1)
         wo = output @ self.W_O
-        print("MultiHeadSelfAttention.forward wo.shape:", wo.shape)
+        # print("MultiHeadSelfAttention.forward wo.shape:", wo.shape)
         return wo
 
 
@@ -146,7 +146,7 @@ class Transformer(nn.Module):
 
         tokens = self.pre_output_norm(tokens)
         output = tokens @ self.output
-        print("Transformer.forward output.shape:", output.shape)
+        # print("Transformer.forward output.shape:", output.shape)
         # return torch.softmax(output, dim=-1)
         return output  # output logits
 
