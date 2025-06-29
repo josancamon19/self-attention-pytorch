@@ -13,10 +13,24 @@ os.makedirs("./models", exist_ok=True)
 class PretrainDataset(Dataset):
     def __init__(self, tokenizer: GPT2Tokenizer, dataset_path: str, max_sequence_length: int):
         self.samples = []
-        with open(dataset_path, "rb") as f:
-            self.samples = f.read().decode("utf-8", errors="ignore").split("<|endoftext|>")
-            # TODO: missing a lot of tokens when truncating, many > max sequence length
-
+        self.dataset_path = dataset_path
+        # with open(dataset_path, "rb") as f:
+        #     self.samples = f.read().decode("utf-8", errors="ignore").split("<|endoftext|>")
+        # TODO: missing a lot of tokens when truncating, many > max sequence length
+        with open(dataset_path, "r", encoding="utf-8", errors="ignore") as f:
+            current_pos = 0
+            for line in f:
+                if "<|endoftext|>" in line:
+                    parts = line.split("<|endoftext|>")
+                    for i, part in enumerate(parts[:-1]):  # Skip last empty part
+                        if part.strip():
+                            self.samples.append((current_pos, current_pos + len(part.encode("utf-8"))))
+                        current_pos += len(part.encode("utf-8")) + len(b"<|endoftext|>")
+                else:
+                    if line.strip():
+                        self.samples.append((current_pos, current_pos + len(line.encode("utf-8"))))
+                    current_pos += len(line.encode("utf-8"))
+        # print(f"found: {len(self.samples)}")
         self.tokenizer = tokenizer
         self.max_sequence_length = max_sequence_length
 
@@ -24,7 +38,12 @@ class PretrainDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        return self.samples[idx]
+        start_pos, end_pos = self.samples[idx]
+        with open(self.dataset_path, "r", encoding="utf-8", errors="ignore") as f:
+            f.seek(start_pos)
+            text = f.read(end_pos - start_pos)
+        return text.strip()
+        # return self.samples[idx]
 
     def collate_fn(self, batch: list[str]):
         tokenized = self.tokenizer(
