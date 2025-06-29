@@ -81,6 +81,7 @@ class MultiHeadSelfAttention(nn.Module):
         super().__init__()
         self.attention = nn.Sequential(*[SelfAttention(embedding_dim, num_heads) for _ in range(num_heads)])
         self.W_O = nn.Parameter(torch.zeros((embedding_dim, embedding_dim)))
+        nn.init.normal_(self.W_O, std=0.02)
 
     def forward(self, x, padding_mask):
         # print(x.shape)
