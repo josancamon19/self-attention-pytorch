@@ -78,15 +78,17 @@ def train():
         valid_dataset, batch_size, shuffle=False, collate_fn=valid_dataset.collate_fn, pin_memory=True
     )
     model = Transformer(tokenizer.vocab_size, max_sequence_length, embedding_dim, num_layers, num_heads)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
 
     epochs = 10
     optim = AdamW(model.parameters(), lr=1e-4, weight_decay=0.01)
 
     def compute_inputs_loss(batch):
-        input_ids = batch["input_ids"][:, :-1]
-        labels = batch["input_ids"][:, 1:]  # better way to slice
+        input_ids = batch["input_ids"][:, :-1].to(device)
+        labels = batch["input_ids"][:, 1:].to(device)  # better way to slice
         # print("input_ids.shape, labels.shape:", input_ids.shape, labels.shape)
-        attention_mask = batch["attention_mask"][:, :-1]
+        attention_mask = batch["attention_mask"][:, :-1].to(device)
         output = model(input_ids, attention_mask)
         output_flatten = output.view(-1, output.shape[-1])
         labels = labels.contiguous().view(-1)
