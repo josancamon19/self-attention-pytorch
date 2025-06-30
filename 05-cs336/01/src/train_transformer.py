@@ -136,11 +136,11 @@ def get_args():
     parser.add_argument("--embedding-dim", type=int, default=default_embedding_dim)
     parser.add_argument("--num-layers", type=int, default=default_num_layers)
     parser.add_argument("--num-attention-heads", type=int, default=default_num_attention_heads)
-    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("-v", "--verbose", action="store_true", default=False)
     return parser.parse_args()
 
 
-# TODO: train 30/40 min runtime, 1 epoch, 2.5 hours .-., is it because of tokenizer 52k instead of 10k
+# TODO: train 30/40 min runtime, 1 epoch, 2.5 hours .-., is it because of tokenizer 52k instead of 10k?
 # - overfit to single minibatch, is it working?
 # TODO: oblations logs, multi experiment parallel testing setup
 # - monitor activations norms, model, weights, gradients, - vanishing/exploding?

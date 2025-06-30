@@ -13,6 +13,7 @@ def initialize(text: str, special_tokens: list[str]):
     special_tokens = sorted(special_tokens, key=len, reverse=True)  # overlapping issue
     split_special_tokens = "|".join(re.escape(token) for token in special_tokens)
     strings = re.split(split_special_tokens, text)  # [:1]
+    print("initialize len(strings)", len(strings))
     PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
 
     pairs_count = defaultdict(int)
@@ -69,13 +70,6 @@ def get_max_priority_queue(priority_queue: list):
 @timeit
 @profile
 def update_pairs_count_after_merge(priority_queue, new_created_pairs_count, affected_pairs_count):
-    na_pair = (b"n", b"a")
-    # if na_pair in affected_pairs_count:
-    #     print("affected_pairs_count:", affected_pairs_count[na_pair])
-
-    # if na_pair in new_created_pairs_count:
-    #     print("new_created_pairs_count:", new_created_pairs_count[na_pair])
-
     for pair, count in new_created_pairs_count.items():
         priority_queue.append((-count, pair))
 
@@ -83,8 +77,6 @@ def update_pairs_count_after_merge(priority_queue, new_created_pairs_count, affe
         count, pair = -item[0], item[1]
         if pair in affected_pairs_count:
             new_count = -(count - affected_pairs_count[pair])
-            # if pair == na_pair:
-            #     print("affected_pairs_count: b'na'", count, -new_count)
             priority_queue[i] = (new_count, pair)
     heapq.heapify(priority_queue)
 
@@ -116,7 +108,7 @@ def train_tokenizer(
     while len(vocab) < target_vocab_size:
         pcount, pair = get_max_priority_queue(priority_queue)
         pair_bytes = pair[0] + pair[1]
-        print(f"merge {len(merges) + 1}:", pcount, pair)
+        # print(f"merge {len(merges) + 1}:", pcount, pair)
         merges.append(pair)
         vocab[len(vocab)] = pair_bytes
         vocab_set.add(pair_bytes)
@@ -134,61 +126,63 @@ def train_tokenizer(
 
             i = 0
             updated_split = []
+            # pair=n,a
+            # cases:
+            # - banana ✅
+            # - batmana ✅
+            # - nariz ✅
+            # - cornazon
+            # - nan
+            last_merge = False
             while i < len(split):
+                # i = 3
                 if i + 1 < len(split) and split[i] == pair[0] and split[i + 1] == pair[1]:
-                    updated_split.append(pair_bytes)
-                    affected_pairs_count[pair] += count
-                    i += 2
+                    updated_split.append(pair_bytes)  # na
+                    affected_pairs_count[pair] += count  # n,a (reduced)
+                    # shouldn't just be deleted(?)
+                    if i > 0:  # no
+                        affected_pairs_count[(split[i - 1], split[i])] += count
+                        new_pair = (updated_split[-2], updated_split[-1])
+                        new_created_pairs_count[new_pair] += count
+                        pairs_to_pretokens[new_pair].add(pretoken)
+
+                    last_merge = True
+                    i += 2  # i = 2
                 else:
+                    if last_merge:
+                        affected_pairs_count[(split[i - 1], split[i])] += count
+                        new_pair = (updated_split[-1], split[i])
+                        new_created_pairs_count[new_pair] += count
+                        pairs_to_pretokens[new_pair].add(pretoken)
+                        last_merge = False
+
                     updated_split.append(split[i])
                     i += 1
 
             pretokens_to_split[pretoken] = updated_split
-
-            for i in range(len(updated_split)):
-                if updated_split[i] == pair_bytes:
-                    if i > 0:
-                        old_pair = (updated_split[i - 1], pair[0])
-                        affected_pairs_count[old_pair] += count
-
-                        new_pair = (updated_split[i - 1], pair_bytes)
-                        new_created_pairs_count[new_pair] += count
-
-                        pairs_to_pretokens[new_pair].add(pretoken)
-
-                    if i + 1 < len(updated_split):
-                        old_pair = (pair[1], updated_split[i + 1])
-                        affected_pairs_count[old_pair] += count
-
-                        new_pair = (pair_bytes, updated_split[i + 1])
-                        new_created_pairs_count[new_pair] += count
-
-                        pairs_to_pretokens[new_pair].add(pretoken)
-
-        # if (b"n", b"a") in affected_pairs_count:
-        #     print(f"merge {len(merges) + 1}:", pcount, pair)
 
         update_pairs_count_after_merge(
             priority_queue,
             new_created_pairs_count,
             affected_pairs_count,
         )
+    # print("input_text_file:", input_text_file)
+    # merges_path = input_text_file.replace(".txt", "-merges.txt")
+    # vocab_path = input_text_file.replace(".txt", "-vocab.json")
 
-    merges_path = input_text_file.replace(".txt", "-merges.txt")
-    vocab_path = input_text_file.replace(".txt", "-vocab.json")
+    # with open(merges_path, "w") as f:
+    #     for merge in merges:
+    #         f.write(f"{merge[0]} {merge[1]}\n")
 
-    # Save merges as txt file
-    with open(merges_path, "w") as f:
-        for merge in merges:
-            f.write(f"{merge[0]} {merge[1]}\n")
-
-    with open(vocab_path, "w") as f:
-        json.dump(vocab, f, indent=2, default=str)
+    with open("merges.json", "w") as f:
+        json.dump(merges, f, indent=2, default=str)
+    # with open(vocab_path, "w") as f:
+    #     json.dump(vocab, f, indent=2, default=str)
     return vocab, merges
 
 
-train_tokenizer(input_text_file="data/TinyStoriesV2-GPT4-valid.txt", target_vocab_size=10000)
-print_execution_summary()
+# train_tokenizer(input_text_file="data/TinyStoriesV2-GPT4-train.txt", target_vocab_size=10000)
+# print_execution_summary()
 
 # data = "cs336_basics/sample_file.txt"
 # size = 270
