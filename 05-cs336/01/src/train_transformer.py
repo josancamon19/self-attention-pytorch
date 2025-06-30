@@ -1,3 +1,5 @@
+import argparse
+import math
 import torch
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
@@ -73,40 +75,129 @@ def load_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, pa
     optimizer.load_state_dict(saved["optimizer"])
 
 
+def cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, step):
+    # TODO: deeper understanding
+    if step < warmup_steps:
+        return (step / warmup_steps) * lr_max
+    elif warmup_steps <= step <= annealing_steps:
+        cos = math.cos(math.pi * (step - warmup_steps) / (annealing_steps - warmup_steps))
+        return lr_min + ((1 + cos) / 2) * (lr_max - lr_min)
+    else:  # step > annealing_steps
+        return lr_min
+
+
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", type=str, choices=["tinystories", "owt"], default="tinystories")
+
+    args, _ = parser.parse_known_args()
+
+    if args.dataset == "tinystories":
+        default_train_dataset = "data/TinyStoriesV2-GPT4-train.txt"
+        default_valid_dataset = "data/TinyStoriesV2-GPT4-valid.txt"
+        default_epochs = 20
+        default_lr_min = 1e-5
+        default_lr_warmup = 200
+        default_lr_max = 3e-4
+        default_batch_size = 32
+        default_seq_length = 256
+        default_embedding_dim = 256
+        default_num_layers = 4
+        default_num_attention_heads = 8
+    else:  # owt
+        default_train_dataset = "data/owt_train.txt"
+        default_valid_dataset = "data/owt_valid.txt"
+        default_epochs = 3
+        default_lr_min = 1e-5
+        default_lr_warmup = 2000
+        default_lr_max = 1e-3
+        default_batch_size = 16
+        default_seq_length = 1024
+        default_embedding_dim = 512
+        default_num_layers = 8
+        default_num_attention_heads = 8
+
+    parser.add_argument("--train-dataset-path", type=str, default=default_train_dataset)
+    parser.add_argument("--valid-dataset-path", type=str, default=default_valid_dataset)
+    parser.add_argument("--epochs", type=float, default=default_epochs)
+    parser.add_argument("--lr-min", type=float, default=default_lr_min)
+    parser.add_argument("--lr-warmup", type=float, default=default_lr_warmup)
+    parser.add_argument("--lr-max", type=float, default=default_lr_max)
+    parser.add_argument("--batch-size", type=int, default=default_batch_size)
+    parser.add_argument("--seq-length", type=int, default=default_seq_length)
+    parser.add_argument("--embedding-dim", type=int, default=default_embedding_dim)
+    parser.add_argument("--num-layers", type=int, default=default_num_layers)
+    parser.add_argument("--num-attention-heads", type=int, default=default_num_attention_heads)
+    parser.add_argument("-v", "--verbose", action="store_true")
+    return parser.parse_args()
+
+
+# TODO: hyperparameter tuning.
+# TODO: use tokenizer (?)
+# TODO: train 30/40 min runtime, 1 epoch
+# - overfit to single minibatch, is it working?
+# - monitor activations norms, model, weights, gradients, - vanishing/exploding?
+# - lr experiments tuning
+# TODO: batch size variations, 2 H100, try new lr's as well, explain reasoning
+# TODO: inference
+# TODO: ablations
+# - layer norm (no/pre/post)
+# - pos embeddings (sinusoidal/no/rope)
+# - swiglu silu relu
+# TODO: train on open web text, get best with hyper param tuning.
+# TODO: leaderboard, 1.5h H100s
+# TODO: Muon
+
+
 def train():
     tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
     tokenizer.pad_token = tokenizer.eos_token
+    args = get_args()
 
-    max_sequence_length = 1024
-    batch_size = 16
-    embedding_dim = 128
-    num_layers = 2
-    num_heads = 8
-    use_checkpoint, load_at_epoch = True, 48
-
-    train_dataset = PretrainDataset(tokenizer, "data/owt_train.txt", max_sequence_length, 16)
-    valid_dataset = PretrainDataset(tokenizer, "data/owt_valid.txt", max_sequence_length, 16)
+    train_dataset = PretrainDataset(tokenizer, args.train_dataset_path, args.seq_length)
+    valid_dataset = PretrainDataset(tokenizer, args.valid_dataset_path, args.seq_length)
     train_dataloader = DataLoader(
-        train_dataset, batch_size, shuffle=True, collate_fn=train_dataset.collate_fn, pin_memory=True
+        train_dataset,
+        args.batch_size,
+        shuffle=True,
+        collate_fn=train_dataset.collate_fn,
+        pin_memory=True,
     )
     valid_dataloader = DataLoader(
-        valid_dataset, batch_size, shuffle=False, collate_fn=valid_dataset.collate_fn, pin_memory=True
+        valid_dataset,
+        args.batch_size,
+        shuffle=False,
+        collate_fn=valid_dataset.collate_fn,
+        pin_memory=True,
     )
-    model = Transformer(tokenizer.vocab_size, max_sequence_length, embedding_dim, num_layers, num_heads)
+    model = Transformer(
+        tokenizer.vocab_size,
+        args.seq_length,
+        args.embedding_dim,
+        args.num_layers,
+        args.num_attention_heads,
+    )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
-    lr = 1e-4
+    epochs = args.epochs
+
+    # lr = 1e-4
+    lr_min = args.lr_min
+    lr_max = args.lr_max
+    warmup_steps = 1000
+    annealing_steps = len(train_dataloader) * epochs
+
     weight_decay = 0.01
-    epochs = 100
 
     run = wandb.init(
         project="cs336-assignment-01",
-        config={"learning_rate": lr, "weight_decay": weight_decay, "epochs": epochs},
+        config={"learning_rate": lr_min, "weight_decay": weight_decay, "epochs": epochs},
     )
 
-    optim = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optim = AdamW(model.parameters(), lr=lr_min, weight_decay=weight_decay)
 
+    use_checkpoint, load_at_epoch = False, 48
     if use_checkpoint:
         # TODO: load wandb later. (continue it)
         model, optim = load_checkpoint(model, optim, f"./.models/gpt2-epoch-{load_at_epoch}.pt")
@@ -124,10 +215,10 @@ def train():
 
     best_valid_loss = float("inf")
 
+    steps = 0
     for i in range(epochs):
         train_loss = 0
         model.train()
-
         for batch in tqdm(train_dataloader, desc=f"train-epoch {i + 1}"):
             optim.zero_grad()
             loss = compute_inputs_loss(batch)
@@ -135,7 +226,14 @@ def train():
             loss.backward()
             # TODO: implement manually
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            lr = cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, steps)
+            for param_group in optim.param_groups:
+                param_group["lr"] = lr
             optim.step()
+            steps += 1
+
+            if steps % 20 == 0:
+                run.log({"lr": lr}, step=steps)
 
         train_loss = train_loss / len(train_dataloader)
         print(f"epoch {i + 1} train_loss: {train_loss}")
@@ -152,7 +250,7 @@ def train():
             best_valid_loss = valid_loss
             save_checkpoint(model, optim, f"./.models/gpt2-epoch-{i + 1}.pt")
 
-        run.log({"train_loss": train_loss, "valid_loss": valid_loss})
+        run.log({"train_loss": train_loss, "valid_loss": valid_loss, "steps": steps})
 
 
 train()

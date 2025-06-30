@@ -141,8 +141,10 @@ def softmax(tensor: torch.Tensor, dim: int = 0):
 # TODO: improve general code structure
 
 # TODO: SGD
-# TODO: AdamW, adamAccounting
+# TODO: AdamW
 # TODO: lrScheduler, gradient clipping
+# TODO: implement cross entropy loss
+# TODO: params/training accounting math
 # TODO: inference
 # TODO: Read the actual document
 # TODO: train, Tiny
