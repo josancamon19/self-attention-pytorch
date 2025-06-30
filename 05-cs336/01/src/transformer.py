@@ -117,7 +117,9 @@ class PosWiseFFN(nn.Module):
     # as all else, to divine benevolence
     def __init__(self, embedding_dim: int):
         super().__init__()
-        dff = int(8 * embedding_dim / 3)
+        # round to 64 closest value
+        value = 8 * embedding_dim / 3
+        dff = round(value / 64) * 64
         self.W1 = Linear(embedding_dim, dff)
         self.W2 = Linear(dff, embedding_dim)
         self.W3 = Linear(embedding_dim, dff)
