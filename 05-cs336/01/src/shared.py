@@ -98,8 +98,3 @@ def find_chunk_boundaries(file: BinaryIO, desired_num_chunks: int, split_special
 
     # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
     return sorted(set(chunk_boundaries))
-
-
-def init_vocabulary():
-    vocab = {i: bytes([i]) for i in range(256)}
-    return vocab, set(vocab.values())

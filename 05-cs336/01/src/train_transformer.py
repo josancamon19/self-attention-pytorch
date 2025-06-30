@@ -99,11 +99,12 @@ def get_args():
         default_lr_min = 1e-5
         default_lr_warmup = 200
         default_lr_max = 3e-4
+        default_adam_weight_decay = 0.1
         default_batch_size = 32
         default_seq_length = 256
         default_embedding_dim = 256
         default_num_layers = 4
-        default_num_attention_heads = 8
+        default_num_attention_heads = 16
     else:  # owt
         default_train_dataset = "data/owt_train.txt"
         default_valid_dataset = "data/owt_valid.txt"
@@ -111,6 +112,7 @@ def get_args():
         default_lr_min = 1e-5
         default_lr_warmup = 2000
         default_lr_max = 1e-3
+        default_adam_weight_decay = 0.01
         default_batch_size = 16
         default_seq_length = 1024
         default_embedding_dim = 512
@@ -121,8 +123,9 @@ def get_args():
     parser.add_argument("--valid-dataset-path", type=str, default=default_valid_dataset)
     parser.add_argument("--epochs", type=float, default=default_epochs)
     parser.add_argument("--lr-min", type=float, default=default_lr_min)
-    parser.add_argument("--lr-warmup", type=float, default=default_lr_warmup)
+    parser.add_argument("--lr-warmup-steps", type=float, default=default_lr_warmup)
     parser.add_argument("--lr-max", type=float, default=default_lr_max)
+    parser.add_argument("--adam-weight-decay", type=float, default=default_adam_weight_decay)
     parser.add_argument("--batch-size", type=int, default=default_batch_size)
     parser.add_argument("--seq-length", type=int, default=default_seq_length)
     parser.add_argument("--embedding-dim", type=int, default=default_embedding_dim)
@@ -132,8 +135,6 @@ def get_args():
     return parser.parse_args()
 
 
-# TODO: hyperparameter tuning.
-# TODO: use tokenizer (?)
 # TODO: train 30/40 min runtime, 1 epoch
 # - overfit to single minibatch, is it working?
 # - monitor activations norms, model, weights, gradients, - vanishing/exploding?
@@ -151,6 +152,7 @@ def get_args():
 
 def train():
     tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+    # TODO: use tokenizer.py, cause the vocab_size to train is given
     tokenizer.pad_token = tokenizer.eos_token
     args = get_args()
 
@@ -182,24 +184,22 @@ def train():
 
     epochs = args.epochs
 
-    # lr = 1e-4
     lr_min = args.lr_min
     lr_max = args.lr_max
-    warmup_steps = 1000
+    warmup_steps = args.lr_warmup_steps
     annealing_steps = len(train_dataloader) * epochs
 
-    weight_decay = 0.01
+    run = wandb.init(project="cs336-assignment-01", config=args)
 
-    run = wandb.init(
-        project="cs336-assignment-01",
-        config={"learning_rate": lr_min, "weight_decay": weight_decay, "epochs": epochs},
+    optim = AdamW(
+        model.parameters(),
+        lr=lr_min,
+        weight_decay=args.adam_weight_decay,
     )
 
-    optim = AdamW(model.parameters(), lr=lr_min, weight_decay=weight_decay)
-
-    use_checkpoint, load_at_epoch = False, 48
+    use_checkpoint, load_at_epoch = False, 0
+    # TODO: load wandb later. (continue it)
     if use_checkpoint:
-        # TODO: load wandb later. (continue it)
         model, optim = load_checkpoint(model, optim, f"./.models/gpt2-epoch-{load_at_epoch}.pt")
 
     def compute_inputs_loss(batch):
