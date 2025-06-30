@@ -5,6 +5,7 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from transformers import GPT2Tokenizer
 from src.transformer import Transformer
+from src.tokenizer import Tokenizer
 from torch.optim import AdamW
 import torch.nn.functional as F
 import os
@@ -102,7 +103,7 @@ def get_args():
         default_adam_weight_decay = 0.1
         default_batch_size = 32
         default_seq_length = 256
-        default_embedding_dim = 256
+        default_embedding_dim = 512  # gpt suggests 256
         default_num_layers = 4
         default_num_attention_heads = 16
     else:  # owt
@@ -119,11 +120,15 @@ def get_args():
         default_num_layers = 8
         default_num_attention_heads = 8
 
+    parser.add_argument("--hf-tokenizer", type=bool, action="store_true", default=False)
+    parser.add_argument("--tokenizer-vocab-path", type=str)
+    parser.add_argument("--tokenizer-merges-path", type=str)
+
     parser.add_argument("--train-dataset-path", type=str, default=default_train_dataset)
     parser.add_argument("--valid-dataset-path", type=str, default=default_valid_dataset)
-    parser.add_argument("--epochs", type=float, default=default_epochs)
+    parser.add_argument("--epochs", type=int, default=default_epochs)
     parser.add_argument("--lr-min", type=float, default=default_lr_min)
-    parser.add_argument("--lr-warmup-steps", type=float, default=default_lr_warmup)
+    parser.add_argument("--lr-warmup-steps", type=int, default=default_lr_warmup)
     parser.add_argument("--lr-max", type=float, default=default_lr_max)
     parser.add_argument("--adam-weight-decay", type=float, default=default_adam_weight_decay)
     parser.add_argument("--batch-size", type=int, default=default_batch_size)
@@ -135,11 +140,13 @@ def get_args():
     return parser.parse_args()
 
 
-# TODO: train 30/40 min runtime, 1 epoch
+# TODO: train 30/40 min runtime, 1 epoch, 2.5 hours .-., is it because of tokenizer 52k instead of 10k
 # - overfit to single minibatch, is it working?
+# TODO: oblations logs, multi experiment parallel testing setup
 # - monitor activations norms, model, weights, gradients, - vanishing/exploding?
 # - lr experiments tuning
 # TODO: batch size variations, 2 H100, try new lr's as well, explain reasoning
+# - - can do ddp? or zero stage 2? cause 2 GPU's?, what happens when you just have 2 gpu's?
 # TODO: inference
 # TODO: ablations
 # - layer norm (no/pre/post)
@@ -151,10 +158,14 @@ def get_args():
 
 
 def train():
-    tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
-    # TODO: use tokenizer.py, cause the vocab_size to train is given
-    tokenizer.pad_token = tokenizer.eos_token
     args = get_args()
+    if args.hf_tokenizer:
+        tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+        tokenizer.pad_token = tokenizer.eos_token
+    else:
+        # TODO: use tokenizer.py
+        tokenizer = Tokenizer.from_files(args.tokenizer_vocab_path, args.tokenizer_merges_path, ["<|endoftext|>"])
+        raise NotImplementedError()
 
     train_dataset = PretrainDataset(tokenizer, args.train_dataset_path, args.seq_length)
     valid_dataset = PretrainDataset(tokenizer, args.valid_dataset_path, args.seq_length)
@@ -189,7 +200,7 @@ def train():
     warmup_steps = args.lr_warmup_steps
     annealing_steps = len(train_dataloader) * epochs
 
-    run = wandb.init(project="cs336-assignment-01", config=args)
+    run = wandb.init(project="cs336-assignment-01", config=vars(args))
 
     optim = AdamW(
         model.parameters(),
@@ -199,8 +210,9 @@ def train():
 
     use_checkpoint, load_at_epoch = False, 0
     # TODO: load wandb later. (continue it)
+    # TODO: cursor linter is trash, why?
     if use_checkpoint:
-        model, optim = load_checkpoint(model, optim, f"./.models/gpt2-epoch-{load_at_epoch}.pt")
+        load_checkpoint(model, optim, f"./.models/gpt2-epoch-{load_at_epoch}.pt")
 
     def compute_inputs_loss(batch):
         input_ids = batch["input_ids"][:, :-1].to(device)
