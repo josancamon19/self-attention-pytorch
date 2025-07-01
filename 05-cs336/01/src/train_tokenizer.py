@@ -2,6 +2,7 @@ from collections import defaultdict
 import json
 import os
 from line_profiler import profile
+from tqdm import tqdm
 from src.shared import timeit, print_execution_summary
 import regex as re
 import heapq
@@ -87,6 +88,7 @@ def train_tokenizer(
     input_text_file: str = "data/TinyStoriesV2-GPT4-valid.txt",
     target_vocab_size: int = 300,
     special_tokens: list[str] = ["<|endoftext|>"],
+    save_results: bool = False,
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     with open(input_text_file, "rb") as f:
         text = f.read().decode("utf-8", errors="ignore")
@@ -105,6 +107,7 @@ def train_tokenizer(
 
     # print("priority_queue:", priority_queue)
 
+    pbar = tqdm(total=target_vocab_size - len(vocab), desc="Training Tokenizer")
     while len(vocab) < target_vocab_size:
         pcount, pair = get_max_priority_queue(priority_queue)
         pair_bytes = pair[0] + pair[1]
@@ -118,36 +121,26 @@ def train_tokenizer(
 
         #  ==== MERGE ====
         matching_pretokens = pairs_to_pretokens[pair]
+        affected_pairs_count[pair] = pcount  # remove it all
 
         for pretoken in matching_pretokens:
-            # TODO: why not using matching_pretokens again? wtf
-            split = pretokens_to_split[pretoken]  # [b"h", b"i"]
+            split = pretokens_to_split[pretoken]
             count = pretokens_counts[pretoken]
 
             i = 0
             updated_split = []
-            # pair=n,a
-            # cases:
-            # - banana ✅
-            # - batmana ✅
-            # - nariz ✅
-            # - cornazon
-            # - nan
             last_merge = False
             while i < len(split):
-                # i = 3
                 if i + 1 < len(split) and split[i] == pair[0] and split[i + 1] == pair[1]:
-                    updated_split.append(pair_bytes)  # na
-                    affected_pairs_count[pair] += count  # n,a (reduced)
-                    # shouldn't just be deleted(?)
-                    if i > 0:  # no
+                    updated_split.append(pair_bytes)
+                    if i > 0:
                         affected_pairs_count[(split[i - 1], split[i])] += count
                         new_pair = (updated_split[-2], updated_split[-1])
                         new_created_pairs_count[new_pair] += count
                         pairs_to_pretokens[new_pair].add(pretoken)
 
                     last_merge = True
-                    i += 2  # i = 2
+                    i += 2
                 else:
                     if last_merge:
                         affected_pairs_count[(split[i - 1], split[i])] += count
@@ -166,66 +159,19 @@ def train_tokenizer(
             new_created_pairs_count,
             affected_pairs_count,
         )
-    # print("input_text_file:", input_text_file)
-    # merges_path = input_text_file.replace(".txt", "-merges.txt")
-    # vocab_path = input_text_file.replace(".txt", "-vocab.json")
+        pbar.update(1)
+    pbar.close()
 
-    # with open(merges_path, "w") as f:
-    #     for merge in merges:
-    #         f.write(f"{merge[0]} {merge[1]}\n")
+    if save_results:
+        merges_path = input_text_file.replace(".txt", "-merges.json")
+        vocab_path = input_text_file.replace(".txt", "-vocab.json")
+        with open(merges_path, "w") as f:
+            json.dump(merges, f, indent=2, default=str)
 
-    with open("merges.json", "w") as f:
-        json.dump(merges, f, indent=2, default=str)
-    # with open(vocab_path, "w") as f:
-    #     json.dump(vocab, f, indent=2, default=str)
+        with open(vocab_path, "w") as f:
+            json.dump(vocab, f, indent=2, default=str)
     return vocab, merges
 
 
-# train_tokenizer(input_text_file="data/TinyStoriesV2-GPT4-train.txt", target_vocab_size=10000)
-# print_execution_summary()
-
-# data = "cs336_basics/sample_file.txt"
-# size = 270
-# vocab, merges1 = train_tokenizer(data, size)
-# print([p1 + p2 for p1, p2 in merges1], len(vocab), len(merges1))
-
-
-from tokenizers.trainers import BpeTrainer  # noqa: E402
-from tokenizers.pre_tokenizers import ByteLevel  # noqa: E402
-from tokenizers import Tokenizer  # noqa: E402
-from tokenizers.models import BPE  # noqa: E402
-
-
-def use_hf_tokenizer(
-    input_text_file: str = "data/TinyStoriesV2-GPT4-valid.txt",
-    target_vocab_size: int = 300,
-    special_tokens: list[str] = ["<|endoftext|>"],
-):
-    input_text_file = "tests/fixtures/corpus.en"
-    print("use_hf_tokenizer: ", input_text_file)
-
-    trainer = BpeTrainer(
-        special_tokens=special_tokens,
-        vocab_size=target_vocab_size,
-        # initial_alphabet=[chr(i) for i in range(256)],
-        show_progress=False,
-        min_frequency=2,
-    )
-    tokenizer = Tokenizer(BPE())
-    tokenizer.pre_tokenizer = ByteLevel()
-    tokenizer.train([input_text_file], trainer)
-    tokenizer.save("hf.json")
-
-    with open("hf.json", "rb") as f:
-        data = json.loads(f.read())["model"]
-        vocab = data["vocab"]
-        vocab = {v: k.replace("Ġ", " ").encode("utf-8") for k, v in vocab.items()}
-        merges = data["merges"]
-        merges = [(p1.replace("Ġ", " ").encode("utf-8"), p2.replace("Ġ", " ").encode("utf-8")) for p1, p2 in merges]
-        # print(vocab)
-        print("merges:", len(merges))
-        print("vocab:", len(vocab))
-        return vocab, merges
-
-
-# use_hf_tokenizer()
+train_tokenizer(input_text_file="data/TinyStoriesV2-GPT4-train.txt", target_vocab_size=10000, save_results=True)
+print_execution_summary()

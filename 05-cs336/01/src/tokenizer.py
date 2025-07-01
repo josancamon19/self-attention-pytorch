@@ -121,26 +121,20 @@ class Tokenizer:
 
     @classmethod
     def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
-        with open(vocab_filepath, "r") as f:
+        with open(vocab_filepath) as f:
             vocab = json.load(f)
 
         merges = []
+        with open(merges_filepath) as f:
+            merges = json.load(f)
+            merges = [(eval(b1), eval(b2)) for b1, b2 in merges]
 
-        with open(merges_filepath, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line and " " in line:
-                    parts = line.split(" ")
-                    assert len(parts) == 2
-                    # Convert merge pairs to bytes
-                    merge1 = parts[0].encode("utf-8")
-                    merge2 = parts[1].encode("utf-8")
-                    merges.append((merge1, merge2))
         return cls(vocab, merges, special_tokens)
 
 
+# Tokenizer.from_files("data/TinyStoriesV2-GPT4-valid-vocab.json", "data/TinyStoriesV2-GPT4-valid-merges.json")
+
 # TODO: parallelize encode
-# TODO: check difference with repeated characters on test_train_bpe
 # TODO: train on tinystories dataset, vocabsize 10k (store to disk)
 # TODO: profile the code
 # TODO: parallelize training

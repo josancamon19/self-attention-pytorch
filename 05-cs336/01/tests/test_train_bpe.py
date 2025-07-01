@@ -49,19 +49,19 @@ def test_train_bpe():
             )
             for merge_token_1, merge_token_2 in gpt2_reference_merges
         ]
-    print(f"Length of merges: {len(merges)}")
-    print(f"Length of reference_merges: {len(reference_merges)}")
+    # print(f"Length of merges: {len(merges)}")
+    # print(f"Length of reference_merges: {len(reference_merges)}")
 
     # Find differences between the two lists
-    if len(merges) != len(reference_merges):
-        print(f"Length mismatch! merges has {len(merges)} items, reference_merges has {len(reference_merges)} items")
-    else:
-        print("Lists have same length, checking for content differences...")
-        for i, (merge, ref_merge) in enumerate(zip(merges, reference_merges)):
-            if merge != ref_merge:
-                print(f"{i} yours={merge}, ref={ref_merge}")
-            else:
-                print(f"{i} yours={merge}, ref={ref_merge} ✅")
+    # if len(merges) != len(reference_merges):
+    #     print(f"Length mismatch! merges has {len(merges)} items, reference_merges has {len(reference_merges)} items")
+    # else:
+    #     print("Lists have same length, checking for content differences...")
+    #     for i, (merge, ref_merge) in enumerate(zip(merges, reference_merges)):
+    #         if merge != ref_merge:
+    #             print(f"{i} yours={merge}, ref={ref_merge}")
+    #         else:
+    #             print(f"{i} yours={merge}, ref={ref_merge} ✅")
     assert merges == reference_merges
 
     # Compare the vocab to the expected output vocab

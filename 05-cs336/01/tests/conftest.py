@@ -110,9 +110,9 @@ class Snapshot:
             expected_data = pickle.load(f)
 
         # Save expected data to JSON file for debugging/inspection
-        json_path = snapshot_path.with_suffix(".json")
-        with open(json_path, "w") as f:
-            json.dump(expected_data, f, indent=2, default=str)
+        # json_path = snapshot_path.with_suffix(".json")
+        # with open(json_path, "w") as f:
+        #     json.dump(expected_data, f, indent=2, default=str)
 
         if isinstance(actual, dict):
             for key in actual:
