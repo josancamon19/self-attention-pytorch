@@ -2,6 +2,8 @@ from collections.abc import Iterable, Iterator
 import regex as re
 import json
 
+import torch
+
 
 class Tokenizer:
     def __init__(
@@ -9,10 +11,12 @@ class Tokenizer:
         vocab: dict[int, bytes],
         merges: list[tuple[bytes, bytes]],
         special_tokens: list[str] | None = None,
+        padding_token: str = None,
     ):
-        # print(
-        #     f"[Tokenizer.__init__] vocab_size: {len(vocab)}, merges_size: {len(merges)}, special_tokens: {special_tokens}",
-        # )
+        print(
+            f"[Tokenizer.__init__] vocab_size: {len(vocab)}, "
+            f"merges_size: {len(merges)}, special_tokens: {special_tokens}, pad_token: {padding_token}",
+        )
         special_tokens = special_tokens or []
         special_tokens = sorted(special_tokens, key=len, reverse=True)
 
@@ -29,9 +33,44 @@ class Tokenizer:
         self.vocab = vocab
         self.merges = merges
         self.special_tokens = special_tokens or []
+        self.vocab_size = len(vocab)
+        self.pad_id = self.vocab_reversed[special_tokens[-1].encode("utf-8")] if special_tokens else None
         # --
         self.split_special_tokens = "|".join(re.escape(token) for token in self.special_tokens)
         self.PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
+
+    def encode_batched(
+        self,
+        batch: list[str],
+        truncation: bool = False,
+        max_sequence_length: int = 0,
+        padding: bool = True,
+    ):
+        encoded = []
+        max_length = 0
+        for item in batch:
+            if truncation and max_sequence_length:
+                item = item[: min(len(item), max_sequence_length)]
+            item_enc = self.encode(item)
+            if truncation and max_sequence_length:
+                item_enc = item_enc[: min(len(item), max_sequence_length)]
+
+            encoded.append(item_enc)
+            max_length = max(max_length, len(item_enc))
+
+        if padding:
+            for i in range(len(encoded)):
+                pad_count = max_length - len(encoded[i])
+                encoded[i] += [self.pad_id] * pad_count
+
+        attention_mask = []
+        for seq in encoded:
+            mask = [1 if token_id != self.pad_id else 0 for token_id in seq] if padding else [1] * len(seq)
+            attention_mask.append(mask)
+
+        input_ids = torch.tensor(encoded, dtype=torch.long)
+        attention_mask = torch.tensor(attention_mask, dtype=torch.long)
+        return {"input_ids": input_ids, "attention_mask": attention_mask}
 
     def encode(self, input_text: str) -> list[int]:
         # print("[Tokenizer.encode] input_text:", input_text)
@@ -120,9 +159,15 @@ class Tokenizer:
         return decoded
 
     @classmethod
-    def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
+    def from_files(
+        cls,
+        vocab_filepath,
+        merges_filepath,
+        special_tokens=None,
+    ):
         with open(vocab_filepath) as f:
             vocab = json.load(f)
+            vocab = {int(k): eval(v) for k, v in vocab.items()}
 
         merges = []
         with open(merges_filepath) as f:

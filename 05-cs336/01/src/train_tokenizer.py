@@ -173,5 +173,9 @@ def train_tokenizer(
     return vocab, merges
 
 
-train_tokenizer(input_text_file="data/TinyStoriesV2-GPT4-train.txt", target_vocab_size=10000, save_results=True)
-print_execution_summary()
+# train_tokenizer(input_text_file="data/TinyStoriesV2-GPT4-train.txt", target_vocab_size=10000, save_results=True)
+# print_execution_summary()
+
+# initialize 705 seconds
+# train_tokenizer 755 seconds
+# most expensive 95% is initialize, lol.

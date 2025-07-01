@@ -15,28 +15,44 @@ os.makedirs("./.models", exist_ok=True)
 
 
 class PretrainDataset(Dataset):
-    def __init__(self, tokenizer: GPT2Tokenizer, dataset_path: str, max_sequence_length: int, max_samples: int = None):
+    def __init__(
+        self,
+        tokenizer: GPT2Tokenizer | Tokenizer,
+        dataset_path: str,
+        max_sequence_length: int,
+        max_samples: int = None,
+    ):
         self.samples = []
         self.dataset_path = dataset_path
-        # with open(dataset_path, "rb") as f:
-        #     self.samples = f.read().decode("utf-8", errors="ignore").split("<|endoftext|>")
+        with open(dataset_path, "rb") as f:
+            self.samples = f.read().decode("utf-8", errors="ignore").split("<|endoftext|>")
+            self.samples = [s.strip() for s in self.samples]
+            print("len(samples):", len(self.samples))
+
         # TODO: missing a lot of tokens when truncating, many > max sequence length
-        with open(dataset_path, "r", encoding="utf-8", errors="ignore") as f:
-            current_pos = 0
-            for line in f:
-                if max_samples and len(self.samples) >= max_samples:
-                    break
-                if "<|endoftext|>" in line:
-                    parts = line.split("<|endoftext|>")
-                    for i, part in enumerate(parts[:-1]):  # Skip last empty part
-                        if part.strip():
-                            self.samples.append((current_pos, current_pos + len(part.encode("utf-8"))))
-                        current_pos += len(part.encode("utf-8")) + len(b"<|endoftext|>")
-                else:
-                    if line.strip():
-                        self.samples.append((current_pos, current_pos + len(line.encode("utf-8"))))
-                    current_pos += len(line.encode("utf-8"))
-        # print(f"found: {len(self.samples)}")
+        # with open(dataset_path, "r", encoding="utf-8", errors="ignore") as f:
+        #     current_pos = 0
+        #     buffer = ""
+        #     for line in f:
+        #         if max_samples and len(self.samples) >= max_samples:
+        #             break
+        #         buffer += line
+
+        #         while "<|endoftext|>" in buffer:
+        #             before, after = buffer.split("<|endoftext|>", 1)
+        #             if before.strip():
+        #                 start_pos = current_pos
+        #                 end_pos = current_pos + len(before.encode("utf-8"))
+        #                 self.samples.append((start_pos, end_pos))
+        #             current_pos += len(before.encode("utf-8")) + len(b"<|endoftext|>")
+        #             buffer = after
+
+        #     # Handle remaining buffer
+        #     if buffer.strip():
+        #         start_pos = current_pos
+        #         end_pos = current_pos + len(buffer.encode("utf-8"))
+        #         self.samples.append((start_pos, end_pos))
+
         self.tokenizer = tokenizer
         self.max_sequence_length = max_sequence_length
 
@@ -44,21 +60,29 @@ class PretrainDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        start_pos, end_pos = self.samples[idx]
-        with open(self.dataset_path, "r", encoding="utf-8", errors="ignore") as f:
-            f.seek(start_pos)
-            text = f.read(end_pos - start_pos)
-        return text.strip()
-        # return self.samples[idx]
+        # start_pos, end_pos = self.samples[idx]
+        # with open(self.dataset_path, encoding="utf-8", errors="ignore") as f:
+        #     f.seek(start_pos)
+        #     text = f.read(end_pos - start_pos)
+        # return text.strip()
+        return self.samples[idx]
 
-    def collate_fn(self, batch: list[str]):
-        tokenized = self.tokenizer(
-            batch,
-            return_tensors="pt",
-            padding="longest",
-            truncation=True,
-            max_length=self.max_sequence_length,
-        )
+    def collate_fn(self, batch: list[str]) -> tuple[torch.Tensor, torch.Tensor]:
+        if isinstance(self.tokenizer, Tokenizer):
+            tokenized = self.tokenizer.encode_batched(
+                batch,
+                truncation=True,
+                max_sequence_length=self.max_sequence_length,
+                padding=True,
+            )
+        else:
+            tokenized = self.tokenizer(
+                batch,
+                return_tensors="pt",
+                padding="longest",
+                truncation=True,
+                max_length=self.max_sequence_length,
+            )
         return {
             "input_ids": tokenized["input_ids"],
             "attention_mask": tokenized["attention_mask"],
@@ -96,6 +120,8 @@ def get_args():
     if args.dataset == "tinystories":
         default_train_dataset = "data/TinyStoriesV2-GPT4-train.txt"
         default_valid_dataset = "data/TinyStoriesV2-GPT4-valid.txt"
+        default_tokenizer_vocab = "data/TinyStoriesV2-GPT4-train-vocab.json"
+        default_tokenizer_merges = "data/TinyStoriesV2-GPT4-train-merges.json"
         default_epochs = 20
         default_lr_min = 1e-5
         default_lr_warmup = 200
@@ -120,9 +146,9 @@ def get_args():
         default_num_layers = 8
         default_num_attention_heads = 8
 
-    parser.add_argument("--hf-tokenizer", type=bool, action="store_true", default=False)
-    parser.add_argument("--tokenizer-vocab-path", type=str)
-    parser.add_argument("--tokenizer-merges-path", type=str)
+    parser.add_argument("--hf-tokenizer", action="store_true", default=False)
+    parser.add_argument("--tokenizer-vocab-path", type=str, default=default_tokenizer_vocab)
+    parser.add_argument("--tokenizer-merges-path", type=str, default=default_tokenizer_merges)
 
     parser.add_argument("--train-dataset-path", type=str, default=default_train_dataset)
     parser.add_argument("--valid-dataset-path", type=str, default=default_valid_dataset)
@@ -163,9 +189,11 @@ def train():
         tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
         tokenizer.pad_token = tokenizer.eos_token
     else:
-        # TODO: use tokenizer.py
-        tokenizer = Tokenizer.from_files(args.tokenizer_vocab_path, args.tokenizer_merges_path, ["<|endoftext|>"])
-        raise NotImplementedError()
+        tokenizer = Tokenizer.from_files(
+            args.tokenizer_vocab_path,
+            args.tokenizer_merges_path,
+            ["<|endoftext|>"],
+        )
 
     train_dataset = PretrainDataset(tokenizer, args.train_dataset_path, args.seq_length)
     valid_dataset = PretrainDataset(tokenizer, args.valid_dataset_path, args.seq_length)
