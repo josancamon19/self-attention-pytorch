@@ -120,8 +120,8 @@ def get_args():
     if args.dataset == "tinystories":
         default_train_dataset = "data/TinyStoriesV2-GPT4-train.txt"
         default_valid_dataset = "data/TinyStoriesV2-GPT4-valid.txt"
-        default_tokenizer_vocab = "data/TinyStoriesV2-GPT4-train-vocab.json"
-        default_tokenizer_merges = "data/TinyStoriesV2-GPT4-train-merges.json"
+        default_tokenizer_vocab = ".tokenizer/TinyStoriesV2-GPT4-train-vocab.json"
+        default_tokenizer_merges = ".tokenizer/TinyStoriesV2-GPT4-train-merges.json"
         default_epochs = 20
         default_lr_min = 1e-5
         default_lr_warmup = 200
@@ -167,7 +167,7 @@ def get_args():
 
 
 # TODO: train 30/40 min runtime, 1 epoch, 2.5 hours .-., is it because of tokenizer 52k instead of 10k?
-# - overfit to single minibatch, is it working?
+# - overfit to single minibatch, is it working? yes
 # TODO: oblations logs, multi experiment parallel testing setup
 # - monitor activations norms, model, weights, gradients, - vanishing/exploding?
 # - lr experiments tuning
