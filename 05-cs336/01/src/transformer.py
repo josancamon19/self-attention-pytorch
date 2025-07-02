@@ -53,43 +53,56 @@ def get_positional_encodings(embed_dim, max_positions=4):
     return pe
 
 
-def get_rope_cache(embedding_dim: int, max_positions: int, theta: int = 10000):
-    assert embedding_dim % 2 == 0
-    i = torch.arange(embedding_dim / 2, dtype=torch.float32)
-    theta_i = theta ** (-2 * (i - 1) / embedding_dim)
-    positions = torch.arange(max_positions).unsqueeze(1)
+class RotaryPositionalEncoding(nn.Module):
+    def __init__(
+        self,
+        d_k: int,
+        max_seq_len: int,
+        device: torch.device | None = None,
+        theta: float = 10000,
+    ):
+        super().__init__()
+        self.theta = theta
+        self.d_k = d_k
+        self.max_seq_len = max_seq_len
+        self.device = device
 
-    thetas = positions * theta_i
-    cosines = torch.cos(thetas)
-    sines = torch.sin(thetas)
-    rope_cache = torch.stack([cosines, sines], dim=-1)
-    return rope_cache
+        assert d_k % 2 == 0
+        i = torch.arange(0, d_k // 2, dtype=torch.float32, device=device)
+        theta_i = theta ** (-2 * i / d_k)
+        positions = torch.arange(max_seq_len, device=device).unsqueeze(1)
 
+        thetas = positions * theta_i
+        cosines = torch.cos(thetas)
+        sines = torch.sin(thetas)
+        rope_cache = torch.stack([cosines, sines], dim=-1)
+        self.register_buffer("rope_cache", rope_cache)
 
-def apply_rope(x, rope_cache):
-    # print("apply_rope:", x.shape, rope_cache.shape)
-    # TODO: does it make a difference if I rotate before or after reshaping? - don't think so
-    batch_size, head_dim, head_size, embedding_dim = x.shape
+    def forward(self, x, token_positions=None):
+        # print("RoPE.forward x.shape", x.shape, self.rope_cache.shape)
+        original_shape = x.shape
+        seq_length, d_k = original_shape[-2:]
+        x = x.view(-1, seq_length, d_k)
+        # print("x.shape", x.shape)
+        batch_size = x.shape[0]
 
-    rope_truncated = rope_cache[:head_size,]
-    # print("apply_rope rope_truncated.shape", rope_truncated.shape)
-    # view embedding dimensions in pairs
-    x_pairs = x.view(batch_size, head_dim, head_size, -1, 2)
-    x_pairs = x_pairs.to(torch.float16)
-    # print("apply_rope x_pairs.shape", x_pairs.shape)
+        # if token_positions.dim() == 1:
+        #     token_positions = token_positions.unsqueeze(0).expand(batch_size, -1)
 
-    # some black magic where complex numbers i,j parts can be computed like this
-    # TODO: this part below is definitely not clear
-    x_complex = torch.view_as_complex(x_pairs)
-    rope_complex = torch.view_as_complex(rope_truncated)
-    # print("apply_rope x_complex.shape", x_complex.shape, rope_complex.shape)
-    rotated_complex = x_complex * rope_complex
-    rotated_real = torch.view_as_real(rotated_complex)
-    # print("apply_rope rotated_real.shape", rotated_real.shape)
-    rotated_x = rotated_real.flatten(-2)
-    # print("apply_rope rotated_x.shape", rotated_x.shape)
+        # token_positions_flat = token_positions.view(-1, seq_length)
+        rope_selected = self.rope_cache[:seq_length]
+        x_pairs = x.view(batch_size, seq_length, -1, 2)
+        # print("x_pairs.shape", x_pairs.shape)
+        # print("rope_selected.shape", rope_selected.shape)
 
-    return rotated_x
+        # some black magic where complex numbers i,j parts can be computed like this
+        # TODO: this part below is definitely not clear
+        x_complex = torch.view_as_complex(x_pairs)
+        rope_complex = torch.view_as_complex(rope_selected)
+        rotated_complex = x_complex * rope_complex
+        rotated_real = torch.view_as_real(rotated_complex)
+        result = rotated_real.view(-1, seq_length, d_k)
+        return result.view(original_shape)
 
 
 class RMSNorm(nn.Module):
@@ -105,8 +118,8 @@ class RMSNorm(nn.Module):
         # --- identify variance/means comp and name properly
         x_dtype = x.dtype
         x = x.to(torch.float32)
-        tsum = torch.sum(torch.pow(x, 2) + self.eps, dim=2)
-        div_term = torch.sqrt((1 / self.embedding_dim) * tsum).unsqueeze(2)
+        tsum = torch.sum(torch.pow(x, 2), dim=-1)
+        div_term = torch.sqrt((1 / self.embedding_dim) * tsum + self.eps).unsqueeze(-1)
         result = torch.divide(x, div_term) * self.gain
         return result.to(x_dtype)
 
@@ -140,22 +153,6 @@ def softmax(tensor: torch.Tensor, dim: int = 0):
     return num_part / div_term
 
 
-# TODO: improve general code structure
-
-# TODO: SGD
-# TODO: AdamW
-# TODO: lrScheduler, gradient clipping
-# TODO: implement cross entropy loss
-# TODO: params/training accounting math
-# TODO: inference
-# TODO: Read the actual document
-# TODO: train, Tiny
-# TODO: lr scheduler + gradient clipping
-
-# Speedrun
-# TODO: Muon
-
-
 class MultiHeadSelfAttention(nn.Module):
     def __init__(self, embedding_dim, num_heads, max_sequence_length):
         super().__init__()
@@ -167,8 +164,7 @@ class MultiHeadSelfAttention(nn.Module):
         self.Q = Linear(embedding_dim, self.head_size * self.num_heads)
         self.K = Linear(embedding_dim, self.head_size * self.num_heads)
         self.V = Linear(embedding_dim, self.head_size * self.num_heads)
-        rope = get_rope_cache(self.head_size, max_sequence_length)
-        self.register_buffer("rope_cache", rope)
+        self.rope = RotaryPositionalEncoding(self.head_size, max_sequence_length)
 
         self.W_O = Linear(embedding_dim, embedding_dim)
 
@@ -177,19 +173,25 @@ class MultiHeadSelfAttention(nn.Module):
 
     def forward(self, x, padding_mask):
         # print(x)
-        batch, seq_length = x.shape[0], x.shape[1]
-        q = self._reshape_to_heads(batch, seq_length, self.Q(x))
-        k = self._reshape_to_heads(batch, seq_length, self.K(x))
+        batch, seq_length = x.shape[0], x.shape[1]  # , embedding_dim
+        q = self._reshape_to_heads(batch, seq_length, self.Q(x)).contiguous()
+        k = self._reshape_to_heads(batch, seq_length, self.K(x)).contiguous()
         v = self._reshape_to_heads(batch, seq_length, self.V(x))
+        
+        q = self.rope(q)
+        k = self.rope(k)
 
-        q = apply_rope(q, self.rope_cache)
-        k = apply_rope(k, self.rope_cache)
         attention_scores = q @ k.transpose(-2, -1)
 
-        causal_mask = torch.tril(torch.ones((seq_length, seq_length))).to(q.device)
-        mask = (causal_mask * (padding_mask.unsqueeze(1) if padding_mask is not None else 1)).unsqueeze(1)
+        mask = torch.tril(torch.ones((seq_length, seq_length))).to(q.device)
+        if padding_mask is not None:
+            mask = (mask * padding_mask.unsqueeze(1)).unsqueeze(1)
+            # print("mask.shape:", mask.shape)
+            # print("attention_scores.shape:", attention_scores.shape)
+
         attention_scores = torch.masked_fill(attention_scores, mask == 0, -1e9)
-        attention_weights = softmax(attention_scores / math.sqrt(self.head_size), dim=-1)
+        attention_scores = attention_scores / math.sqrt(self.head_size)
+        attention_weights = softmax(attention_scores, dim=-1)
         # print(attention_weights[0][0])
         x = attention_weights @ v
         x = x.transpose(-2, -1).contiguous().view(batch, seq_length, -1)
@@ -243,18 +245,18 @@ class Transformer(nn.Module):
         return output  # output logits
 
 
-# tokenizer = GPT2Tokenizer.from_pretrained("openai-community/gpt2")
-# max_sequence_length = 100
-# embedding_dim = 128
-# num_layers = 1
-# num_heads = 8
+tokenizer = GPT2Tokenizer.from_pretrained("openai-community/gpt2")
+max_sequence_length = 100
+embedding_dim = 128
+num_layers = 1
+num_heads = 8
 
-# tokenizer.pad_token = "[PAD]"
-# tokenized = tokenizer(
-#     ["Hi there, this is a test", "hey"],
-#     return_tensors="pt",
-#     padding=True,
-#     truncation=True,
-# )
-# model = Transformer(tokenizer.vocab_size, max_sequence_length, embedding_dim, num_layers, num_heads)
-# model(tokenized["input_ids"], tokenized["attention_mask"])
+tokenizer.pad_token = "[PAD]"
+tokenized = tokenizer(
+    ["Hi there, this is a test", "hey"],
+    return_tensors="pt",
+    padding=True,
+    truncation=True,
+)
+model = Transformer(tokenizer.vocab_size, max_sequence_length, embedding_dim, num_layers, num_heads)
+model(tokenized["input_ids"], tokenized["attention_mask"])

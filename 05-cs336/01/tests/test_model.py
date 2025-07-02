@@ -10,7 +10,7 @@ from .adapters import (
     run_multihead_self_attention,
     run_swiglu,
     run_rmsnorm,
-    run_scaled_dot_product_attention,
+    # run_scaled_dot_product_attention,
     run_transformer_block,
     run_transformer_lm,
     run_linear,
@@ -40,19 +40,19 @@ def test_embedding(numpy_snapshot, ts_state_dict, in_indices, vocab_size, d_mode
     numpy_snapshot.assert_match(output)
 
 
-# def test_swiglu(numpy_snapshot, ts_state_dict, in_embeddings, d_model, d_ff):
-#     # reference_weights = torch.load(FIXTURES_PATH / "positionwise_feedforward_weights.pt")
-#     w1_weight, w2_weight, w3_weight = [ts_state_dict[0][f"layers.0.ffn.{k}.weight"] for k in ["w1", "w2", "w3"]]
+def test_swiglu(numpy_snapshot, ts_state_dict, in_embeddings, d_model, d_ff):
+    # reference_weights = torch.load(FIXTURES_PATH / "positionwise_feedforward_weights.pt")
+    w1_weight, w2_weight, w3_weight = [ts_state_dict[0][f"layers.0.ffn.{k}.weight"] for k in ["w1", "w2", "w3"]]
 
-#     actual_output = run_swiglu(
-#         d_model=d_model,
-#         d_ff=d_ff,
-#         w1_weight=w1_weight,
-#         w2_weight=w2_weight,
-#         w3_weight=w3_weight,
-#         in_features=in_embeddings,
-#     )
-#     numpy_snapshot.assert_match(actual_output, atol=1e-5)
+    actual_output = run_swiglu(
+        d_model=d_model,
+        d_ff=d_ff,
+        w1_weight=w1_weight,
+        w2_weight=w2_weight,
+        w3_weight=w3_weight,
+        in_features=in_embeddings,
+    )
+    numpy_snapshot.assert_match(actual_output, atol=1e-5)
 
 
 # def test_scaled_dot_product_attention(numpy_snapshot, q, k, v, mask):
@@ -66,10 +66,7 @@ def test_embedding(numpy_snapshot, ts_state_dict, in_indices, vocab_size, d_mode
 #     # expected_output = torch.load(FIXTURES_PATH / "scaled_dot_product_attention_expected_output.pt")[0]
 #     actual_output = run_scaled_dot_product_attention(Q=q, K=k, V=v, mask=mask)
 #     # numpy.testing.assert_allclose(actual_output.detach().numpy(), expected_output.detach().numpy(), atol=1e-6)
-#     numpy_snapshot.assert_match(
-#         actual_output,
-#         atol=1e-6,
-#     )
+#     numpy_snapshot.assert_match(actual_output, atol=1e-6)
 
 
 # def test_4d_scaled_dot_product_attention(numpy_snapshot, q, k, v, mask):
@@ -214,20 +211,20 @@ def test_rmsnorm(numpy_snapshot, ts_state_dict, in_embeddings):
     numpy_snapshot.assert_match(actual_output, atol=1e-6)
 
 
-# def test_rope(numpy_snapshot, in_embeddings, d_model, theta, n_queries, pos_ids):
-#     output = run_rope(
-#         d_model, theta=theta, max_seq_len=n_queries, in_query_or_key=in_embeddings, token_positions=pos_ids
-#     )
-#     numpy_snapshot.assert_match(output, atol=1e-6)
+def test_rope(numpy_snapshot, in_embeddings, d_model, theta, n_queries, pos_ids):
+    output = run_rope(
+        d_model, theta=theta, max_seq_len=n_queries, in_query_or_key=in_embeddings, token_positions=pos_ids
+    )
+    numpy_snapshot.assert_match(output, atol=1e-6)
 
 
-# def test_silu_matches_pytorch():
-#     x = torch.tensor(
-#         [
-#             [0.2352, 0.9259, 0.5189, 0.4725, 0.9730],
-#             [0.7581, 0.9692, 0.2129, 0.9345, 0.0149],
-#         ]
-#     )
-#     expected_output = F.silu(x)
-#     actual_output = run_silu(x)
-#     numpy.testing.assert_allclose(actual_output.detach().numpy(), expected_output.detach().numpy(), atol=1e-6)
+def test_silu_matches_pytorch():
+    x = torch.tensor(
+        [
+            [0.2352, 0.9259, 0.5189, 0.4725, 0.9730],
+            [0.7581, 0.9692, 0.2129, 0.9345, 0.0149],
+        ]
+    )
+    expected_output = F.silu(x)
+    actual_output = run_silu(x)
+    numpy.testing.assert_allclose(actual_output.detach().numpy(), expected_output.detach().numpy(), atol=1e-6)

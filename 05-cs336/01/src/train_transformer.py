@@ -165,6 +165,15 @@ def get_args():
     parser.add_argument("-v", "--verbose", action="store_true", default=False)
     return parser.parse_args()
 
+# TODO: SGD
+# TODO: AdamW
+# TODO: lrScheduler, gradient clipping
+# TODO: implement cross entropy loss
+# TODO: params/training accounting math
+# TODO: inference
+# TODO: Read the actual document
+# TODO: train, Tiny
+# TODO: lr scheduler + gradient clipping
 
 # TODO: train 30/40 min runtime, 1 epoch, 2.5 hours .-., is it because of tokenizer 52k instead of 10k?
 # - overfit to single minibatch, is it working? yes

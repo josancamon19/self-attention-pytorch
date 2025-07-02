@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 from typing import IO, Any, BinaryIO
 from collections.abc import Iterable
@@ -13,8 +14,7 @@ from src.transformer import (
     Linear,
     Embedding,
     RMSNorm,
-    get_rope_cache,
-    apply_rope,
+    RotaryPositionalEncoding,
     softmax,
     PosWiseFFN,
     Transformer,
@@ -100,28 +100,37 @@ def run_swiglu(
     # swiglu.w1.weight.data = w1_weight
     # swiglu.w2.weight.data = w2_weight
     # swiglu.w3.weight.data = w3_weight
-    raise NotImplementedError
+    ffn = PosWiseFFN(d_model)
+    ffn.W1.weights.data = w1_weight
+    ffn.W2.weights.data = w2_weight
+    ffn.W3.weights.data = w3_weight
+    return ffn(in_features)
 
 
-def run_scaled_dot_product_attention(
-    Q: Float[Tensor, " ... queries d_k"],
-    K: Float[Tensor, " ... keys d_k"],
-    V: Float[Tensor, " ... values d_v"],
-    mask: Float[Tensor, " ... queries keys"] | None = None,
-) -> Float[Tensor, " ... queries d_v"]:
-    """
-    Given key (K), query (Q), and value (V) tensors, return
-    the output of your scaled dot product attention implementation.
+# def run_scaled_dot_product_attention(
+#     Q: Float[Tensor, " ... queries d_k"],
+#     K: Float[Tensor, " ... keys d_k"],
+#     V: Float[Tensor, " ... values d_v"],
+#     mask: Float[Tensor, " ... queries keys"] | None = None,
+# ) -> Float[Tensor, " ... queries d_v"]:
+#     """
+#     Given key (K), query (Q), and value (V) tensors, return
+#     the output of your scaled dot product attention implementation.
 
-    Args:
-        Q (Float[Tensor, " ... queries d_k"]): Query tensor
-        K (Float[Tensor, " ... keys d_k"]): Key tensor
-        V (Float[Tensor, " ... values d_v"]): Values tensor
-        mask (Float[Tensor, " ... queries keys"] | None): Mask tensor
-    Returns:
-        Float[Tensor, " ... queries d_v"]: Output of SDPA
-    """
-    raise NotImplementedError
+#     Args:
+#         Q (Float[Tensor, " ... queries d_k"]): Query tensor
+#         K (Float[Tensor, " ... keys d_k"]): Key tensor
+#         V (Float[Tensor, " ... values d_v"]): Values tensor
+#         mask (Float[Tensor, " ... queries keys"] | None): Mask tensor
+#     Returns:
+#         Float[Tensor, " ... queries d_v"]: Output of SDPA
+#     """
+#     # Q @ K
+#     scores = Q @ K.transpose(-2, -1)
+#     scaled = scores / math.sqrt(K.shape[-1])
+#     print(mask)
+#     scores = softmax(torch.masked_fill(scaled, mask == 0, 1e-9))
+#     return scores @ V
 
 
 def run_multihead_self_attention(
@@ -222,9 +231,8 @@ def run_rope(
     Returns:
         Float[Tensor, " ... sequence_length d_k"]: Tensor with RoPEd input.
     """
-    cache = get_rope_cache(d_k, theta, max_seq_len)
-    apply_rope()
-    raise NotImplementedError
+    rope = RotaryPositionalEncoding(d_k, max_seq_len, theta=theta)
+    return rope(in_query_or_key, token_positions)
 
 
 def run_transformer_block(
@@ -418,7 +426,7 @@ def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
         Float[Tensor,"..."]: of with the same shape as `in_features` with the output of applying
         SiLU to each element.
     """
-    raise NotImplementedError
+    return PosWiseFFN.silu(in_features)
 
 
 def run_get_batch(
