@@ -172,8 +172,6 @@ def get_args():
 # TODO: implement cross entropy loss
 # TODO: params/training accounting math
 # TODO: inference
-# TODO: Read the actual document
-# TODO: train, Tiny
 # TODO: lr scheduler + gradient clipping
 
 # TODO: train 30/40 min runtime, 1 epoch, 2.5 hours .-., is it because of tokenizer 52k instead of 10k?

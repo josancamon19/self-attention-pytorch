@@ -1,7 +1,7 @@
 from collections.abc import Iterable, Iterator
+from line_profiler import profile
 import regex as re
 import json
-
 import torch
 
 
@@ -11,12 +11,7 @@ class Tokenizer:
         vocab: dict[int, bytes],
         merges: list[tuple[bytes, bytes]],
         special_tokens: list[str] | None = None,
-        padding_token: str = None,
     ):
-        # print(
-        #     f"[Tokenizer.__init__] vocab_size: {len(vocab)}, "
-        #     f"merges_size: {len(merges)}, special_tokens: {special_tokens}, pad_token: {padding_token}",
-        # )
         special_tokens = special_tokens or []
         special_tokens = sorted(special_tokens, key=len, reverse=True)
 
@@ -39,6 +34,13 @@ class Tokenizer:
         self.split_special_tokens = "|".join(re.escape(token) for token in self.special_tokens)
         self.PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
 
+        # Create merge priority map for O(1) lookup instead of O(n) iteration
+        self.merge_priority = {merge: i for i, merge in enumerate(merges)}
+
+    # TODO: the following 2 methods were initially imp by me, but were a bottleneck
+    # - claude implemented this ones
+    # - WOW, gotta review this code, reduced time here 1/20th
+    @profile
     def encode_batched(
         self,
         batch: list[str],
@@ -46,8 +48,15 @@ class Tokenizer:
         max_sequence_length: int = 0,
         padding: bool = True,
     ):
+        import time
+
+        start_time = time.perf_counter()
+
         # Encode all sequences
         encoded = []
+        encode_start = time.perf_counter()
+
+        # Sequential processing is faster for typical batch sizes
         for item in batch:
             # Only truncate text if it's extremely long (char-level optimization)
             if truncation and max_sequence_length and len(item) > max_sequence_length * 4:
@@ -61,6 +70,8 @@ class Tokenizer:
 
             encoded.append(item_enc)
 
+        encode_time = time.perf_counter() - encode_start
+
         if not encoded:
             return {
                 "input_ids": torch.empty(0, 0, dtype=torch.long),
@@ -71,8 +82,10 @@ class Tokenizer:
         max_length = (
             max(len(seq) for seq in encoded) if padding else max_sequence_length or max(len(seq) for seq in encoded)
         )
+        print("max_length:", max_length)
 
         # Pre-allocate tensors for efficiency
+        tensor_start = time.perf_counter()
         batch_size = len(encoded)
         input_ids = torch.full((batch_size, max_length), self.pad_id, dtype=torch.long)
         attention_mask = (
@@ -81,17 +94,26 @@ class Tokenizer:
             else torch.ones((batch_size, max_length), dtype=torch.long)
         )
 
-        # Fill tensors
+        # Fill tensors efficiently - avoid creating individual tensors
         for i, seq in enumerate(encoded):
             seq_len = len(seq)
-            input_ids[i, :seq_len] = torch.tensor(seq, dtype=torch.long)
-            if padding:
-                attention_mask[i, :seq_len] = 1  # Real tokens get 1, padding stays 0
-            else:
-                attention_mask[i, :seq_len] = 1
+            if seq_len > 0:
+                # Convert to tensor once and use slice assignment
+                input_ids[i, :seq_len] = torch.tensor(seq, dtype=torch.long)
+                if padding:
+                    attention_mask[i, :seq_len] = 1  # Real tokens get 1, padding stays 0
+                else:
+                    attention_mask[i, :seq_len] = 1
+        tensor_time = time.perf_counter() - tensor_start
+
+        total_time = time.perf_counter() - start_time
+        print(
+            f"[TOKENIZER PROFILE] Total: {total_time:.4f}s | Encode: {encode_time:.4f}s | Tensor: {tensor_time:.4f}s | Batch size: {batch_size}"
+        )
 
         return {"input_ids": input_ids, "attention_mask": attention_mask}
 
+    @profile
     def encode(self, input_text: str) -> list[int]:
         if self.special_tokens:
             strings = re.split(self.split_special_tokens, input_text)
@@ -104,27 +126,26 @@ class Tokenizer:
             for match in self.PAT.finditer(string):
                 pretoken_bytes = match.group().encode("utf-8")
 
-                # Fast BPE merge algorithm
+                # Optimized BPE merge using priority queue
                 tokens = [bytes([b]) for b in pretoken_bytes]
 
-                for merge in self.merges:
-                    if len(tokens) < 2:
+                while len(tokens) >= 2:
+                    # Find all possible pairs and their priorities
+                    pairs = []
+                    for i in range(len(tokens) - 1):
+                        pair = (tokens[i], tokens[i + 1])
+                        if pair in self.merge_priority:
+                            pairs.append((self.merge_priority[pair], i, pair))
+
+                    if not pairs:
                         break
 
-                    # Find all merge positions in one pass
-                    merge_positions = []
-                    i = 0
-                    while i < len(tokens) - 1:
-                        if tokens[i] == merge[0] and tokens[i + 1] == merge[1]:
-                            merge_positions.append(i)
-                            i += 2  # Skip the pair to avoid overlapping merges
-                        else:
-                            i += 1
+                    # Get the highest priority merge (lowest index)
+                    priority, pos, (first, second) = min(pairs)
 
-                    # Apply merges from right to left to preserve indices
-                    for pos in reversed(merge_positions):
-                        tokens[pos] = merge[0] + merge[1]
-                        del tokens[pos + 1]
+                    # Apply the merge
+                    tokens[pos] = first + second
+                    del tokens[pos + 1]
 
                 # Convert to token IDs
                 tokenized.extend(self.vocab_reversed[token] for token in tokens)
@@ -152,7 +173,7 @@ class Tokenizer:
         cls,
         vocab_filepath,
         merges_filepath,
-        special_tokens=None,
+        special_tokens=["<|endoftext|>"],
     ):
         with open(vocab_filepath) as f:
             vocab = json.load(f)
@@ -166,9 +187,20 @@ class Tokenizer:
         return cls(vocab, merges, special_tokens)
 
 
-# Tokenizer.from_files("data/TinyStoriesV2-GPT4-valid-vocab.json", "data/TinyStoriesV2-GPT4-valid-merges.json")
+if __name__ == "__main__":
+    tokenizer = Tokenizer.from_files(
+        ".tokenizer/TinyStoriesV2-GPT4-valid-vocab.json", ".tokenizer/TinyStoriesV2-GPT4-valid-merges.json"
+    )
 
-# TODO: parallelize encode
+    with open("data/TinyStoriesV2-GPT4-valid.txt", "rb") as f:
+        samples = f.read().decode("utf-8", errors="ignore").split("<|endoftext|>")
+        samples = [s.strip() for s in samples]
+        print("len(samples):", len(samples))
+
+    batch = samples[:512]
+    # print(batch)
+    output = tokenizer.encode_batched(batch, True, 512, True)
+
 # TODO: train on tinystories dataset, vocabsize 10k (store to disk)
 # TODO: profile the code
 # TODO: parallelize training
