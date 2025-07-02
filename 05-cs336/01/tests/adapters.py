@@ -107,30 +107,29 @@ def run_swiglu(
     return ffn(in_features)
 
 
-# def run_scaled_dot_product_attention(
-#     Q: Float[Tensor, " ... queries d_k"],
-#     K: Float[Tensor, " ... keys d_k"],
-#     V: Float[Tensor, " ... values d_v"],
-#     mask: Float[Tensor, " ... queries keys"] | None = None,
-# ) -> Float[Tensor, " ... queries d_v"]:
-#     """
-#     Given key (K), query (Q), and value (V) tensors, return
-#     the output of your scaled dot product attention implementation.
+def run_scaled_dot_product_attention(
+    Q: Float[Tensor, " ... queries d_k"],
+    K: Float[Tensor, " ... keys d_k"],
+    V: Float[Tensor, " ... values d_v"],
+    mask: Float[Tensor, " ... queries keys"] | None = None,
+) -> Float[Tensor, " ... queries d_v"]:
+    """
+    Given key (K), query (Q), and value (V) tensors, return
+    the output of your scaled dot product attention implementation.
 
-#     Args:
-#         Q (Float[Tensor, " ... queries d_k"]): Query tensor
-#         K (Float[Tensor, " ... keys d_k"]): Key tensor
-#         V (Float[Tensor, " ... values d_v"]): Values tensor
-#         mask (Float[Tensor, " ... queries keys"] | None): Mask tensor
-#     Returns:
-#         Float[Tensor, " ... queries d_v"]: Output of SDPA
-#     """
-#     # Q @ K
-#     scores = Q @ K.transpose(-2, -1)
-#     scaled = scores / math.sqrt(K.shape[-1])
-#     print(mask)
-#     scores = softmax(torch.masked_fill(scaled, mask == 0, 1e-9))
-#     return scores @ V
+    Args:
+        Q (Float[Tensor, " ... queries d_k"]): Query tensor
+        K (Float[Tensor, " ... keys d_k"]): Key tensor
+        V (Float[Tensor, " ... values d_v"]): Values tensor
+        mask (Float[Tensor, " ... queries keys"] | None): Mask tensor
+    Returns:
+        Float[Tensor, " ... queries d_v"]: Output of SDPA
+    """
+    scores = (Q @ K.transpose(-2, -1)) / math.sqrt(K.shape[-1])
+    if mask is not None:
+        scaled = torch.masked_fill(scores, mask == 0, -float("inf"))
+    attention_weights = softmax(scaled, dim=-1)
+    return attention_weights @ V
 
 
 def run_multihead_self_attention(
@@ -165,11 +164,12 @@ def run_multihead_self_attention(
         implementation with the given QKV projection weights and input features.
     """
     attention = MultiHeadSelfAttention(d_model, num_heads, 1024)
+    attention.rope = None
     attention.Q.weights.data = q_proj_weight
     attention.K.weights.data = k_proj_weight
     attention.V.weights.data = v_proj_weight
     attention.W_O.weights.data = o_proj_weight
-    return attention(in_features)
+    return attention(in_features, None)
 
 
 def run_multihead_self_attention_with_rope(
@@ -209,7 +209,13 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    attention = MultiHeadSelfAttention(d_model, num_heads, max_seq_len)
+    # uses rope theta, token_positions defaults
+    attention.Q.weights.data = q_proj_weight
+    attention.K.weights.data = k_proj_weight
+    attention.V.weights.data = v_proj_weight
+    attention.W_O.weights.data = o_proj_weight
+    return attention(in_features, None)
 
 
 def run_rope(
@@ -305,7 +311,29 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    block = TransformerBlock(d_model, num_heads, max_seq_len)
+
+    # Load attention weights
+    block.attention.Q.weights.data = weights["attn.q_proj.weight"]
+    block.attention.K.weights.data = weights["attn.k_proj.weight"]
+    block.attention.V.weights.data = weights["attn.v_proj.weight"]
+    block.attention.W_O.weights.data = weights["attn.output_proj.weight"]
+
+    # Update RoPE theta if needed
+    if hasattr(block.attention.rope, "theta") and block.attention.rope.theta != theta:
+        # Recreate RoPE with correct theta
+        head_size = d_model // num_heads
+        block.attention.rope = RotaryPositionalEncoding(head_size, max_seq_len, theta=theta)
+
+    # Load normalization weights
+    block.attention_norm.gain.data = weights["ln1.weight"]
+    block.pos_wise_norm.gain.data = weights["ln2.weight"]
+
+    # Load FFN weights
+    block.pos_wise.W1.weights.data = weights["ffn.w1.weight"]
+    block.pos_wise.W2.weights.data = weights["ffn.w2.weight"]
+    block.pos_wise.W3.weights.data = weights["ffn.w3.weight"]
+    return block(in_features, None)
 
 
 def run_transformer_lm(
@@ -387,7 +415,45 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    # Create the transformer model
+    model = Transformer(vocab_size, context_length, d_model, num_layers, num_heads)
+
+    # Load token embeddings
+    model.embeddings.embeddings.data = weights["token_embeddings.weight"]
+
+    # Load weights for each transformer block
+    for layer_idx in range(num_layers):
+        block = model.blocks[layer_idx]
+
+        # Load attention weights
+        block.attention.Q.weights.data = weights[f"layers.{layer_idx}.attn.q_proj.weight"]
+        block.attention.K.weights.data = weights[f"layers.{layer_idx}.attn.k_proj.weight"]
+        block.attention.V.weights.data = weights[f"layers.{layer_idx}.attn.v_proj.weight"]
+        block.attention.W_O.weights.data = weights[f"layers.{layer_idx}.attn.output_proj.weight"]
+
+        # Update RoPE theta if needed
+        if hasattr(block.attention.rope, "theta") and block.attention.rope.theta != rope_theta:
+            head_size = d_model // num_heads
+            block.attention.rope = RotaryPositionalEncoding(head_size, context_length, theta=rope_theta)
+
+        # Load normalization weights
+        block.attention_norm.gain.data = weights[f"layers.{layer_idx}.ln1.weight"]
+        block.pos_wise_norm.gain.data = weights[f"layers.{layer_idx}.ln2.weight"]
+
+        # Load FFN weights
+        block.pos_wise.W1.weights.data = weights[f"layers.{layer_idx}.ffn.w1.weight"]
+        block.pos_wise.W2.weights.data = weights[f"layers.{layer_idx}.ffn.w2.weight"]
+        block.pos_wise.W3.weights.data = weights[f"layers.{layer_idx}.ffn.w3.weight"]
+
+    # Load final layer norm
+    model.pre_output_norm.gain.data = weights["ln_final.weight"]
+
+    # Load output projection (language model head)
+    # Note: weights["lm_head.weight"] is (vocab_size, d_model) but model.output is (d_model, vocab_size)
+    model.output.data = weights["lm_head.weight"].T
+
+    # Run forward pass
+    return model(in_indices, None)
 
 
 def run_rmsnorm(
@@ -465,7 +531,7 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
         Float[Tensor, "..."]: Tensor of with the same shape as `in_features` with the output of
         softmax normalizing the specified `dim`.
     """
-    raise NotImplementedError
+    raise softmax(in_features, dim)
 
 
 def run_cross_entropy(
@@ -549,6 +615,7 @@ def run_save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
+    # raise save_checkpoint(model, optimizer)
     raise NotImplementedError
 
 

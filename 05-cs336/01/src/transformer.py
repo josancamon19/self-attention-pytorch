@@ -177,24 +177,26 @@ class MultiHeadSelfAttention(nn.Module):
         q = self._reshape_to_heads(batch, seq_length, self.Q(x)).contiguous()
         k = self._reshape_to_heads(batch, seq_length, self.K(x)).contiguous()
         v = self._reshape_to_heads(batch, seq_length, self.V(x))
-        
-        q = self.rope(q)
-        k = self.rope(k)
+
+        if self.rope:  # test logic
+            q = self.rope(q)
+            k = self.rope(k)
 
         attention_scores = q @ k.transpose(-2, -1)
+        attention_scores = attention_scores / math.sqrt(self.head_size)
 
         mask = torch.tril(torch.ones((seq_length, seq_length))).to(q.device)
         if padding_mask is not None:
+            print("mask.shape:", mask.shape)
             mask = (mask * padding_mask.unsqueeze(1)).unsqueeze(1)
-            # print("mask.shape:", mask.shape)
-            # print("attention_scores.shape:", attention_scores.shape)
+            print("mask.shape:", mask.shape)
+            print("attention_scores.shape:", attention_scores.shape)
 
-        attention_scores = torch.masked_fill(attention_scores, mask == 0, -1e9)
-        attention_scores = attention_scores / math.sqrt(self.head_size)
+        attention_scores = torch.masked_fill(attention_scores, mask == 0, -float("inf"))
         attention_weights = softmax(attention_scores, dim=-1)
-        # print(attention_weights[0][0])
         x = attention_weights @ v
-        x = x.transpose(-2, -1).contiguous().view(batch, seq_length, -1)
+        x = x.transpose(1, 2)
+        x = x.contiguous().view(batch, seq_length, -1)
         wo = self.W_O(x)
         # print("MultiHeadSelfAttention.forward wo.shape:", wo.shape)
         return wo
@@ -245,18 +247,18 @@ class Transformer(nn.Module):
         return output  # output logits
 
 
-tokenizer = GPT2Tokenizer.from_pretrained("openai-community/gpt2")
-max_sequence_length = 100
-embedding_dim = 128
-num_layers = 1
-num_heads = 8
+# tokenizer = GPT2Tokenizer.from_pretrained("openai-community/gpt2")
+# max_sequence_length = 100
+# embedding_dim = 128
+# num_layers = 1
+# num_heads = 8
 
-tokenizer.pad_token = "[PAD]"
-tokenized = tokenizer(
-    ["Hi there, this is a test", "hey"],
-    return_tensors="pt",
-    padding=True,
-    truncation=True,
-)
-model = Transformer(tokenizer.vocab_size, max_sequence_length, embedding_dim, num_layers, num_heads)
-model(tokenized["input_ids"], tokenized["attention_mask"])
+# tokenizer.pad_token = "[PAD]"
+# tokenized = tokenizer(
+#     ["Hi there, this is a test", "hey"],
+#     return_tensors="pt",
+#     padding=True,
+#     truncation=True,
+# )
+# model = Transformer(tokenizer.vocab_size, max_sequence_length, embedding_dim, num_layers, num_heads)
+# model(tokenized["input_ids"], tokenized["attention_mask"])
