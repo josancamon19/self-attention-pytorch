@@ -13,10 +13,10 @@ class Tokenizer:
         special_tokens: list[str] | None = None,
         padding_token: str = None,
     ):
-        print(
-            f"[Tokenizer.__init__] vocab_size: {len(vocab)}, "
-            f"merges_size: {len(merges)}, special_tokens: {special_tokens}, pad_token: {padding_token}",
-        )
+        # print(
+        #     f"[Tokenizer.__init__] vocab_size: {len(vocab)}, "
+        #     f"merges_size: {len(merges)}, special_tokens: {special_tokens}, pad_token: {padding_token}",
+        # )
         special_tokens = special_tokens or []
         special_tokens = sorted(special_tokens, key=len, reverse=True)
 
@@ -46,78 +46,53 @@ class Tokenizer:
         max_sequence_length: int = 0,
         padding: bool = True,
     ):
+        # Encode all sequences
         encoded = []
-        max_length = 0
         for item in batch:
-            if truncation and max_sequence_length:
-                item = item[: min(len(item), max_sequence_length)]
+            # Only truncate text if it's extremely long (char-level optimization)
+            if truncation and max_sequence_length and len(item) > max_sequence_length * 4:
+                item = item[: max_sequence_length * 4]  # Rough char->token ratio
+
             item_enc = self.encode(item)
+
+            # Truncate tokens if needed
             if truncation and max_sequence_length:
-                item_enc = item_enc[: min(len(item), max_sequence_length)]
+                item_enc = item_enc[:max_sequence_length]
 
             encoded.append(item_enc)
-            max_length = max(max_length, len(item_enc))
 
-        if padding:
-            for i in range(len(encoded)):
-                pad_count = max_length - len(encoded[i])
-                encoded[i] += [self.pad_id] * pad_count
+        if not encoded:
+            return {
+                "input_ids": torch.empty(0, 0, dtype=torch.long),
+                "attention_mask": torch.empty(0, 0, dtype=torch.long),
+            }
 
-        attention_mask = []
-        for seq in encoded:
-            mask = [1 if token_id != self.pad_id else 0 for token_id in seq] if padding else [1] * len(seq)
-            attention_mask.append(mask)
+        # Find max length for padding
+        max_length = (
+            max(len(seq) for seq in encoded) if padding else max_sequence_length or max(len(seq) for seq in encoded)
+        )
 
-        input_ids = torch.tensor(encoded, dtype=torch.long)
-        attention_mask = torch.tensor(attention_mask, dtype=torch.long)
+        # Pre-allocate tensors for efficiency
+        batch_size = len(encoded)
+        input_ids = torch.full((batch_size, max_length), self.pad_id, dtype=torch.long)
+        attention_mask = (
+            torch.zeros((batch_size, max_length), dtype=torch.long)
+            if padding
+            else torch.ones((batch_size, max_length), dtype=torch.long)
+        )
+
+        # Fill tensors
+        for i, seq in enumerate(encoded):
+            seq_len = len(seq)
+            input_ids[i, :seq_len] = torch.tensor(seq, dtype=torch.long)
+            if padding:
+                attention_mask[i, :seq_len] = 1  # Real tokens get 1, padding stays 0
+            else:
+                attention_mask[i, :seq_len] = 1
+
         return {"input_ids": input_ids, "attention_mask": attention_mask}
 
     def encode(self, input_text: str) -> list[int]:
-        # print("[Tokenizer.encode] input_text:", input_text)
-        if self.special_tokens:
-            strings = re.split(self.split_special_tokens, input_text)
-            special_tokens_sep = [m.group().encode("utf-8") for m in re.finditer(self.split_special_tokens, input_text)]
-            # print("[Tokenizer.encode] special_tokens_sep:", special_tokens_sep)
-        else:
-            strings, special_tokens_sep = [input_text], []
-
-        pretokens = set()
-        pretokenized_strings = []
-        for si, string in enumerate(strings):
-            pretokenized = []
-            for match in self.PAT.finditer(string):
-                pretoken_bytes = match.group().encode("utf-8")
-                pretokens.add(pretoken_bytes)
-                pretokenized.append(pretoken_bytes)
-            pretokenized_strings.append(pretokenized)
-
-        pretokens_map = {}
-        for pretoken in pretokens:
-            pretoken_bytes = [bytes([b]) for b in pretoken]
-            for merge in self.merges:
-                i = 0
-                while i < len(pretoken_bytes) - 1:
-                    if pretoken_bytes[i] == merge[0] and pretoken_bytes[i + 1] == merge[1]:
-                        pretoken_bytes = pretoken_bytes[:i] + [merge[0] + merge[1]] + pretoken_bytes[i + 2 :]
-                    else:
-                        i += 1
-
-            pretokens_map[pretoken] = [self.vocab_reversed[pb] for pb in pretoken_bytes]
-
-        # print(pretokens_map)
-        tokenized = []
-        for si, string in enumerate(pretokenized_strings):
-            for pretoken_bytes in string:
-                tokenized.extend(pretokens_map[pretoken_bytes])
-
-            if si < len(strings) - 1:
-                tokenized.append(self.vocab_reversed[special_tokens_sep[si]])
-
-        # print("[Tokenizer.encode] tokenized:", tokenized)
-        # print("[Tokenizer.encode] tokenized.pre:", [self.vocab[i] for i in tokenized])
-        return tokenized
-
-    def encode_(self, input_text: str) -> list[int]:
         if self.special_tokens:
             strings = re.split(self.split_special_tokens, input_text)
             special_tokens_sep = [m.group().encode("utf-8") for m in re.finditer(self.split_special_tokens, input_text)]
@@ -129,18 +104,32 @@ class Tokenizer:
             for match in self.PAT.finditer(string):
                 pretoken_bytes = match.group().encode("utf-8")
 
+                # Fast BPE merge algorithm
                 tokens = [bytes([b]) for b in pretoken_bytes]
+
                 for merge in self.merges:
+                    if len(tokens) < 2:
+                        break
+
+                    # Find all merge positions in one pass
+                    merge_positions = []
                     i = 0
                     while i < len(tokens) - 1:
                         if tokens[i] == merge[0] and tokens[i + 1] == merge[1]:
-                            tokens = tokens[:i] + [merge[0] + merge[1]] + tokens[i + 2 :]
+                            merge_positions.append(i)
+                            i += 2  # Skip the pair to avoid overlapping merges
                         else:
                             i += 1
 
-                for token in tokens:
-                    tokenized.append(self.vocab_reversed[token])
+                    # Apply merges from right to left to preserve indices
+                    for pos in reversed(merge_positions):
+                        tokens[pos] = merge[0] + merge[1]
+                        del tokens[pos + 1]
 
+                # Convert to token IDs
+                tokenized.extend(self.vocab_reversed[token] for token in tokens)
+
+            # Add special token between strings
             if si < len(strings) - 1:
                 tokenized.append(self.vocab_reversed[special_tokens_sep[si]])
 

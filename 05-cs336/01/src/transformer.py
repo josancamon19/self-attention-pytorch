@@ -2,7 +2,6 @@ import math
 import torch.nn as nn
 import torch
 from torch.nn.parameter import Parameter
-import torch.nn.functional as F
 from transformers import GPT2Tokenizer
 
 
@@ -187,10 +186,10 @@ class MultiHeadSelfAttention(nn.Module):
 
         mask = torch.tril(torch.ones((seq_length, seq_length))).to(q.device)
         if padding_mask is not None:
-            print("mask.shape:", mask.shape)
+            # print("mask.shape:", mask.shape)
             mask = (mask * padding_mask.unsqueeze(1)).unsqueeze(1)
-            print("mask.shape:", mask.shape)
-            print("attention_scores.shape:", attention_scores.shape)
+            # print("mask.shape:", mask.shape)
+            # print("attention_scores.shape:", attention_scores.shape)
 
         attention_scores = torch.masked_fill(attention_scores, mask == 0, -float("inf"))
         attention_weights = softmax(attention_scores, dim=-1)

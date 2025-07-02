@@ -165,6 +165,7 @@ def get_args():
     parser.add_argument("-v", "--verbose", action="store_true", default=False)
     return parser.parse_args()
 
+
 # TODO: SGD
 # TODO: AdamW
 # TODO: lrScheduler, gradient clipping
@@ -212,6 +213,8 @@ def train():
         shuffle=True,
         collate_fn=train_dataset.collate_fn,
         pin_memory=True,
+        # num_workers=4,
+        # persistent_workers=True,
     )
     valid_dataloader = DataLoader(
         valid_dataset,
