@@ -48,13 +48,13 @@ class Tokenizer:
         max_sequence_length: int = 0,
         padding: bool = True,
     ):
-        import time
+        # import time
 
-        start_time = time.perf_counter()
+        # start_time = time.perf_counter()
 
         # Encode all sequences
         encoded = []
-        encode_start = time.perf_counter()
+        # encode_start = time.perf_counter()
 
         # Sequential processing is faster for typical batch sizes
         for item in batch:
@@ -70,7 +70,7 @@ class Tokenizer:
 
             encoded.append(item_enc)
 
-        encode_time = time.perf_counter() - encode_start
+        # encode_time = time.perf_counter() - encode_start
 
         if not encoded:
             return {
@@ -82,10 +82,10 @@ class Tokenizer:
         max_length = (
             max(len(seq) for seq in encoded) if padding else max_sequence_length or max(len(seq) for seq in encoded)
         )
-        print("max_length:", max_length)
+        # print("max_length:", max_length)
 
         # Pre-allocate tensors for efficiency
-        tensor_start = time.perf_counter()
+        # tensor_start = time.perf_counter()
         batch_size = len(encoded)
         input_ids = torch.full((batch_size, max_length), self.pad_id, dtype=torch.long)
         attention_mask = (
@@ -104,12 +104,12 @@ class Tokenizer:
                     attention_mask[i, :seq_len] = 1  # Real tokens get 1, padding stays 0
                 else:
                     attention_mask[i, :seq_len] = 1
-        tensor_time = time.perf_counter() - tensor_start
+        # tensor_time = time.perf_counter() - tensor_start
 
-        total_time = time.perf_counter() - start_time
-        print(
-            f"[TOKENIZER PROFILE] Total: {total_time:.4f}s | Encode: {encode_time:.4f}s | Tensor: {tensor_time:.4f}s | Batch size: {batch_size}"
-        )
+        # total_time = time.perf_counter() - start_time
+        # print(
+        #     f"[TOKENIZER PROFILE] Total: {total_time:.4f}s | Encode: {encode_time:.4f}s | Tensor: {tensor_time:.4f}s | Batch size: {batch_size}"
+        # )
 
         return {"input_ids": input_ids, "attention_mask": attention_mask}
 
@@ -198,8 +198,10 @@ if __name__ == "__main__":
         print("len(samples):", len(samples))
 
     batch = samples[:512]
+    print(batch[0])
     # print(batch)
     output = tokenizer.encode_batched(batch, True, 512, True)
+    print(output["input_ids"][0])
 
 # TODO: train on tinystories dataset, vocabsize 10k (store to disk)
 # TODO: profile the code
