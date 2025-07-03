@@ -190,10 +190,10 @@ class Tokenizer:
 
 
 if __name__ == "__main__":
-    _type = "train"
+    _type = "valid"
     tokenizer = Tokenizer.from_files(
-        f".tokenizer/TinyStoriesV2-GPT4-{_type}-vocab.json",
-        f".tokenizer/TinyStoriesV2-GPT4-{_type}-merges.json",
+        ".tokenizer/TinyStoriesV2-GPT4-train-vocab.json",
+        ".tokenizer/TinyStoriesV2-GPT4-train-merges.json",
     )
     with open(f"data/TinyStoriesV2-GPT4-{_type}.txt", "rb") as f:
         content = f.read().decode("utf-8", errors="ignore")
