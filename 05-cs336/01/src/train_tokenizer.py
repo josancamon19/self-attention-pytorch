@@ -257,8 +257,8 @@ def train_tokenizer(
 if __name__ == "__main__":
     train_tokenizer(
         # input_text_file="data/TinyStoriesV2-GPT4-train.txt",
-        input_text_file="data/owt_valid.txt",
-        target_vocab_size=10000,
+        input_text_file="data/owt_train.txt",
+        target_vocab_size=32000,
         save_results=True,
     )
     print_execution_summary()
