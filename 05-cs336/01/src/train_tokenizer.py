@@ -3,7 +3,9 @@ import json
 import os
 from line_profiler import profile
 from tqdm import tqdm
-from src.shared import timeit, print_execution_summary
+from src.shared import find_chunk_boundaries, timeit, print_execution_summary
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
 import regex as re
 import heapq
 
@@ -14,7 +16,7 @@ def initialize(text: str, special_tokens: list[str]):
     special_tokens = sorted(special_tokens, key=len, reverse=True)  # overlapping issue
     split_special_tokens = "|".join(re.escape(token) for token in special_tokens)
     strings = re.split(split_special_tokens, text)  # [:1]
-    print("initialize len(strings)", len(strings))
+    # print("initialize:", len(text), len(strings))
     PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
 
     pairs_count = defaultdict(int)
@@ -40,6 +42,78 @@ def initialize(text: str, special_tokens: list[str]):
             pretokens_to_split[pretoken_bytes] = pretoken_split
             pretokens_counts[pretoken_bytes] += 1
 
+    return pairs_count, pretokens_to_split, pretokens_counts, pairs_to_pretokens
+
+
+def _initiallize_parallel(file_path: str, f_start, f_end, special_tokens: list[str]):
+    with open(file_path, "rb") as f:
+        f.seek(f_start)
+        text = f.read(f_end - f_start).decode("utf-8", errors="ignore")
+
+    special_tokens = sorted(special_tokens, key=len, reverse=True)  # overlapping issue
+    split_special_tokens = "|".join(re.escape(token) for token in special_tokens)
+    strings = re.split(split_special_tokens, text)  # [:1]
+    print(file_path, f_start, f_end, len(text), len(strings))
+    PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
+
+    pairs_count = defaultdict(int)
+    pretokens_to_split = {}  # b"hi": [b"h", b"i"]
+    pretokens_counts = defaultdict(int)
+    pairs_to_pretokens = defaultdict(set)
+
+    for string in strings:
+        for match in PAT.finditer(string):
+            pretoken_bytes = match.group().encode("utf-8")
+            if len(pretoken_bytes) == 1:
+                continue
+
+            pretoken_split = []
+            for j in range(len(pretoken_bytes)):
+                pretoken_split.append(pretoken_bytes[j : j + 1])
+
+                if j + 1 < len(pretoken_bytes):
+                    pair = (pretoken_bytes[j : j + 1], pretoken_bytes[j + 1 : j + 2])
+                    pairs_count[pair] += 1
+                    pairs_to_pretokens[pair].add(pretoken_bytes)
+
+            pretokens_to_split[pretoken_bytes] = pretoken_split
+            pretokens_counts[pretoken_bytes] += 1
+
+    return pairs_count, pretokens_to_split, pretokens_counts, pairs_to_pretokens
+
+
+@timeit
+def initialize_parallel(input_text_file, boundaries, special_tokens):
+    pairs_count = defaultdict(int)
+    pretokens_to_split = {}  # b"hi": [b"h", b"i"]
+    pretokens_counts = defaultdict(int)
+    pairs_to_pretokens = defaultdict(set)
+
+    with ProcessPoolExecutor(mp.cpu_count()) as pool:
+        futures = []
+        for start, end in boundaries:
+            futures.append(pool.submit(_initiallize_parallel, input_text_file, start, end, special_tokens))
+
+        # Collect results and merge them
+        for future in futures:
+            pairs_count_result, pretokens_to_split_result, pretokens_counts_result, pairs_to_pretokens_result = (
+                future.result()
+            )
+
+            # Merge pairs_count
+            for pair, count in pairs_count_result.items():
+                pairs_count[pair] += count
+
+            # Merge pretokens_to_split
+            pretokens_to_split.update(pretokens_to_split_result)
+
+            # Merge pretokens_counts
+            for pretoken, count in pretokens_counts_result.items():
+                pretokens_counts[pretoken] += count
+
+            # Merge pairs_to_pretokens
+            for pair, pretokens in pairs_to_pretokens_result.items():
+                pairs_to_pretokens[pair].update(pretokens)
     return pairs_count, pretokens_to_split, pretokens_counts, pairs_to_pretokens
 
 
@@ -91,15 +165,22 @@ def train_tokenizer(
     save_results: bool = False,
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     with open(input_text_file, "rb") as f:
-        text = f.read().decode("utf-8", errors="ignore")
+        # text = f.read().decode("utf-8", errors="ignore")
+        # f.seek(0)  # Reset file pointer to beginning
+        boundaries = find_chunk_boundaries(f, mp.cpu_count(), b"<|endoftext|>")
+        boundaries = zip(boundaries[:-1], boundaries[1:])
+        # print("len(text)", len(text))
 
     vocab = {i: bytes([i]) for i in range(256)}
     for token in special_tokens:
         vocab[len(vocab)] = token.encode("utf-8")
     vocab_set = set(vocab.values())
 
-    pairs_count, pretokens_to_split, pretokens_counts, pairs_to_pretokens = initialize(text, special_tokens)
-    # pairs_count[(b"n", b"a")] = 0
+    # pairs_count, pretokens_to_split, pretokens_counts, pairs_to_pretokens = initialize(text, special_tokens)
+    pairs_count, pretokens_to_split, pretokens_counts, pairs_to_pretokens = initialize_parallel(
+        input_text_file, boundaries, special_tokens
+    )
+    # return
     priority_queue = [(-count, pair) for pair, count in pairs_count.items()]
 
     heapq.heapify(priority_queue)
@@ -173,8 +254,14 @@ def train_tokenizer(
     return vocab, merges
 
 
-# train_tokenizer(input_text_file="data/TinyStoriesV2-GPT4-train.txt", target_vocab_size=10000, save_results=True)
-# print_execution_summary()
+if __name__ == "__main__":
+    train_tokenizer(
+        # input_text_file="data/TinyStoriesV2-GPT4-train.txt",
+        input_text_file="data/owt_valid.txt",
+        target_vocab_size=10000,
+        save_results=True,
+    )
+    print_execution_summary()
 
 # initialize 705 seconds
 # train_tokenizer 755 seconds
