@@ -10,7 +10,14 @@ import numpy.typing as npt
 import torch
 from torch import Tensor
 from src import tokenizer, train_tokenizer
-from src.train_transformer import clip_gradients, data_loading
+from src.train_transformer import (
+    clip_gradients,
+    cos_lr_schedule,
+    cross_entropy_loss,
+    data_loading,
+    load_checkpoint,
+    save_checkpoint,
+)
 from src.transformer import (
     Linear,
     Embedding,
@@ -532,7 +539,7 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
         Float[Tensor, "..."]: Tensor of with the same shape as `in_features` with the output of
         softmax normalizing the specified `dim`.
     """
-    raise softmax(in_features, dim)
+    return softmax(in_features, dim)
 
 
 def run_cross_entropy(
@@ -550,7 +557,7 @@ def run_cross_entropy(
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    raise NotImplementedError
+    return cross_entropy_loss(inputs, targets)
 
 
 def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
@@ -562,7 +569,7 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise clip_gradients(parameters, max_l2_norm)
+    return clip_gradients(parameters, max_l2_norm)
 
 
 def get_adamw_cls() -> type[torch.optim.Optimizer]:
@@ -597,7 +604,7 @@ def run_get_lr_cosine_schedule(
     Returns:
         Learning rate at the given iteration under the specified schedule.
     """
-    raise NotImplementedError
+    raise cos_lr_schedule(min_learning_rate, max_learning_rate, warmup_iters, cosine_cycle_iters, it)
 
 
 def run_save_checkpoint(
@@ -616,8 +623,7 @@ def run_save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
-    # raise save_checkpoint(model, optimizer)
-    raise NotImplementedError
+    return save_checkpoint(model, optimizer, out, iteration)
 
 
 def run_load_checkpoint(
@@ -638,7 +644,7 @@ def run_load_checkpoint(
     Returns:
         int: the previously-serialized number of iterations.
     """
-    raise NotImplementedError
+    return load_checkpoint(model, optimizer, src)
 
 
 def get_tokenizer(

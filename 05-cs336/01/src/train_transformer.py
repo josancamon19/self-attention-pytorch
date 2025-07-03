@@ -1,11 +1,11 @@
 import argparse
 import math
 from collections.abc import Iterable
-from typing import Callable, Optional
+from collections.abc import Callable
 import torch
 from tqdm import tqdm
 from transformers import GPT2Tokenizer
-from src.transformer import Transformer, softmax
+from src.transformer import Transformer
 from src.tokenizer import Tokenizer
 from torch.optim import AdamW
 import os
@@ -27,8 +27,17 @@ def data_loading(
     return batch[:, :-1], batch[:, 1:]
 
 
-def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, path: str):
-    data = {"model": model.state_dict(), "optimizer": optimizer.state_dict()}
+def save_checkpoint(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    path: str,
+    iteration: int | None = None,  # adapter
+):
+    data = {
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "iteration": iteration,
+    }
     torch.save(data, path)
 
 
@@ -36,6 +45,8 @@ def load_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, pa
     saved = torch.load(path)
     model.load_state_dict(saved["model"])
     optimizer.load_state_dict(saved["optimizer"])
+    if "iteration" in saved:
+        return saved["iteration"]
 
 
 def cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, step):
@@ -50,7 +61,7 @@ def cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, step):
 
 
 def clip_gradients(params: Iterable, max_norm: float):
-    grads = [p.grad for p in params]
+    grads = [p.grad for p in params if p.grad is not None]
     norms = [torch.linalg.vector_norm(g) for g in grads]
     total_norm = torch.linalg.vector_norm(torch.stack(norms))
     if total_norm < max_norm:
@@ -60,10 +71,17 @@ def clip_gradients(params: Iterable, max_norm: float):
 
 
 def cross_entropy_loss(result: torch.Tensor, labels: torch.Tensor):
-    result = softmax(result, dim=1)
+    # TODO: understand deeper, how log/exponentials cancel, how that fixes numerical instability
+    # -- cases like 0.00000 in logs include an infinite
+    max_vals = torch.max(result, dim=1, keepdim=True)[0]
+    shifted_logits = result - max_vals
+    log_sum_exp = torch.log(torch.sum(torch.exp(shifted_logits), dim=1, keepdim=True))
+    log_probs = shifted_logits - log_sum_exp
+
     indices = torch.arange(result.shape[0])
-    correct_probs = result[indices, labels]
-    return -torch.mean(torch.log(correct_probs))
+    correct_log_probs = log_probs[indices, labels]
+    # result = softmax(result, dim=1)
+    return -torch.mean(correct_log_probs)
 
 
 class SGD(torch.optim.Optimizer):
