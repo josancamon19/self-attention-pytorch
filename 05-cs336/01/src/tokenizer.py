@@ -203,8 +203,3 @@ if __name__ == "__main__":
     output_path = f".tokenizer/TinyStoriesV2-GPT4-{_type}-encoded.npy"
     np.save(output_path, output_np)
     print(f"Saved tokenized output with shape {output_np.shape} to {output_path}")
-
-
-# TODO: parallelize training
-# TODO: train on openwebtext dataset.
-# TODO: 2.7 experiments.

@@ -254,12 +254,12 @@ def train():
         model.eval()
         with torch.inference_mode():
             pbar = tqdm(total=valid_steps, desc=f"valid-epoch {i + 1}")
-            for i in range(valid_steps):
+            for _ in range(valid_steps):
                 batch = data_loading(valid_data, args.batch_size, args.seq_length, device)
                 valid_loss += compute_inputs_loss(batch).item()
                 pbar.update()
 
-        valid_loss = valid_loss / len(valid_steps)
+        valid_loss = valid_loss / valid_steps
         print(f"epoch {i + 1} valid_loss: {valid_loss}")
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
