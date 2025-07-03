@@ -1,13 +1,13 @@
 import argparse
 import math
 from collections.abc import Iterable
+from typing import Callable, Optional
 import torch
 from tqdm import tqdm
 from transformers import GPT2Tokenizer
-from src.transformer import Transformer
+from src.transformer import Transformer, softmax
 from src.tokenizer import Tokenizer
 from torch.optim import AdamW
-import torch.nn.functional as F
 import os
 import wandb
 import numpy as np
@@ -57,9 +57,37 @@ def clip_gradients(params: Iterable, max_norm: float):
         return
     scale_factor = max_norm / (total_norm + 1e-6)
     [grad.data.mul_(scale_factor) for grad in grads]
-    
-    
-# def cross_entropy_loss()
+
+
+def cross_entropy_loss(result: torch.Tensor, labels: torch.Tensor):
+    result = softmax(result, dim=1)
+    indices = torch.arange(result.shape[0])
+    correct_probs = result[indices, labels]
+    return -torch.mean(torch.log(correct_probs))
+
+
+class SGD(torch.optim.Optimizer):
+    # Problem (learning_rate_tuning):
+    # 1e1, kept on 9.30
+    # 1e2, .30, .28
+    # TODO: something fun to test, train the whole model, and get losses curves for 2 epochs, on 5 different lr's
+    def __init__(self, params, lr=1e-3):
+        super().__init__(params, {"lr": lr})
+
+    def step(self, closure: Callable | None = None):
+        loss = None if closure is None else closure()
+        for group in self.param_groups:
+            lr = group["lr"]
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+
+                state = self.state[p]
+                t = state.get("t", 0)  # step
+                grad = p.grad.data
+                p.data -= lr / math.sqrt(t + 1) * grad  # update
+                state["t"] = t + 1  # update step
+        return loss
 
 
 def get_args():
@@ -160,6 +188,7 @@ def train():
         lr=lr_min,
         weight_decay=args.adam_weight_decay,
     )
+    # optim = SGD(model.parameters(), lr=1e3)
 
     use_checkpoint, load_at_epoch = False, 0
     # TODO: load wandb later. (continue it)
@@ -172,7 +201,7 @@ def train():
         output = model(input_ids, None)
         output_flatten = output.view(-1, output.shape[-1])
         labels = labels.contiguous().view(-1)
-        return F.cross_entropy(output_flatten, labels)
+        return cross_entropy_loss(output_flatten, labels)
 
     best_valid_loss = float("inf")
 
@@ -185,6 +214,7 @@ def train():
             batch = data_loading(train_data, args.batch_size, args.seq_length, device)
             optim.zero_grad()
             loss = compute_inputs_loss(batch)
+            print("loss:", loss.item())
             train_loss += loss.item()
             loss.backward()
             clip_gradients(model.parameters(), max_norm=1.0)
