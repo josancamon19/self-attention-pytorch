@@ -1,0 +1,2 @@
+.tokenizer/TinyStoriesV2-GPT4-train-encoded.npy filter=lfs diff=lfs merge=lfs -text
+.tokenizer/TinyStoriesV2-GPT4-valid-encoded.npy filter=lfs diff=lfs merge=lfs -text
