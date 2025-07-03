@@ -3,6 +3,8 @@ from line_profiler import profile
 import regex as re
 import json
 import torch
+import numpy as np
+from tqdm import tqdm
 
 
 class Tokenizer:
@@ -122,7 +124,7 @@ class Tokenizer:
             strings, special_tokens_sep = [input_text], []
 
         tokenized = []
-        for si, string in enumerate(strings):
+        for si, string in tqdm(enumerate(strings), desc="Tokenizer.encode", total=len(strings)):
             for match in self.PAT.finditer(string):
                 pretoken_bytes = match.group().encode("utf-8")
 
@@ -188,24 +190,21 @@ class Tokenizer:
 
 
 if __name__ == "__main__":
+    _type = "train"
     tokenizer = Tokenizer.from_files(
-        ".tokenizer/TinyStoriesV2-GPT4-valid-vocab.json", ".tokenizer/TinyStoriesV2-GPT4-valid-merges.json"
+        f".tokenizer/TinyStoriesV2-GPT4-{_type}-vocab.json",
+        f".tokenizer/TinyStoriesV2-GPT4-{_type}-merges.json",
     )
+    with open(f"data/TinyStoriesV2-GPT4-{_type}.txt", "rb") as f:
+        content = f.read().decode("utf-8", errors="ignore")
 
-    with open("data/TinyStoriesV2-GPT4-valid.txt", "rb") as f:
-        samples = f.read().decode("utf-8", errors="ignore").split("<|endoftext|>")
-        samples = [s.strip() for s in samples]
-        print("len(samples):", len(samples))
+    output = tokenizer.encode(content)
+    output_np = np.array(output, dtype=np.uint16)
+    output_path = f".tokenizer/TinyStoriesV2-GPT4-{_type}-encoded.npy"
+    np.save(output_path, output_np)
+    print(f"Saved tokenized output with shape {output_np.shape} to {output_path}")
 
-    batch = samples[:512]
-    print(batch[0])
-    # print(batch)
-    output = tokenizer.encode_batched(batch, True, 512, True)
-    print(output["input_ids"][0])
 
-# TODO: train on tinystories dataset, vocabsize 10k (store to disk)
-# TODO: profile the code
 # TODO: parallelize training
-
 # TODO: train on openwebtext dataset.
 # TODO: 2.7 experiments.

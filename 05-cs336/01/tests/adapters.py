@@ -10,6 +10,7 @@ import numpy.typing as npt
 import torch
 from torch import Tensor
 from src import tokenizer, train_tokenizer
+from src.train_transformer import data_loading
 from src.transformer import (
     Linear,
     Embedding,
@@ -515,7 +516,7 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    return data_loading(dataset, batch_size, context_length, device)
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:

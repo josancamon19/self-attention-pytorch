@@ -1,7 +1,6 @@
 import argparse
 import math
 import torch
-from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from transformers import GPT2Tokenizer
 from src.transformer import Transformer
@@ -10,83 +9,21 @@ from torch.optim import AdamW
 import torch.nn.functional as F
 import os
 import wandb
+import numpy as np
 
 os.makedirs("./.models", exist_ok=True)
 
 
-class PretrainDataset(Dataset):
-    def __init__(
-        self,
-        tokenizer: GPT2Tokenizer | Tokenizer,
-        dataset_path: str,
-        max_sequence_length: int,
-        max_samples: int = None,
-    ):
-        self.samples = []
-        self.dataset_path = dataset_path
-        with open(dataset_path, "rb") as f:
-            self.samples = f.read().decode("utf-8", errors="ignore").split("<|endoftext|>")
-            self.samples = [s.strip() for s in self.samples]
-            print("len(samples):", len(self.samples))
-
-        # TODO: missing a lot of tokens when truncating, many > max sequence length
-        # with open(dataset_path, "r", encoding="utf-8", errors="ignore") as f:
-        #     current_pos = 0
-        #     buffer = ""
-        #     for line in f:
-        #         if max_samples and len(self.samples) >= max_samples:
-        #             break
-        #         buffer += line
-
-        #         while "<|endoftext|>" in buffer:
-        #             before, after = buffer.split("<|endoftext|>", 1)
-        #             if before.strip():
-        #                 start_pos = current_pos
-        #                 end_pos = current_pos + len(before.encode("utf-8"))
-        #                 self.samples.append((start_pos, end_pos))
-        #             current_pos += len(before.encode("utf-8")) + len(b"<|endoftext|>")
-        #             buffer = after
-
-        #     # Handle remaining buffer
-        #     if buffer.strip():
-        #         start_pos = current_pos
-        #         end_pos = current_pos + len(buffer.encode("utf-8"))
-        #         self.samples.append((start_pos, end_pos))
-
-        self.tokenizer = tokenizer
-        self.max_sequence_length = max_sequence_length
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        # start_pos, end_pos = self.samples[idx]
-        # with open(self.dataset_path, encoding="utf-8", errors="ignore") as f:
-        #     f.seek(start_pos)
-        #     text = f.read(end_pos - start_pos)
-        # return text.strip()
-        return self.samples[idx]
-
-    def collate_fn(self, batch: list[str]) -> tuple[torch.Tensor, torch.Tensor]:
-        if isinstance(self.tokenizer, Tokenizer):
-            tokenized = self.tokenizer.encode_batched(
-                batch,
-                truncation=True,
-                max_sequence_length=self.max_sequence_length,
-                padding=True,
-            )
-        else:
-            tokenized = self.tokenizer(
-                batch,
-                return_tensors="pt",
-                padding="longest",
-                truncation=True,
-                max_length=self.max_sequence_length,
-            )
-        return {
-            "input_ids": tokenized["input_ids"],
-            "attention_mask": tokenized["attention_mask"],
-        }
+def data_loading(
+    x: np.ndarray,
+    batch_size: int,
+    context_length: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    starting_indices = torch.randint(0, len(x) - context_length, (batch_size,))
+    indices = starting_indices.unsqueeze(1) + torch.arange(context_length + 1)
+    batch = torch.from_numpy(x[indices]).to(device, dtype=torch.long)
+    return batch[:, :-1], batch[:, 1:]
 
 
 def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, path: str):
@@ -118,8 +55,8 @@ def get_args():
     args, _ = parser.parse_known_args()
 
     if args.dataset == "tinystories":
-        default_train_dataset = "data/TinyStoriesV2-GPT4-train.txt"
-        default_valid_dataset = "data/TinyStoriesV2-GPT4-valid.txt"
+        default_train_dataset = ".tokenizer/TinyStoriesV2-GPT4-train-encoded.npy"
+        default_valid_dataset = ".tokenizer/TinyStoriesV2-GPT4-valid-encoded.npy"
         default_tokenizer_vocab = ".tokenizer/TinyStoriesV2-GPT4-train-vocab.json"
         default_tokenizer_merges = ".tokenizer/TinyStoriesV2-GPT4-train-merges.json"
         default_epochs = 20
@@ -133,8 +70,8 @@ def get_args():
         default_num_layers = 4
         default_num_attention_heads = 16
     else:  # owt
-        default_train_dataset = "data/owt_train.txt"
-        default_valid_dataset = "data/owt_valid.txt"
+        # default_train_dataset = "data/owt_train.txt"
+        # default_valid_dataset = "data/owt_valid.txt"
         default_epochs = 3
         default_lr_min = 1e-5
         default_lr_warmup = 2000
@@ -193,6 +130,7 @@ def get_args():
 
 def train():
     args = get_args()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if args.hf_tokenizer:
         tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
         tokenizer.pad_token = tokenizer.eos_token
@@ -203,24 +141,13 @@ def train():
             ["<|endoftext|>"],
         )
 
-    train_dataset = PretrainDataset(tokenizer, args.train_dataset_path, args.seq_length)
-    valid_dataset = PretrainDataset(tokenizer, args.valid_dataset_path, args.seq_length)
-    train_dataloader = DataLoader(
-        train_dataset,
-        args.batch_size,
-        shuffle=True,
-        collate_fn=train_dataset.collate_fn,
-        pin_memory=True,
-        # num_workers=4,
-        # persistent_workers=True,
-    )
-    valid_dataloader = DataLoader(
-        valid_dataset,
-        args.batch_size,
-        shuffle=False,
-        collate_fn=valid_dataset.collate_fn,
-        pin_memory=True,
-    )
+    # TODO: when using owt, too big use memmap
+    train_data = np.load(args.train_dataset_path)
+    valid_data = np.load(args.valid_dataset_path)
+    train_steps = len(train_data) // args.seq_length // args.batch_size
+    valid_steps = len(valid_data) // args.seq_length // args.batch_size
+    # TODO: should be all init first?, kinda doesn't matter
+
     model = Transformer(
         tokenizer.vocab_size,
         args.seq_length,
@@ -228,7 +155,6 @@ def train():
         args.num_layers,
         args.num_attention_heads,
     )
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
     epochs = args.epochs
@@ -236,7 +162,7 @@ def train():
     lr_min = args.lr_min
     lr_max = args.lr_max
     warmup_steps = args.lr_warmup_steps
-    annealing_steps = len(train_dataloader) * epochs
+    annealing_steps = train_steps
 
     run = wandb.init(project="cs336-assignment-01", config=vars(args))
 
@@ -253,14 +179,10 @@ def train():
         load_checkpoint(model, optim, f"./.models/gpt2-epoch-{load_at_epoch}.pt")
 
     def compute_inputs_loss(batch):
-        input_ids = batch["input_ids"][:, :-1].to(device)
-        labels = batch["input_ids"][:, 1:].to(device)  # better way to slice
-        # print("input_ids.shape, labels.shape:", input_ids.shape, labels.shape)
-        attention_mask = batch["attention_mask"][:, :-1].to(device)
-        output = model(input_ids, attention_mask)
+        input_ids, labels = batch
+        output = model(input_ids, None)
         output_flatten = output.view(-1, output.shape[-1])
         labels = labels.contiguous().view(-1)
-        # print("output, output_flatten, labels:", output.shape, output_flatten.shape, labels.shape)
         return F.cross_entropy(output_flatten, labels)
 
     best_valid_loss = float("inf")
@@ -269,12 +191,14 @@ def train():
     for i in range(epochs):
         train_loss = 0
         model.train()
-        for batch in tqdm(train_dataloader, desc=f"train-epoch {i + 1}"):
+        pbar = tqdm(total=train_steps, desc=f"train-epoch {i + 1}")
+        for j in range(train_steps):
+            batch = data_loading(train_data, args.batch_size, args.seq_length, device)
             optim.zero_grad()
             loss = compute_inputs_loss(batch)
             train_loss += loss.item()
             loss.backward()
-            # TODO: implement manually
+
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             lr = cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, steps)
             for param_group in optim.param_groups:
@@ -284,17 +208,21 @@ def train():
 
             if steps % 20 == 0:
                 run.log({"lr": lr}, step=steps)
+            pbar.update(1)
 
-        train_loss = train_loss / len(train_dataloader)
+        train_loss = train_loss / 10
         print(f"epoch {i + 1} train_loss: {train_loss}")
 
         valid_loss = 0
         model.eval()
         with torch.inference_mode():
-            for batch in tqdm(valid_dataloader, desc=f"valid-epoch {i + 1}"):
+            pbar = tqdm(total=valid_steps, desc=f"valid-epoch {i + 1}")
+            for i in range(valid_steps):
+                batch = data_loading(valid_data, args.batch_size, args.seq_length, device)
                 valid_loss += compute_inputs_loss(batch).item()
+                pbar.update()
 
-        valid_loss = valid_loss / len(valid_dataloader)
+        valid_loss = valid_loss / len(valid_steps)
         print(f"epoch {i + 1} valid_loss: {valid_loss}")
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
@@ -303,4 +231,5 @@ def train():
         run.log({"train_loss": train_loss, "valid_loss": valid_loss, "steps": steps})
 
 
-train()
+if __name__ == "__main__":
+    train()
