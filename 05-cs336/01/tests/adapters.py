@@ -10,7 +10,7 @@ import numpy.typing as npt
 import torch
 from torch import Tensor
 from src import tokenizer, train_tokenizer
-from src.train_transformer import data_loading
+from src.train_transformer import clip_gradients, data_loading
 from src.transformer import (
     Linear,
     Embedding,
@@ -562,7 +562,7 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise NotImplementedError
+    raise clip_gradients(parameters, max_l2_norm)
 
 
 def get_adamw_cls() -> type[torch.optim.Optimizer]:

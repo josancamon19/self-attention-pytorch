@@ -1,5 +1,6 @@
 import argparse
 import math
+from collections.abc import Iterable
 import torch
 from tqdm import tqdm
 from transformers import GPT2Tokenizer
@@ -46,6 +47,19 @@ def cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, step):
         return lr_min + ((1 + cos) / 2) * (lr_max - lr_min)
     else:  # step > annealing_steps
         return lr_min
+
+
+def clip_gradients(params: Iterable, max_norm: float):
+    grads = [p.grad for p in params]
+    norms = [torch.linalg.vector_norm(g) for g in grads]
+    total_norm = torch.linalg.vector_norm(torch.stack(norms))
+    if total_norm < max_norm:
+        return
+    scale_factor = max_norm / (total_norm + 1e-6)
+    [grad.data.mul_(scale_factor) for grad in grads]
+    
+    
+# def cross_entropy_loss()
 
 
 def get_args():
@@ -103,31 +117,6 @@ def get_args():
     return parser.parse_args()
 
 
-# TODO: SGD
-# TODO: AdamW
-# TODO: lrScheduler, gradient clipping
-# TODO: implement cross entropy loss
-# TODO: params/training accounting math
-# TODO: inference
-# TODO: lr scheduler + gradient clipping
-
-# TODO: train 30/40 min runtime, 1 epoch, 2.5 hours .-., is it because of tokenizer 52k instead of 10k?
-# - overfit to single minibatch, is it working? yes
-# TODO: oblations logs, multi experiment parallel testing setup
-# - monitor activations norms, model, weights, gradients, - vanishing/exploding?
-# - lr experiments tuning
-# TODO: batch size variations, 2 H100, try new lr's as well, explain reasoning
-# - - can do ddp? or zero stage 2? cause 2 GPU's?, what happens when you just have 2 gpu's?
-# TODO: inference
-# TODO: ablations
-# - layer norm (no/pre/post)
-# - pos embeddings (sinusoidal/no/rope)
-# - swiglu silu relu
-# TODO: train on open web text, get best with hyper param tuning.
-# TODO: leaderboard, 1.5h H100s
-# TODO: Muon
-
-
 def train():
     args = get_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -144,9 +133,9 @@ def train():
     # TODO: when using owt, too big use memmap
     train_data = np.load(args.train_dataset_path)
     valid_data = np.load(args.valid_dataset_path)
+    print(len(train_data), args.seq_length, args.batch_size)
     train_steps = len(train_data) // args.seq_length // args.batch_size
     valid_steps = len(valid_data) // args.seq_length // args.batch_size
-    # TODO: should be all init first?, kinda doesn't matter
 
     model = Transformer(
         tokenizer.vocab_size,
@@ -198,8 +187,8 @@ def train():
             loss = compute_inputs_loss(batch)
             train_loss += loss.item()
             loss.backward()
-
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            clip_gradients(model.parameters(), max_norm=1.0)
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             lr = cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, steps)
             for param_group in optim.param_groups:
                 param_group["lr"] = lr
@@ -210,7 +199,7 @@ def train():
                 run.log({"lr": lr}, step=steps)
             pbar.update(1)
 
-        train_loss = train_loss / 10
+        train_loss = train_loss / train_steps
         print(f"epoch {i + 1} train_loss: {train_loss}")
 
         valid_loss = 0
