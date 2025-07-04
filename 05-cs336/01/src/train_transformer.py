@@ -204,7 +204,7 @@ def train():
     train_data = np.load(args.train_dataset_path)
     valid_data = np.load(args.valid_dataset_path)
     print(len(train_data), args.seq_length, args.batch_size)
-    train_steps = len(train_data) // args.seq_length // args.batch_size
+    train_steps = 327000000 // args.seq_length // args.batch_size
     valid_steps = len(valid_data) // args.seq_length // args.batch_size
 
     model = Transformer(
@@ -236,7 +236,11 @@ def train():
     # TODO: load wandb later. (continue it)
     # TODO: cursor linter is trash, why?
     if use_checkpoint:
-        load_checkpoint(model, optim, f"./.models/gpt2-epoch-{load_at_epoch}.pt")
+        load_checkpoint(
+            model,
+            optim,
+            f"./.models/gpt2-epoch-{load_at_epoch}.pt",
+        )
 
     def compute_inputs_loss(batch):
         input_ids, labels = batch
@@ -287,7 +291,7 @@ def train():
         print(f"epoch {i + 1} valid_loss: {valid_loss}")
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
-            save_checkpoint(model, optim, f"./.models/gpt2-epoch-{i + 1}.pt")
+            save_checkpoint(model, optim, f"./.models/gpt2-epoch-{i + 1}.pt", i + 1)
 
         run.log({"train_loss": train_loss, "valid_loss": valid_loss, "steps": steps})
 
