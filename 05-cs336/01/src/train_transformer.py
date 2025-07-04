@@ -8,6 +8,7 @@ from transformers import GPT2Tokenizer
 from src.transformer import Transformer
 from src.tokenizer import Tokenizer
 from torch.optim import AdamW
+import torch.nn.functional as F
 import os
 import wandb
 import numpy as np
@@ -60,6 +61,7 @@ def cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, step):
         return lr_min
 
 
+# TODO: not optimal when compared to original ones, not at all, why?
 def clip_gradients(params: Iterable, max_norm: float):
     grads = [p.grad for p in params if p.grad is not None]
     norms = [torch.linalg.vector_norm(g) for g in grads]
@@ -219,7 +221,8 @@ def train():
         output = model(input_ids, None)
         output_flatten = output.view(-1, output.shape[-1])
         labels = labels.contiguous().view(-1)
-        return cross_entropy_loss(output_flatten, labels)
+        # return cross_entropy_loss(output_flatten, labels)
+        return F.cross_entropy(output_flatten, labels)
 
     best_valid_loss = float("inf")
 
@@ -232,11 +235,10 @@ def train():
             batch = data_loading(train_data, args.batch_size, args.seq_length, device)
             optim.zero_grad()
             loss = compute_inputs_loss(batch)
-            print("loss:", loss.item())
             train_loss += loss.item()
             loss.backward()
-            clip_gradients(model.parameters(), max_norm=1.0)
-            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # clip_gradients(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             lr = cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, steps)
             for param_group in optim.param_groups:
                 param_group["lr"] = lr
