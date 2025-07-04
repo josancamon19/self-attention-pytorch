@@ -51,21 +51,16 @@ class Tokenizer:
         padding: bool = True,
     ):
         encoded = []
-        # Sequential processing is faster for typical batch sizes
         for item in batch:
-            # Only truncate text if it's extremely long (char-level optimization)
             if truncation and max_sequence_length and len(item) > max_sequence_length * 4:
                 item = item[: max_sequence_length * 4]  # Rough char->token ratio
 
             item_enc = self.encode(item)
 
-            # Truncate tokens if needed
             if truncation and max_sequence_length:
                 item_enc = item_enc[:max_sequence_length]
 
             encoded.append(item_enc)
-
-        # encode_time = time.perf_counter() - encode_start
 
         if not encoded:
             return {
@@ -77,10 +72,7 @@ class Tokenizer:
         max_length = (
             max(len(seq) for seq in encoded) if padding else max_sequence_length or max(len(seq) for seq in encoded)
         )
-        # print("max_length:", max_length)
 
-        # Pre-allocate tensors for efficiency
-        # tensor_start = time.perf_counter()
         batch_size = len(encoded)
         input_ids = torch.full((batch_size, max_length), self.pad_id, dtype=torch.long)
         attention_mask = (
@@ -99,17 +91,11 @@ class Tokenizer:
                     attention_mask[i, :seq_len] = 1  # Real tokens get 1, padding stays 0
                 else:
                     attention_mask[i, :seq_len] = 1
-        # tensor_time = time.perf_counter() - tensor_start
-
-        # total_time = time.perf_counter() - start_time
-        # print(
-        #     f"[TOKENIZER PROFILE] Total: {total_time:.4f}s | Encode: {encode_time:.4f}s | Tensor: {tensor_time:.4f}s | Batch size: {batch_size}"
-        # )
 
         return {"input_ids": input_ids, "attention_mask": attention_mask}
 
     @profile
-    def encode(self, input_text: str) -> list[int]:
+    def encode(self, input_text: str, show_progress: bool = True) -> list[int]:
         if self.special_tokens:
             strings = re.split(self.split_special_tokens, input_text)
             special_tokens_sep = [m.group().encode("utf-8") for m in re.finditer(self.split_special_tokens, input_text)]
@@ -117,7 +103,9 @@ class Tokenizer:
             strings, special_tokens_sep = [input_text], []
 
         tokenized = []
-        for si, string in tqdm(enumerate(strings), desc="Tokenizer.encode", total=len(strings)):
+        for si, string in tqdm(
+            enumerate(strings), desc="Tokenizer.encode", total=len(strings), disable=not show_progress
+        ):
             for match in self.PAT.finditer(string):
                 pretoken_bytes = match.group().encode("utf-8")
 
