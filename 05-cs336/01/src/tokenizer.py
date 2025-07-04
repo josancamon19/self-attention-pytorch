@@ -50,14 +50,7 @@ class Tokenizer:
         max_sequence_length: int = 0,
         padding: bool = True,
     ):
-        # import time
-
-        # start_time = time.perf_counter()
-
-        # Encode all sequences
         encoded = []
-        # encode_start = time.perf_counter()
-
         # Sequential processing is faster for typical batch sizes
         for item in batch:
             # Only truncate text if it's extremely long (char-level optimization)
@@ -191,15 +184,24 @@ class Tokenizer:
 
 if __name__ == "__main__":
     _type = "valid"
-    tokenizer = Tokenizer.from_files(
-        ".tokenizer/TinyStoriesV2-GPT4-train-vocab.json",
-        ".tokenizer/TinyStoriesV2-GPT4-train-merges.json",
-    )
-    with open(f"data/TinyStoriesV2-GPT4-{_type}.txt", "rb") as f:
+    # dataset = "tinystories"
+    dataset = "owt"
+    if dataset == "tinystories":
+        vocab = ".tokenizer/TinyStoriesV2-GPT4-train-vocab.json"
+        merges = ".tokenizer/TinyStoriesV2-GPT4-train-merges.json"
+        text_data = f"data/TinyStoriesV2-GPT4-{_type}.txt"
+        output_path = f".tokenizer/TinyStoriesV2-GPT4-{_type}-encoded.npy"
+    else:
+        vocab = ".tokenizer/owt_train-vocab.json"
+        merges = ".tokenizer/owt_train-merges.json"
+        text_data = f"data/owt_{_type}.txt"
+        output_path = f".tokenizer/owt_{_type}-encoded.npy"
+
+    tokenizer = Tokenizer.from_files(vocab, merges)
+    with open(text_data, "rb") as f:
         content = f.read().decode("utf-8", errors="ignore")
 
     output = tokenizer.encode(content)
     output_np = np.array(output, dtype=np.uint16)
-    output_path = f".tokenizer/TinyStoriesV2-GPT4-{_type}-encoded.npy"
     np.save(output_path, output_np)
     print(f"Saved tokenized output with shape {output_np.shape} to {output_path}")

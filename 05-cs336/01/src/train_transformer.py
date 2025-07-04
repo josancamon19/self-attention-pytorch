@@ -5,7 +5,7 @@ from collections.abc import Callable
 import torch
 from tqdm import tqdm
 from transformers import GPT2Tokenizer
-from src.transformer import Transformer
+from src.transformer import Transformer, softmax
 from src.tokenizer import Tokenizer
 from torch.optim import AdamW
 import torch.nn.functional as F
@@ -165,6 +165,28 @@ def get_args():
     return parser.parse_args()
 
 
+def generate(
+    args,
+    model_path: str,
+    prompt: list[str],
+    seq_length: int,
+):
+    tokenizer = Tokenizer.from_files(
+        args.tokenizer_vocab_path,
+        args.tokenizer_merges_path,
+        ["<|endoftext|>"],
+    )
+    encoded = tokenizer.encode_batched(prompt, True, args.seq_length, True)
+    input_ids, attention_mask = encoded["input_ids"], encoded["attention_mask"]
+    data = torch.load(model_path)
+    model = Transformer()
+    model.load_state_dict(data["model"])
+    for _ in range(seq_length):
+        logits = model(input_ids, attention_mask)
+        softmax(logits, dim=1)
+    pass
+
+
 def train():
     args = get_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -199,7 +221,7 @@ def train():
     lr_min = args.lr_min
     lr_max = args.lr_max
     warmup_steps = args.lr_warmup_steps
-    annealing_steps = train_steps
+    annealing_steps = train_steps * epochs
 
     run = wandb.init(project="cs336-assignment-01", config=vars(args))
 
