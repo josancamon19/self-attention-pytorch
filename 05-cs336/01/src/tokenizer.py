@@ -183,7 +183,7 @@ class Tokenizer:
 
 
 if __name__ == "__main__":
-    _type = "valid"
+    _type = "train"
     # dataset = "tinystories"
     dataset = "owt"
     if dataset == "tinystories":
