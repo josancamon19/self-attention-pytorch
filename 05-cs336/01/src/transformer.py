@@ -181,7 +181,7 @@ class MultiHeadSelfAttention(nn.Module):
             q = self.rope(q)
             k = self.rope(k)
 
-        attention_scores = q @ k.transpose(-2, -1)
+        attention_scores = q @ k.transpose(-2, -1)  # b, num_heads, seq_length, seq_length
         attention_scores = attention_scores / math.sqrt(self.head_size)
 
         mask = torch.tril(torch.ones((seq_length, seq_length))).to(q.device)

@@ -186,5 +186,103 @@
 
 # 3.6 transformer resource accounting
 
+# vocab_size : 50,257
+# context_length : 1,024
+# num_layers : 48
+# d_model : 1,600
+# num_heads : 25
+# d_ff : 6400
+
+# Embedding: vocab_size * d_model = 80411200
+# 1 Layer = 40963200
+# - Attention = 10240000 (4 * d_model^2)
+# -- Q,K,V: 3 * d_model * d_model
+# -- W_O = d_model * d_model
+# - 2 RMS Norm = 2 * d_model = 3200
+# - PosWise FFN = 30720000 (3*d_model*dff)
+# -- w1, w3 = d_model * dff
+# -- w2 = dff * d_model
+# output norm: 1 * d_model
+# output: d_model * vocab_size = 80411200
+
+# 1. trainable parameters?
+# 80411200 +
+# 48 * 40963200 = 1,966,233,600
+# + 80411200
+# = 2,126,902,400
+
+# 2. memory in FP32 (single precision) with XL
+# parameters * bytes? = 8,507,609,600 = 8.5GB to load.
+
+# 3. matmuls, forwardpass
+# $seq_length
+
+# matmuls
+#  A: (m, k), B: (k, n) → Output: (m, n)
+# - FLOPs = m × n × k × 2
+
+# - x = seq_length, d_model
+# - 1 block
+# -- attention
+# - x @ q,k,v = 3 * seq_length * d_model * d_model
+# - scores (q @ k) = seq_length * d_model * seq_length
+# - scores @ v = seq_length * d_model * seq_length
+# - wo = seq_length * d_model * d_model
+# - = 3 * seq_length * d_model^2 + 2 * seq_length^2 * d_model
+# - = seq_length * 7,680,000 + 3200 * seq_length^2
+# -- poswise = 3 * seq_length * d_model * dff = 30720000 * seq_length
+# - x @ w1,w3 = 2 * seq_length * dff * d_model
+# - above @ w2 = seq_length * d_model * dff
+# -- output = seq_length * vocab_size * d_model = 80411200
+
+# 48*(15360000 * seq_length + 6400 * seq_length ^ 2 + 61,440,000 * seq_length) + seq_length * 160822400
+def compute_flops(seq_length: int):
+    attention = 48 * (15360000 * seq_length + 6400 * seq_length**2)
+    mlp = 48 * (61440000 * seq_length)
+    output = seq_length * 160822400
+
+    total_flops = attention + mlp + output
+
+    attention_pct = (attention / total_flops) * 100
+    mlp_pct = (mlp / total_flops) * 100
+    output_pct = (output / total_flops) * 100
+
+    print(f"🔍 Sequence Length: {seq_length:,}")
+    print(f"⚡ Attention FLOPs: {attention:,} ({attention_pct:.1f}%)")
+    print(f"🧠 MLP FLOPs: {mlp:,} ({mlp_pct:.1f}%)")
+    print(f"📤 Output FLOPs: {output:,} ({output_pct:.1f}%)")
+    print(f"🎯 Total FLOPs: {total_flops:,}")
+    print("=" * 50)
+
+    return total_flops
 
 
+# compute_flops(1)
+# compute_flops(10)
+# compute_flops(100)
+# compute_flops(1000)
+# compute_flops(10000)
+# compute_flops(16384)
+
+
+# --------
+# Forward activations
+# - sizes at each
+# q,k,v = 3 * num_heads * seq_length * head_size = 4800 * seq_length values
+# q @ k = num_heads * seq_length * seq_length = 25 * seq_length ^ 2
+# softmax = same as above = 25 * seq_length ^ 2
+# attention weights @ v = num_heads * seq_length * head_size =1600 * seq_length
+# W_O = seq_length * d_model 1600 * seq_length
+
+# = 8000 * seq_length + 50 * seq_length ** 2
+ 
+# - residual = activations sum ocuppy the same?
+# - MLP
+# -- w1x = seq_length, dff
+# -- activation = ""
+# -- w3x = seq_length, dff
+# -- w2x = seq_length, d_model
+
+# 
+
+# - Do you store the norms as well and activations as same size?

@@ -110,6 +110,10 @@ class SGD(torch.optim.Optimizer):
         return loss
 
 
+def get_tokenizer(args):
+    return Tokenizer.from_files(args.tokenizer_vocab_path, args.tokenizer_merges_path, ["<|endoftext|>"])
+
+
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, choices=["tinystories", "owt"], default="tinystories")
@@ -165,34 +169,46 @@ def get_args():
     return parser.parse_args()
 
 
-def generate(args, model_path: str, prompt: list[str], seq_length: int, temperature: float = 1.0):
-    tokenizer = Tokenizer.from_files(args.tokenizer_vocab_path, args.tokenizer_merges_path, ["<|endoftext|>"])
+def generate(model_path: str, prompt: list[str], target_seq_length: int, temperature: float = 1.0):
+    args = get_args()
+    tokenizer = get_tokenizer(args)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     encoded = tokenizer.encode_batched(prompt, True, args.seq_length, True)
     input_ids, attention_mask = encoded["input_ids"], encoded["attention_mask"]
-    data = torch.load(model_path)
-    model = Transformer()
+    data = torch.load(model_path, map_location=device)
+    model = Transformer(
+        tokenizer.vocab_size,
+        args.seq_length,
+        args.embedding_dim,
+        args.num_layers,
+        args.num_attention_heads,
+    )
     model.load_state_dict(data["model"])
     with torch.inference_mode():
-        for _ in range(seq_length):
+        for _ in range(target_seq_length):
             logits = model(input_ids, attention_mask)
             logits = logits[:, -1, :] / temperature
             probs = softmax(logits, dim=-1)
             # Get the top 10 probabilities and their corresponding token indices
-            top_probs, top_indices = torch.topk(probs, 10, dim=-1)
+            # top_probs, top_indices = torch.topk(probs, 10, dim=-1)
 
-            print("Top 10 probabilities:")
-            for i, (prob, idx) in enumerate(zip(top_probs[0], top_indices[0])):
-                print(f"{i + 1:2d}. Token {idx.item():4d}: {prob.item():.6f}")
+            # print("Top 10 probabilities:")
+            # for i, (prob, idx) in enumerate(zip(top_probs[0], top_indices[0])):
+            #     print(f"{i + 1:2d}. Token {idx.item():4d}: {prob.item():.6f}")
             # TODO: explore implementation in detail
             next_token = torch.multinomial(probs, 1)
+            print("next_token:", f'"{tokenizer.decode([next_token.item()])}"')
             input_ids = torch.cat([input_ids, next_token], dim=1)
-            attention_mask = torch.cat([attention_mask, torch.ones((1,))], dim=1)
+            attention_mask = torch.cat([attention_mask, torch.ones((1, 1))], dim=1)
             # TODO: implement topk
-            print(next_token)
-            break
+            # print(next_token)
+            # break
 
     generated_tokens = input_ids[0].tolist()
-    return tokenizer.decode(generated_tokens)
+    decoded = tokenizer.decode(generated_tokens)
+    print("decoded:", decoded)
+    return decoded
 
 
 def train():
@@ -202,11 +218,7 @@ def train():
         tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
         tokenizer.pad_token = tokenizer.eos_token
     else:
-        tokenizer = Tokenizer.from_files(
-            args.tokenizer_vocab_path,
-            args.tokenizer_merges_path,
-            ["<|endoftext|>"],
-        )
+        tokenizer = get_tokenizer(args)
 
     # TODO: when using owt, too big use memmap
     train_data = np.load(args.train_dataset_path)
@@ -304,5 +316,37 @@ def train():
         run.log({"train_loss": train_loss, "valid_loss": valid_loss, "steps": steps})
 
 
+def run_validation(model_path: str):
+    args = get_args()
+    tokenizer = get_tokenizer(args)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = Transformer(
+        tokenizer.vocab_size,
+        args.seq_length,
+        args.embedding_dim,
+        args.num_layers,
+        args.num_attention_heads,
+    )
+
+    valid_data = np.load(args.valid_dataset_path)[:100000]
+    data = torch.load(model_path, map_location=device)
+    model.load_state_dict(data["model"])
+    model.to(device)
+    valid_loss = 0
+    valid_steps = len(valid_data) // args.seq_length // args.batch_size
+    with torch.inference_mode():
+        pbar = tqdm(total=valid_steps, desc="valid-dataset")
+        for _ in range(valid_steps):
+            batch = data_loading(valid_data, args.batch_size, args.seq_length, device)
+            input_ids, labels = batch
+            output = model(input_ids, None)
+            output_flatten = output.view(-1, output.shape[-1])
+            labels = labels.contiguous().view(-1)
+            valid_loss += F.cross_entropy(output_flatten, labels).item()
+            pbar.update()
+    print(valid_loss / valid_steps)
+
 if __name__ == "__main__":
-    train()
+    # train()
+    generate(".models/gpt2-epoch-4.pt", ["Hi,"], target_seq_length=100)
+    # run_validation(".models/gpt2-epoch-4.pt")
