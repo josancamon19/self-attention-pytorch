@@ -266,23 +266,35 @@ def compute_flops(seq_length: int):
 
 
 # --------
+# MEMORY during training
+
 # Forward activations
-# - sizes at each
-# q,k,v = 3 * num_heads * seq_length * head_size = 4800 * seq_length values
-# q @ k = num_heads * seq_length * seq_length = 25 * seq_length ^ 2
-# softmax = same as above = 25 * seq_length ^ 2
-# attention weights @ v = num_heads * seq_length * head_size =1600 * seq_length
-# W_O = seq_length * d_model 1600 * seq_length
-
-# = 8000 * seq_length + 50 * seq_length ** 2
-
-# - residual = activations sum ocuppy the same?
+# Transformer Block
+# - input norm: seq_length, embedding_dim
+# - Attention
+# -- q,k,v = 3 * num_heads * seq_length * head_size = 4800 * seq_length values
+# -- q @ k = num_heads * seq_length * seq_length = 25 * seq_length ^ 2
+# -- softmax = same as above = 25 * seq_length ^ 2
+# -- attention weights @ v = num_heads * seq_length * head_size =1600 * seq_length
+# -- W_O = seq_length * d_model 1600 * seq_length
+# - = 8000 * seq_length + 50 * seq_length ** 2
+# - Residual: W_O
+# - MLP norm: W_O
 # - MLP
-# -- w1x = seq_length, dff
-# -- activation = ""
-# -- w3x = seq_length, dff
-# -- w2x = seq_length, d_model
+# -- w1@x = seq_length * dff
+# -- activation = w1x*2
+# -- w3@x = seq_length * dff
+# -- activation * w3x = seq_length * dff
+# -- @w2 = seq_length, d_model
+# - = 6400 * 3 * seq_length + 1600 * seq_length
+# - MLP residual = seq_length, d_model
+# - TODO: THIS SEEM WRONG??
+# = num_layers * (~36,000 * seq_length + 50 * seq_length**2)
+# = 
 
-#
+# - Embedding = seq_length * 1600
+# - post blocks norm = seq_length * 1600
+# - output layer = seq_length * 50257
 
-# - Do you store the norms as well and activations as same size?
+# -- Cross entropy loss
+# -- missing softmax in attention

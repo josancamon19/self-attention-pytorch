@@ -50,7 +50,8 @@ def generate(
                     probs.scatter_(1, index=sorted_indices, src=sorted_values)
                     probs = probs / probs.sum(dim=1, keepdim=True)
 
-                next_token = torch.multinomial(probs, 1)  # TODO: check details
+                # TODO: check details, more than random.choice(weighted?)
+                next_token = torch.multinomial(probs, 1)  
 
             if next_token == 256:
                 print("generate hit <|endoftext|> token.")
