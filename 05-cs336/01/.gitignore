@@ -170,3 +170,4 @@ result.json
 *sample_file.txt
 tests/fixtures/snapshots/*.json
 .models
+.tokenizer/owt_train-encoded.npy

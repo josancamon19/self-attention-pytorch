@@ -199,7 +199,6 @@ def generate(
     model.load_state_dict(data["model"])
     with torch.inference_mode():
         for _ in range(target_seq_length):
-            # TODO: handle multiple sequences + longer than context
             logits = model(input_ids, attention_mask)[:, -1, :]
             if temperature == 0:
                 next_token = torch.argmax(logits).unsqueeze(0).unsqueeze(0)
