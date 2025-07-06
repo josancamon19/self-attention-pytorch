@@ -275,7 +275,7 @@ def compute_flops(seq_length: int):
 # W_O = seq_length * d_model 1600 * seq_length
 
 # = 8000 * seq_length + 50 * seq_length ** 2
- 
+
 # - residual = activations sum ocuppy the same?
 # - MLP
 # -- w1x = seq_length, dff
@@ -283,6 +283,6 @@ def compute_flops(seq_length: int):
 # -- w3x = seq_length, dff
 # -- w2x = seq_length, d_model
 
-# 
+#
 
 # - Do you store the norms as well and activations as same size?

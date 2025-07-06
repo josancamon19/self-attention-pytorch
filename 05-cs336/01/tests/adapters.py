@@ -10,7 +10,7 @@ import numpy.typing as npt
 import torch
 from torch import Tensor
 from src import tokenizer, train_tokenizer
-from src.train_transformer import (
+from src.nn_utils import (
     clip_gradients,
     cos_lr_schedule,
     cross_entropy_loss,
