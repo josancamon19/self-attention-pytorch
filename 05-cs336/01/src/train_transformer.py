@@ -1,7 +1,7 @@
 import argparse
 import torch
 from tqdm import tqdm
-from transformers import GPT2Tokenizer
+# from transformers import GPT2Tokenizer
 from src.transformer import Transformer
 from src.tokenizer import Tokenizer
 from torch.optim import AdamW
@@ -14,9 +14,9 @@ from src.nn_utils import (
     save_checkpoint,
     load_checkpoint,
     cos_lr_schedule,
-    clip_gradients,
-    cross_entropy_loss,
-    SGD,
+    # clip_gradients,
+    # cross_entropy_loss,
+    # SGD,
 )
 
 os.makedirs("./.models", exist_ok=True)

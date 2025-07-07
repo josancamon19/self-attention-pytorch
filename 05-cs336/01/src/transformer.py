@@ -2,7 +2,7 @@ import math
 import torch.nn as nn
 import torch
 from torch.nn.parameter import Parameter
-from transformers import GPT2Tokenizer
+# from transformers import GPT2Tokenizer
 
 
 # We expect you to build these components from scratch. In particular, you may not
