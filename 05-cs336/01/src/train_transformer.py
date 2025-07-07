@@ -53,6 +53,7 @@ def get_args():
         # default_valid_dataset = "data/owt_valid.txt"
         default_epochs = 3
         default_lr_min = 1e-5
+        # TODO: consider warm up steps for higher lr_max
         default_lr_warmup = 2000
         default_lr_max = 1e-3
         default_adam_weight_decay = 0.01
@@ -79,6 +80,7 @@ def get_args():
     parser.add_argument("--num-layers", type=int, default=default_num_layers)
     parser.add_argument("--num-attention-heads", type=int, default=default_num_attention_heads)
     parser.add_argument("-v", "--verbose", action="store_true", default=False)
+    parser.add_argument("-ss", "--small-subset", action="store_true", default=False)
     return parser.parse_args()
 
 
@@ -122,6 +124,10 @@ def train():
     valid_data = np.load(args.valid_dataset_path)
     train_steps = 327000000 // args.seq_length // args.batch_size
     valid_steps = len(valid_data) // args.seq_length // args.batch_size
+
+    if args.small_subset:
+        train_steps = train_steps * 0.05
+        valid_steps = valid_steps * 0.5
 
     model = Transformer(
         tokenizer.vocab_size,
@@ -198,7 +204,7 @@ def train():
         print(f"epoch {i + 1} valid_loss: {valid_loss}")
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
-            save_checkpoint(model, optim, f"./.models/gpt2-epoch-{i + 1}.pt", i + 1)
+            save_checkpoint(model, optim, f"./.models/gpt2-epoch-{i + 1}-{args.lr_max}.pt", i + 1)
 
         run.log({"train_loss": train_loss, "valid_loss": valid_loss, "steps": steps})
 

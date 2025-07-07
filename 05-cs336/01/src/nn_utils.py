@@ -53,9 +53,13 @@ def cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, step):
 def clip_gradients(params: Iterable, max_norm: float):
     grads = [p.grad for p in params if p.grad is not None]
     norms = [torch.linalg.vector_norm(g) for g in grads]
+    # TODO: is it the stacking
     total_norm = torch.linalg.vector_norm(torch.stack(norms))
-    if total_norm < max_norm:
-        return
+    # TODO: conditionals, requires gpu to sync with python program,
+    # narrowing, tensor into a conditional, max vs torch.max()
+    # if it's built in python (not torch), communication overhead + wait for python + torch runtime.
+    if total_norm < max_norm:  # this is not legal in jax
+        return # if the data depends on the tensor it's bad
     scale_factor = max_norm / (total_norm + 1e-6)
     [grad.data.mul_(scale_factor) for grad in grads]
 
@@ -71,6 +75,7 @@ def cross_entropy_loss(result: torch.Tensor, labels: torch.Tensor):
     indices = torch.arange(result.shape[0])
     correct_log_probs = log_probs[indices, labels]
     # result = softmax(result, dim=1)
+    # -- Marcel: There's a flash implementation of cross entropy, that is just cuda code. Uses online softmax trick.
     return -torch.mean(correct_log_probs)
 
 
@@ -90,6 +95,7 @@ class SGD(torch.optim.Optimizer):
                 if p.grad is None:
                     continue
 
+                # Marcel: you could have faster time per parameter, but not really done
                 state = self.state[p]
                 t = state.get("t", 0)  # step
                 grad = p.grad.data
