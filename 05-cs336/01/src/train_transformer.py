@@ -25,6 +25,8 @@ os.makedirs("./.models", exist_ok=True)
 def get_tokenizer(args):
     return Tokenizer.from_files(args.tokenizer_vocab_path, args.tokenizer_merges_path, ["<|endoftext|>"])
 
+def get_model_path(epoch, lr, batch_size):
+    return f"./.models/gpt2-epoch-{epoch}-lr-{lr}-batch-{batch_size}.pt"
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -141,7 +143,7 @@ def train():
     epochs, lr_min, lr_max, warmup_steps = args.epochs, args.lr_min, args.lr_max, args.lr_warmup_steps
     annealing_steps = train_steps * epochs
 
-    run = wandb.init(project="cs336-assignment-01", config=vars(args))
+    run = wandb.init(project="cs336-assignment-01-hyperparam-search", config=vars(args))
 
     optim = AdamW(
         model.parameters(),
@@ -153,7 +155,7 @@ def train():
     # TODO: load wandb later. (continue it)
     # TODO: cursor linter is trash, why?
     if use_checkpoint:
-        load_checkpoint(model, optim, f"./.models/gpt2-epoch-{load_at_epoch}.pt")
+        load_checkpoint(model, optim, get_model_path(load_at_epoch + 1, args.lr_max, args.batch_size))
 
     def compute_inputs_loss(batch):
         input_ids, labels = batch
@@ -204,7 +206,7 @@ def train():
         print(f"epoch {i + 1} valid_loss: {valid_loss}")
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
-            save_checkpoint(model, optim, f"./.models/gpt2-epoch-{i + 1}-{args.lr_max}.pt", i + 1)
+            save_checkpoint(model, optim, get_model_path(i+1, args.lr_max, args.batch_size), i + 1)
 
         run.log({"train_loss": train_loss, "valid_loss": valid_loss, "steps": steps})
 
