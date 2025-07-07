@@ -126,8 +126,8 @@ def train():
     valid_steps = len(valid_data) // args.seq_length // args.batch_size
 
     if args.small_subset:
-        train_steps = train_steps * 0.05
-        valid_steps = valid_steps * 0.5
+        train_steps = int(train_steps * 0.005)
+        valid_steps = int(valid_steps * 0.05)
 
     model = Transformer(
         tokenizer.vocab_size,
