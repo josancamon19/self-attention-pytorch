@@ -17,6 +17,7 @@ from src.nn_utils import (
     data_loading,
     load_checkpoint,
     save_checkpoint,
+    AdamW
 )
 from src.transformer import (
     Linear,
@@ -577,7 +578,7 @@ def get_adamw_cls() -> type[torch.optim.Optimizer]:
     Returns a torch.optim.Optimizer that implements AdamW.
     """
     # raise NotImplementedError
-    return torch.optim.AdamW
+    return AdamW
 
 
 def run_get_lr_cosine_schedule(
@@ -605,7 +606,7 @@ def run_get_lr_cosine_schedule(
     Returns:
         Learning rate at the given iteration under the specified schedule.
     """
-    raise cos_lr_schedule(min_learning_rate, max_learning_rate, warmup_iters, cosine_cycle_iters, it)
+    return cos_lr_schedule(min_learning_rate, max_learning_rate, warmup_iters, cosine_cycle_iters, it)
 
 
 def run_save_checkpoint(

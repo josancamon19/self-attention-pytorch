@@ -1,6 +1,5 @@
 from collections.abc import Callable, Iterable
 import math
-from typing import Tuple, Union
 import torch
 import numpy as np
 
@@ -128,7 +127,7 @@ class AdamW(torch.optim.Optimizer):
         for group in self.param_groups:
             lr = group["lr"]
             weight_decay = group["weight_decay"]
-            lr_t = lr * (math.sqrt((1 - self.b2**self.t) / (1 - self.b1**self.t)))
+            lr_t = lr * (math.sqrt(1 - self.b2**self.t) / (1 - self.b1**self.t))
             wd_factor = 1 - lr * weight_decay
 
             # print("AdamW.group", group.keys(), lr, weight_decay, len(group["params"]))
@@ -153,3 +152,12 @@ class AdamW(torch.optim.Optimizer):
 
         self.t += 1
         return loss
+
+# TODO: optimize
+# - Flash Attention
+# - Mixed Precision
+# - QKV fussion
+# - Cache causal mask
+# - RMS Norm optimization
+# - Fused SwiGLU
+# - torch.compile model
