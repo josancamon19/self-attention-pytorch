@@ -117,7 +117,10 @@ class AdamW(torch.optim.Optimizer):
         # lr, weight_decay stored for each param group.
         self.b1 = betas[0]
         self.b2 = betas[1]
+        self.b1d = 1 - self.b1
+        self.b2d = 1 - self.b2
         self.eps = eps
+        self.t = 1
         super().__init__(params, {"lr": lr, "weight_decay": weight_decay})
 
     def step(self, closure: Callable | None = None):
@@ -125,23 +128,23 @@ class AdamW(torch.optim.Optimizer):
         for group in self.param_groups:
             lr = group["lr"]
             weight_decay = group["weight_decay"]
+            lr_t = lr * (math.sqrt((1 - self.b2**self.t) / (1 - self.b1**self.t)))
+
             # print("AdamW.group", group.keys(), lr, weight_decay, len(group["params"]))
             for p in group["params"]:
                 if p.grad is None:
                     continue
 
                 state = self.state[p]
-                if "t" not in state:
-                    state["t"] = 0
+                if "m" not in state:
                     state["m"] = torch.zeros_like(p.data)
                     state["v"] = torch.zeros_like(p.data)
 
-                state["t"] += 1
-                state["m"] = self.b1 * state["m"] + (1 - self.b1) * p.grad
-                state["v"] = self.b2 * state["v"] + (1 - self.b2) * p.grad.pow(2)
+                state["m"].mul_(self.b1).add_(p.grad, alpha=self.b1d)
+                state["v"].mul_(self.b2).add_(p.grad.pow(2), alpha=self.b2d)
 
-                lr_t = lr * (math.sqrt((1 - self.b2 ** state["t"]) / (1 - self.b1 ** state["t"])))
-                p.data = p.data - lr_t * (state["m"] / (torch.sqrt(state["v"]) + self.eps))
-                p.data = p.data - lr * weight_decay * p.data
+                p.data.addcdiv_(state["m"], torch.sqrt(state["v"]) + self.eps, value=-lr_t)
+                p.data.mul_(1 - lr * weight_decay)
 
+        self.t += 1
         return loss
