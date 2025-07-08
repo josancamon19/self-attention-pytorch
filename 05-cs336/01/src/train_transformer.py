@@ -50,13 +50,15 @@ def get_args():
         default_adam_weight_decay = 0.1
         default_batch_size = 32
         default_seq_length = 256
-        default_embedding_dim = 512  # gpt suggests 256
+        default_embedding_dim = 512
         default_num_layers = 4
         default_num_attention_heads = 16
     else:  # owt
         # TODO: when using owt, too big use memmap
-        # default_train_dataset = "data/owt_train.txt"
-        # default_valid_dataset = "data/owt_valid.txt"
+        default_train_dataset = ".tokenizer/owt_train-encoded.npy"
+        default_valid_dataset = ".tokenizer/owt_valid-encoded.npy"
+        default_tokenizer_vocab = ".tokenizer/owt_train-vocab.json"
+        default_tokenizer_merges = ".tokenizer/owt_train-merges.json"
         default_epochs = 3
         default_lr_min = 1e-5
         # TODO: consider warm up steps for higher lr_max
@@ -64,10 +66,14 @@ def get_args():
         default_lr_max = 1e-3
         default_adam_weight_decay = 0.01
         default_batch_size = 16
-        default_seq_length = 1024
+        # default_seq_length = 1024
+        # default_embedding_dim = 512
+        # default_num_layers = 8
+        # default_num_attention_heads = 8
+        default_seq_length = 256
         default_embedding_dim = 512
-        default_num_layers = 8
-        default_num_attention_heads = 8
+        default_num_layers = 4
+        default_num_attention_heads = 16
 
     # parser.add_argument("--hf-tokenizer", action="store_true", default=False)
     parser.add_argument("--tokenizer-vocab-path", type=str, default=default_tokenizer_vocab)
@@ -125,11 +131,12 @@ def isolated_validation_check(model_path: str):
 
 def train():
     args = get_args()
+    print("[train]: ", vars(args))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = get_tokenizer(args)
 
-    train_data = np.load(args.train_dataset_path)
-    valid_data = np.load(args.valid_dataset_path)
+    train_data = np.load(args.train_dataset_path, mmap_mode="r")
+    valid_data = np.load(args.valid_dataset_path, mmap_mode="r")
     train_steps = 327000000 // args.seq_length // args.batch_size
     valid_steps = len(valid_data) // args.seq_length // args.batch_size
 
@@ -151,9 +158,9 @@ def train():
 
     if args.checkpoint:
         # assert args.wandb_id is not None
-        run = wandb.init(id=args.wandb_id + "-5", project="cs336-assignment-01-hyperparam-search", config=vars(args))
+        run = wandb.init(id=args.wandb_id + "-1", project="cs336-assignment-01-hyperparam-search", config=vars(args))
     else:
-        run = wandb.init(project="cs336-assignment-01-hyperparam-search", config=vars(args))
+        run = wandb.init(id=args.wandb_id, project="cs336-assignment-01-hyperparam-search", config=vars(args))
 
     optim = AdamW(
         model.parameters(),
