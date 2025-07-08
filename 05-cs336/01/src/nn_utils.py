@@ -79,6 +79,13 @@ def cross_entropy_loss(result: torch.Tensor, labels: torch.Tensor):
     return -torch.mean(correct_log_probs)
 
 
+def cross_entropy_loss2(result: torch.Tensor, labels: torch.Tensor):
+    # better than above but still doesn't match cuda imp
+    log_sum_exp = torch.logsumexp(result, dim=1)
+    correct_logits = result.gather(1, labels.unsqueeze(1)).squeeze(1)
+    return -torch.mean(correct_logits - log_sum_exp)
+
+
 class SGD(torch.optim.Optimizer):
     # Problem (learning_rate_tuning):
     # 1e1, kept on 9.30
@@ -152,6 +159,7 @@ class AdamW(torch.optim.Optimizer):
 
         self.t += 1
         return loss
+
 
 # TODO: optimize
 # - Flash Attention
