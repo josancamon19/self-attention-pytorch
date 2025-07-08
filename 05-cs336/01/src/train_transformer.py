@@ -1,6 +1,8 @@
 import argparse
+from collections import deque
 import torch
 from tqdm import tqdm
+
 # from transformers import GPT2Tokenizer
 from src.transformer import Transformer
 from src.tokenizer import Tokenizer
@@ -25,8 +27,10 @@ os.makedirs("./.models", exist_ok=True)
 def get_tokenizer(args):
     return Tokenizer.from_files(args.tokenizer_vocab_path, args.tokenizer_merges_path, ["<|endoftext|>"])
 
+
 def get_model_path(epoch, lr, batch_size):
     return f"./.models/gpt2-epoch-{epoch}-lr-{lr}-batch-{batch_size}.pt"
+
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -146,12 +150,8 @@ def train():
     annealing_steps = train_steps * epochs
 
     if args.checkpoint:
-        assert args.wandb_id is not None
-        run = wandb.init(
-            name=args.wandb_id, 
-            project="cs336-assignment-01-hyperparam-search", 
-            config=vars(args)
-        )
+        # assert args.wandb_id is not None
+        run = wandb.init(id=args.wandb_id + "-5", project="cs336-assignment-01-hyperparam-search", config=vars(args))
     else:
         run = wandb.init(project="cs336-assignment-01-hyperparam-search", config=vars(args))
 
@@ -162,7 +162,7 @@ def train():
     )
 
     if args.checkpoint:
-        load_checkpoint(model, optim, checkpoint)
+        load_checkpoint(model, optim, args.checkpoint)
 
     def compute_inputs_loss(batch):
         input_ids, labels = batch
@@ -173,6 +173,8 @@ def train():
         return F.cross_entropy(output_flatten, labels)
 
     best_valid_loss = float("inf")
+    gradient_norms = []
+    loss_history = deque(maxlen=100)
 
     steps = 0
     for i in range(epochs):
@@ -186,7 +188,11 @@ def train():
             train_loss += loss.item()
             loss.backward()
             # clip_gradients(model.parameters(), max_norm=1.0)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+            gradient_norms.append(grad_norm.item())
+            loss_history.append(loss.item())
+
             lr = cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, steps)
             for param_group in optim.param_groups:
                 param_group["lr"] = lr
@@ -194,7 +200,20 @@ def train():
             steps += 1
 
             if steps % 20 == 0:
-                run.log({"lr": lr}, step=steps)
+                recent_grad_norm = np.mean(gradient_norms[-20:])
+                loss_moving_avg = np.mean(loss_history)
+                loss_std = np.std(loss_history)
+
+                run.log(
+                    {
+                        "lr": lr,
+                        "grad_norm": recent_grad_norm,
+                        "loss_moving_avg": loss_moving_avg,
+                        "loss_std": loss_std,
+                        "loss_variance": loss_std**2,
+                    },
+                    step=steps,
+                )
             pbar.update(1)
 
         train_loss = train_loss / train_steps
@@ -213,7 +232,7 @@ def train():
         print(f"epoch {i + 1} valid_loss: {valid_loss}")
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
-            save_checkpoint(model, optim, get_model_path(i+1, args.lr_max, args.batch_size), i + 1)
+            save_checkpoint(model, optim, get_model_path(i + 1, args.lr_max, args.batch_size), i + 1)
 
         run.log({"train_loss": train_loss, "valid_loss": valid_loss, "steps": steps})
 

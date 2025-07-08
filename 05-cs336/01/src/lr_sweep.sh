@@ -6,3 +6,4 @@ done
 # TODO: when unstable, remember to check warmup steps and increase, improved? if not, then def not the right lr
 
 # runpod issue: ln -s pip3 .venv/bin/pip
+# kept increasing lr and even 0.005, 0.006 did pretty well, so probably slightly above is the best (by itself), batch size 640
