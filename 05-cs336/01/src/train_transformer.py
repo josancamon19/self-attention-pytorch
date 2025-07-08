@@ -81,6 +81,8 @@ def get_args():
     parser.add_argument("--embedding-dim", type=int, default=default_embedding_dim)
     parser.add_argument("--num-layers", type=int, default=default_num_layers)
     parser.add_argument("--num-attention-heads", type=int, default=default_num_attention_heads)
+    parser.add_argument("-c", "--checkpoint", type=str, default=None)
+    parser.add_argument("--wandb-id", type=str, default=None)
     parser.add_argument("-v", "--verbose", action="store_true", default=False)
     parser.add_argument("-ss", "--small-subset", action="store_true", default=False)
     return parser.parse_args()
@@ -143,7 +145,15 @@ def train():
     epochs, lr_min, lr_max, warmup_steps = args.epochs, args.lr_min, args.lr_max, args.lr_warmup_steps
     annealing_steps = train_steps * epochs
 
-    run = wandb.init(project="cs336-assignment-01-hyperparam-search", config=vars(args))
+    if args.checkpoint:
+        assert args.wandb_id is not None
+        run = wandb.init(
+            name=args.wandb_id, 
+            project="cs336-assignment-01-hyperparam-search", 
+            config=vars(args)
+        )
+    else:
+        run = wandb.init(project="cs336-assignment-01-hyperparam-search", config=vars(args))
 
     optim = AdamW(
         model.parameters(),
@@ -151,11 +161,8 @@ def train():
         weight_decay=args.adam_weight_decay,
     )
 
-    use_checkpoint, load_at_epoch = False, 0
-    # TODO: load wandb later. (continue it)
-    # TODO: cursor linter is trash, why?
-    if use_checkpoint:
-        load_checkpoint(model, optim, get_model_path(load_at_epoch + 1, args.lr_max, args.batch_size))
+    if args.checkpoint:
+        load_checkpoint(model, optim, checkpoint)
 
     def compute_inputs_loss(batch):
         input_ids, labels = batch
