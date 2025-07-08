@@ -16,7 +16,7 @@ from src.nn_utils import (
     save_checkpoint,
     load_checkpoint,
     cos_lr_schedule,
-    AdamW as CustomAdamW
+    AdamW as CustomAdamW,
     # clip_gradients,
     # cross_entropy_loss,
     # SGD,
@@ -96,6 +96,7 @@ def get_args():
     parser.add_argument("--wandb-id", type=str, default=None)
     parser.add_argument("-v", "--verbose", action="store_true", default=False)
     parser.add_argument("-ss", "--small-subset", action="store_true", default=False)
+    parser.add_argument("-g", "--gpu-id", type=int, default=0)
     return parser.parse_args()
 
 
@@ -133,7 +134,7 @@ def isolated_validation_check(model_path: str):
 def train():
     args = get_args()
     print("[train]: ", vars(args))
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(f"cuda:{args.gpu_id}" if torch.cuda.is_available() else "cpu")
     tokenizer = get_tokenizer(args)
 
     train_data = np.load(args.train_dataset_path, mmap_mode="r")
@@ -163,7 +164,7 @@ def train():
     else:
         run = wandb.init(id=args.wandb_id, project="cs336-assignment-01-hyperparam-search", config=vars(args))
 
-    optim =  CustomAdamW(
+    optim = CustomAdamW(
         model.parameters(),
         lr=lr_min,
         weight_decay=args.adam_weight_decay,
