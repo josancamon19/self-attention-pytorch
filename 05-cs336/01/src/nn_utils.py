@@ -1,5 +1,6 @@
 from collections.abc import Callable, Iterable
 import math
+from typing import Tuple, Union
 import torch
 import numpy as np
 
@@ -59,7 +60,7 @@ def clip_gradients(params: Iterable, max_norm: float):
     # narrowing, tensor into a conditional, max vs torch.max()
     # if it's built in python (not torch), communication overhead + wait for python + torch runtime.
     if total_norm < max_norm:  # this is not legal in jax
-        return # if the data depends on the tensor it's bad
+        return  # if the data depends on the tensor it's bad
     scale_factor = max_norm / (total_norm + 1e-6)
     [grad.data.mul_(scale_factor) for grad in grads]
 
@@ -101,4 +102,46 @@ class SGD(torch.optim.Optimizer):
                 grad = p.grad.data
                 p.data -= lr / math.sqrt(t + 1) * grad  # update
                 state["t"] = t + 1  # update step
+        return loss
+
+
+class AdamW(torch.optim.Optimizer):
+    def __init__(
+        self,
+        params,
+        lr=1e-3,
+        weight_decay=0.01,
+        betas: tuple[float, float] = (0.9, 0.95),
+        eps: float = 1e-8,
+    ):
+        # lr, weight_decay stored for each param group.
+        self.b1 = betas[0]
+        self.b2 = betas[1]
+        self.eps = eps
+        super().__init__(params, {"lr": lr, "weight_decay": weight_decay})
+
+    def step(self, closure: Callable | None = None):
+        loss = None if closure is None else closure()
+        for group in self.param_groups:
+            lr = group["lr"]
+            weight_decay = group["weight_decay"]
+            # print("AdamW.group", group.keys(), lr, weight_decay, len(group["params"]))
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+
+                state = self.state[p]
+                if "t" not in state:
+                    state["t"] = 0
+                    state["m"] = torch.zeros_like(p.data)
+                    state["v"] = torch.zeros_like(p.data)
+
+                state["t"] += 1
+                state["m"] = self.b1 * state["m"] + (1 - self.b1) * p.grad
+                state["v"] = self.b2 * state["v"] + (1 - self.b2) * p.grad.pow(2)
+
+                lr_t = lr * (math.sqrt((1 - self.b2 ** state["t"]) / (1 - self.b1 ** state["t"])))
+                p.data = p.data - lr_t * (state["m"] / (torch.sqrt(state["v"]) + self.eps))
+                p.data = p.data - lr * weight_decay * p.data
+
         return loss

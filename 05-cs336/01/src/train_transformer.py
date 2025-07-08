@@ -16,6 +16,7 @@ from src.nn_utils import (
     save_checkpoint,
     load_checkpoint,
     cos_lr_schedule,
+    AdamW as CustomAdamW
     # clip_gradients,
     # cross_entropy_loss,
     # SGD,
@@ -162,7 +163,7 @@ def train():
     else:
         run = wandb.init(id=args.wandb_id, project="cs336-assignment-01-hyperparam-search", config=vars(args))
 
-    optim = AdamW(
+    optim = CustomAdamW(
         model.parameters(),
         lr=lr_min,
         weight_decay=args.adam_weight_decay,
@@ -222,6 +223,7 @@ def train():
                     step=steps,
                 )
             pbar.update(1)
+            return
 
         train_loss = train_loss / train_steps
         print(f"epoch {i + 1} train_loss: {train_loss}")
