@@ -223,7 +223,6 @@ def train():
                     step=steps,
                 )
             pbar.update(1)
-            return
 
         train_loss = train_loss / train_steps
         print(f"epoch {i + 1} train_loss: {train_loss}")
