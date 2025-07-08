@@ -163,7 +163,7 @@ def train():
     else:
         run = wandb.init(id=args.wandb_id, project="cs336-assignment-01-hyperparam-search", config=vars(args))
 
-    optim = AdamW(
+    optim =  CustomAdamW(
         model.parameters(),
         lr=lr_min,
         weight_decay=args.adam_weight_decay,

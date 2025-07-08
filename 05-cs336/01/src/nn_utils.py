@@ -129,6 +129,7 @@ class AdamW(torch.optim.Optimizer):
             lr = group["lr"]
             weight_decay = group["weight_decay"]
             lr_t = lr * (math.sqrt((1 - self.b2**self.t) / (1 - self.b1**self.t)))
+            wd_factor = 1 - lr * weight_decay
 
             # print("AdamW.group", group.keys(), lr, weight_decay, len(group["params"]))
             for p in group["params"]:
@@ -140,11 +141,15 @@ class AdamW(torch.optim.Optimizer):
                     state["m"] = torch.zeros_like(p.data)
                     state["v"] = torch.zeros_like(p.data)
 
+                # TODO: next steps improve performance
+                #   1. Eliminate torch.sqrt(state["v"]) + self.eps temporary
+
                 state["m"].mul_(self.b1).add_(p.grad, alpha=self.b1d)
-                state["v"].mul_(self.b2).add_(p.grad.pow(2), alpha=self.b2d)
+                state["v"].mul_(self.b2)
+                state["v"].addcmul_(p.grad, p.grad, value=self.b2d)
 
                 p.data.addcdiv_(state["m"], torch.sqrt(state["v"]) + self.eps, value=-lr_t)
-                p.data.mul_(1 - lr * weight_decay)
+                p.data.mul_(wd_factor)
 
         self.t += 1
         return loss
