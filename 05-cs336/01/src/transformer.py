@@ -153,7 +153,7 @@ class RMSNorm(nn.Module):
 
         # variance = (x * x).mean(dim=-1, keepdim=True)
         # result = x * torch.rsqrt(variance + self.eps) * self.gain
-        tsum = torch.sum(torch.pow(x, 2), dim=-1)
+        tsum = torch.sum(x * x, dim=-1)
         div_term = torch.sqrt((1 / self.embedding_dim) * tsum + self.eps).unsqueeze(-1)
         result = torch.divide(x, div_term) * self.gain
         return result.to(x_dtype)
@@ -184,7 +184,8 @@ class PosWiseFFN(nn.Module):
 
     @staticmethod
     def silu(x):
-        return x * torch.sigmoid(x)
+        return torch.nn.functional.silu(x) # minor gain, maybe not even
+        # return x * torch.sigmoid(x)
 
     def forward(self, x):
         if self.ffn_type == FFNType.SWIGLU:
