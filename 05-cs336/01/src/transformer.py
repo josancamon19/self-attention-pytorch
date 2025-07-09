@@ -150,6 +150,9 @@ class RMSNorm(nn.Module):
         # --- identify variance/means comp and name properly
         x_dtype = x.dtype
         x = x.to(torch.float32)
+        
+        # variance = (x * x).mean(dim=-1, keepdim=True)
+        # result = x * torch.rsqrt(variance + self.eps) * self.gain
         tsum = torch.sum(torch.pow(x, 2), dim=-1)
         div_term = torch.sqrt((1 / self.embedding_dim) * tsum + self.eps).unsqueeze(-1)
         result = torch.divide(x, div_term) * self.gain
