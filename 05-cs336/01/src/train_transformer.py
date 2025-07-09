@@ -226,14 +226,14 @@ def train():
         for j in range(train_steps):
             batch = data_loading(train_data, args.batch_size, args.seq_length, device)
             optim.zero_grad()
-            loss = compute_inputs_loss(batch).item()
-            train_loss += loss
+            loss = compute_inputs_loss(batch)
+            train_loss += loss.item()
             loss.backward()
             
             grad_norm = grad_clipping_fn(model.parameters(), max_norm=1.0)
 
             gradient_norms.append(grad_norm.item())
-            loss_history.append(loss)
+            loss_history.append(loss.item())
 
             lr = cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, steps)
             for param_group in optim.param_groups:
