@@ -112,8 +112,8 @@ def get_args():
     parser.add_argument("--ffn-type", type=str, default="swiglu")  # swiglu, silu
 
     # Further
-    parser.add_argument("--use-mixed-precision", action="store_true", default=False)
-    parser.add_argument("--use-torch-compile", action="store_true", default=False)
+    parser.add_argument("-mp", "--use-mixed-precision", action="store_true", default=False)
+    parser.add_argument("--use-torch-compile", action="store_true", default=True)
 
     return parser.parse_args()
 
@@ -207,12 +207,14 @@ def train():
         load_checkpoint(model, optim, args.checkpoint)
 
     def compute_inputs_loss(batch):
-        input_ids, labels = batch
-        output = model(input_ids, None)
-        output_flatten = output.view(-1, output.shape[-1])
-        labels = labels.contiguous().view(-1)
-        # return cross_entropy_loss(output_flatten, labels)
-        return F.cross_entropy(output_flatten, labels)
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=args.use_mixed_precision):
+            input_ids, labels = batch
+            output = model(input_ids, None)
+            output_flatten = output.view(-1, output.shape[-1])
+            labels = labels.contiguous().view(-1)
+            # return cross_entropy_loss(output_flatten, labels)
+            loss = F.cross_entropy(output_flatten, labels)
+        return loss
 
     best_valid_loss = float("inf")
     gradient_norms = []
@@ -226,8 +228,7 @@ def train():
         for j in range(train_steps):
             batch = data_loading(train_data, args.batch_size, args.seq_length, device)
             optim.zero_grad()
-            with torch.autocast("cuda", dtype=torch.bfloat16, enabled=args.use_mixed_precision):
-                loss = compute_inputs_loss(batch)
+            loss = compute_inputs_loss(batch)
             train_loss += loss.item()
             loss.backward()
             
