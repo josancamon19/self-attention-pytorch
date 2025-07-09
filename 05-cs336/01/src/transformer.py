@@ -5,7 +5,6 @@ import torch
 from torch.nn.parameter import Parameter
 
 # from transformers import GPT2Tokenizer
-from enum import Enum
 
 
 # We expect you to build these components from scratch. In particular, you may not
@@ -344,7 +343,7 @@ class Transformer(nn.Module):
 
         if self.norm_position == NormPosition.PRE:
             tokens = self.pre_output_norm(tokens)
-            
+
         output = tokens @ self.output
         return output  # output logits
 
