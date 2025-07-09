@@ -180,9 +180,8 @@ class AdamW(torch.optim.Optimizer):
 
 # TODO: optimize
 # - Flash Attention
-# - Mixed Precision
-# - QKV fussion
-# - Cache causal mask
-# - RMS Norm optimization
+# - Mixed Precision ✅
+# - QKV fussion ✅
+# - RMS Norm optimization ✅
 # - Fused SwiGLU
-# - torch.compile model
+# - torch.compile model ✅

@@ -215,10 +215,12 @@ class MultiHeadSelfAttention(nn.Module):
         self.num_heads = num_heads
         self.head_size = embedding_dim // num_heads
         self.embedding_dim = embedding_dim
+        
+        self.QKV = Linear(embedding_dim, 3 * self.head_size * self.num_heads)
 
-        self.Q = Linear(embedding_dim, self.head_size * self.num_heads)
-        self.K = Linear(embedding_dim, self.head_size * self.num_heads)
-        self.V = Linear(embedding_dim, self.head_size * self.num_heads)
+        # self.Q = Linear(embedding_dim, self.head_size * self.num_heads)
+        # self.K = Linear(embedding_dim, self.head_size * self.num_heads)
+        # self.V = Linear(embedding_dim, self.head_size * self.num_heads)
         
         self.register_buffer(
             "causal_mask",
@@ -240,9 +242,12 @@ class MultiHeadSelfAttention(nn.Module):
         batch, seq_length = x.shape[0], x.shape[1]  # , embedding_dim
         # Marcel: matmul's are linear, very strict properties
         # -- you can combine any matmuls into a single operations.
-        q = self._reshape_to_heads(batch, seq_length, self.Q(x)).contiguous()
-        k = self._reshape_to_heads(batch, seq_length, self.K(x)).contiguous()
-        v = self._reshape_to_heads(batch, seq_length, self.V(x))
+        qkv = self.QKV(x)
+        q, k, v = qkv.chunk(3, dim=-1)
+        
+        q = self._reshape_to_heads(batch, seq_length, q).contiguous()
+        k = self._reshape_to_heads(batch, seq_length, k).contiguous()
+        v = self._reshape_to_heads(batch, seq_length, v)
 
         if self.rope:  # test logic
             q = self.rope(q)
