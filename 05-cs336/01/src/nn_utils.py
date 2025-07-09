@@ -183,5 +183,5 @@ class AdamW(torch.optim.Optimizer):
 # - Mixed Precision ✅
 # - QKV fussion ✅
 # - RMS Norm optimization ✅
-# - Fused SwiGLU
+# - Fused SwiGLU ✅
 # - torch.compile model ✅

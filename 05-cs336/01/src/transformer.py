@@ -221,6 +221,7 @@ class MultiHeadSelfAttention(nn.Module):
 
         self.QKV = Linear(embedding_dim, 3 * self.head_size * self.num_heads)
         self.register_buffer("causal_mask", torch.tril(torch.ones(max_sequence_length, max_sequence_length)))
+        self.scale = 1.0 / math.sqrt(self.head_size)
 
         if pos_embedding == PosEmbeddingType.ROPE:
             self.rope = RotaryPositionalEncoding(self.head_size, max_sequence_length)
@@ -249,7 +250,7 @@ class MultiHeadSelfAttention(nn.Module):
             k = self.rope(k)
 
         attention_scores = q @ k.transpose(-2, -1)  # b, num_heads, seq_length, seq_length
-        attention_scores = attention_scores / math.sqrt(self.head_size)
+        attention_scores = attention_scores * self.scale
 
         mask = self.causal_mask[:seq_length, :seq_length]
         if padding_mask is not None:
