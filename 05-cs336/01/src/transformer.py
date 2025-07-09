@@ -120,10 +120,19 @@ class RotaryPositionalEncoding(nn.Module):
 
         # some black magic where complex numbers i,j parts can be computed like this
         # TODO: this part below is definitely not clear
-        x_complex = torch.view_as_complex(x_pairs)
-        rope_complex = torch.view_as_complex(rope_selected)
-        rotated_complex = x_complex * rope_complex
-        rotated_real = torch.view_as_real(rotated_complex)
+        if x_pairs.dtype == torch.bfloat16:
+            original_dtype = x_pairs.dtype
+            x_complex = torch.view_as_complex(x_pairs.float())
+            rope_complex = torch.view_as_complex(rope_selected.float())
+            rotated_complex = x_complex * rope_complex
+            rotated_real = torch.view_as_real(rotated_complex).to(original_dtype)
+        else:
+            # Direct path for FP32
+            x_complex = torch.view_as_complex(x_pairs)
+            rope_complex = torch.view_as_complex(rope_selected)
+            rotated_complex = x_complex * rope_complex
+            rotated_real = torch.view_as_real(rotated_complex)
+        
         result = rotated_real.view(-1, seq_length, d_k)
         return result.view(original_shape)
 

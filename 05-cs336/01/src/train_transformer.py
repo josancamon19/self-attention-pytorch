@@ -226,7 +226,8 @@ def train():
         for j in range(train_steps):
             batch = data_loading(train_data, args.batch_size, args.seq_length, device)
             optim.zero_grad()
-            loss = compute_inputs_loss(batch)
+            with torch.autocast("cuda", dtype=torch.bfloat16, enabled=args.use_mixed_precision):
+                loss = compute_inputs_loss(batch)
             train_loss += loss.item()
             loss.backward()
             
