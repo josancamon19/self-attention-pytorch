@@ -4,7 +4,6 @@ import torch
 from tqdm import tqdm
 
 # from transformers import GPT2Tokenizer
-from src.transformer import Transformer
 from src.tokenizer import Tokenizer
 from torch.optim import AdamW
 import torch.nn.functional as F
@@ -16,11 +15,12 @@ from src.nn_utils import (
     save_checkpoint,
     load_checkpoint,
     cos_lr_schedule,
-    # AdamW as CustomAdamW,
-    # clip_gradients,
+    AdamW as CustomAdamW,
+    clip_gradients,
     # cross_entropy_loss,
     # SGD,
 )
+from src.transformer import PosEmbeddingType, NormType, NormPosition, FFNType, Transformer
 
 os.makedirs("./.models", exist_ok=True)
 
@@ -97,38 +97,58 @@ def get_args():
     parser.add_argument("-v", "--verbose", action="store_true", default=False)
     parser.add_argument("-ss", "--small-subset", action="store_true", default=False)
     parser.add_argument("-g", "--gpu-id", type=int, default=0)
+
+    # compare slow down
+    parser.add_argument("--use-custom-adam", action="store_true", default=False)
+    parser.add_argument("--use-custom-gradient-clipping", action="store_true", default=False)
+
+    # Oblations
+    parser.add_argument("--pos-embedding", type=str, default="rope")  # rope, nope, sinusoidal
+    parser.add_argument("--norm-type", type=str, default="rms")  # rms, layer, none
+    parser.add_argument("--norm-position", type=str, default="pre")  # pre, post
+    parser.add_argument("--ffn-type", type=str, default="swiglu")  # swiglu, silu
+
+    # Further
+    parser.add_argument("--use-mixed-precision", action="store_true", default=False)
+    parser.add_argument("--use-torch-compile", action="store_true", default=False)
+
     return parser.parse_args()
 
 
-def isolated_validation_check(model_path: str):
-    args = get_args()
-    tokenizer = get_tokenizer(args)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Transformer(
-        tokenizer.vocab_size,
-        args.seq_length,
-        args.embedding_dim,
-        args.num_layers,
-        args.num_attention_heads,
-    )
+# def isolated_validation_check(model_path: str):
+#     args = get_args()
+#     tokenizer = get_tokenizer(args)
+#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    valid_data = np.load(args.valid_dataset_path)[:100000]
-    data = torch.load(model_path, map_location=device)
-    model.load_state_dict(data["model"])
-    model.to(device)
-    valid_loss = 0
-    valid_steps = len(valid_data) // args.seq_length // args.batch_size
-    with torch.inference_mode():
-        pbar = tqdm(total=valid_steps, desc="valid-dataset")
-        for _ in range(valid_steps):
-            batch = data_loading(valid_data, args.batch_size, args.seq_length, device)
-            input_ids, labels = batch
-            output = model(input_ids, None)
-            output_flatten = output.view(-1, output.shape[-1])
-            labels = labels.contiguous().view(-1)
-            valid_loss += F.cross_entropy(output_flatten, labels).item()
-            pbar.update()
-    print(valid_loss / valid_steps)
+#     model = Transformer(
+#         tokenizer.vocab_size,
+#         args.seq_length,
+#         args.embedding_dim,
+#         args.num_layers,
+#         args.num_attention_heads,
+#         pos_embedding=PosEmbeddingType(args.pos_embedding.lower()),
+#         norm_type=NormType(args.norm_type.lower()),
+#         norm_position=NormPosition(args.norm_position.lower()),
+#         ffn_type=FFNType(args.ffn_type.lower()),
+#     )
+
+#     valid_data = np.load(args.valid_dataset_path)[:100000]
+#     data = torch.load(model_path, map_location=device)
+#     model.load_state_dict(data["model"])
+#     model.to(device)
+#     valid_loss = 0
+#     valid_steps = len(valid_data) // args.seq_length // args.batch_size
+#     with torch.inference_mode():
+#         pbar = tqdm(total=valid_steps, desc="valid-dataset")
+#         for _ in range(valid_steps):
+#             batch = data_loading(valid_data, args.batch_size, args.seq_length, device)
+#             input_ids, labels = batch
+#             output = model(input_ids, None)
+#             output_flatten = output.view(-1, output.shape[-1])
+#             labels = labels.contiguous().view(-1)
+#             valid_loss += F.cross_entropy(output_flatten, labels).item()
+#             pbar.update()
+#     print(valid_loss / valid_steps)
 
 
 def train():
@@ -152,19 +172,37 @@ def train():
         args.embedding_dim,
         args.num_layers,
         args.num_attention_heads,
+        pos_embedding=PosEmbeddingType(args.pos_embedding.lower()),
+        norm_type=NormType(args.norm_type.lower()),
+        norm_position=NormPosition(args.norm_position.lower()),
+        ffn_type=FFNType(args.ffn_type.lower()),
     )
     model.to(device)
+
+    if args.use_torch_compile:
+        model = torch.compile(model)
 
     epochs, lr_min, lr_max, warmup_steps = args.epochs, args.lr_min, args.lr_max, args.lr_warmup_steps
     annealing_steps = train_steps * epochs
 
     if args.checkpoint:
         # assert args.wandb_id is not None
-        run = wandb.init(id=args.wandb_id + "-1", project="cs336-assignment-01-hyperparam-search", config=vars(args))
+        run = wandb.init(
+            id=args.wandb_id + "-1",
+            project="cs336-assignment-01-hyperparam-search",
+            config=vars(args),
+        )
     else:
-        run = wandb.init(id=args.wandb_id, project="cs336-assignment-01-hyperparam-search", config=vars(args))
+        run = wandb.init(
+            id=args.wandb_id,
+            project="cs336-assignment-01-hyperparam-search",
+            config=vars(args),
+        )
 
-    optim = AdamW(
+    AdamCLS = CustomAdamW if args.use_custom_adam else AdamW
+    grad_clipping_fn = clip_gradients if args.use_custom_gradient_clipping else torch.nn.utils.clip_grad_norm_
+
+    optim = AdamCLS(
         model.parameters(),
         lr=lr_min,
         weight_decay=args.adam_weight_decay,
@@ -197,7 +235,7 @@ def train():
             train_loss += loss.item()
             loss.backward()
             # clip_gradients(model.parameters(), max_norm=1.0)
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            grad_norm = grad_clipping_fn(model.parameters(), max_norm=1.0)
 
             gradient_norms.append(grad_norm.item())
             loss_history.append(loss.item())
@@ -241,7 +279,13 @@ def train():
         print(f"epoch {i + 1} valid_loss: {valid_loss}")
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
-            save_checkpoint(model, optim, get_model_path(i + 1, args.lr_max, args.batch_size), i + 1)
+            save_checkpoint(
+                model,
+                optim,
+                get_model_path(i + 1, args.lr_max, args.batch_size),
+                args=vars(args),
+                iteration=i + 1,
+            )
 
         run.log({"train_loss": train_loss, "valid_loss": valid_loss, "steps": steps})
 

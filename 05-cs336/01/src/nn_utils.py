@@ -20,12 +20,14 @@ def save_checkpoint(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     path: str,
+    args: dict = {},
     iteration: int | None = None,  # adapter
 ):
     data = {
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
         "iteration": iteration,
+        "args": args
     }
     torch.save(data, path)
 
@@ -62,6 +64,7 @@ def clip_gradients(params: Iterable, max_norm: float):
         return  # if the data depends on the tensor it's bad
     scale_factor = max_norm / (total_norm + 1e-6)
     [grad.data.mul_(scale_factor) for grad in grads]
+    return total_norm
 
 
 def cross_entropy_loss(result: torch.Tensor, labels: torch.Tensor):

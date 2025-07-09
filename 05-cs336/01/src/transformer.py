@@ -1,8 +1,11 @@
+from enum import Enum
 import math
 import torch.nn as nn
 import torch
 from torch.nn.parameter import Parameter
+
 # from transformers import GPT2Tokenizer
+from enum import Enum
 
 
 # We expect you to build these components from scratch. In particular, you may not
@@ -10,6 +13,28 @@ from torch.nn.parameter import Parameter
 # • torch.nn.Parameter
 # • Container classes in torch.nn (e.g., Module, ModuleList, Sequential, etc.)1
 # • The torch.optim.Optimizer base class
+
+
+class PosEmbeddingType(Enum):
+    ROPE = "rope"
+    NOPE = "nope"
+    SINUSOIDAL = "sinusoidal"
+
+
+class NormType(Enum):
+    RMS = "rms"
+    LAYER = "layer"
+    NONE = "none"
+
+
+class NormPosition(Enum):
+    PRE = "pre"
+    POST = "post"
+
+
+class FFNType(Enum):
+    SWIGLU = "swiglu"
+    SILU = "silu"
 
 
 class Embedding(nn.Module):
@@ -127,14 +152,23 @@ class PosWiseFFN(nn.Module):
     # TODO: understand the reasoning of SiLU and SwiGLU
     # We offer no explanation as to why these architectures seem to work; we attribute their success,
     # as all else, to divine benevolence
-    def __init__(self, embedding_dim: int):
+
+    def __init__(
+        self,
+        embedding_dim: int,
+        ffn_type: FFNType = FFNType.SWIGLU,
+    ):
         super().__init__()
         # round to 64 closest value
+
+        self.ffn_type = ffn_type
         value = 8 * embedding_dim / 3
         dff = round(value / 64) * 64
         self.W1 = Linear(embedding_dim, dff)
         self.W2 = Linear(dff, embedding_dim)
-        self.W3 = Linear(embedding_dim, dff)
+
+        if self.ffn_type == FFNType.SWIGLU:
+            self.W3 = Linear(embedding_dim, dff)
 
     @staticmethod
     def silu(x):
@@ -142,7 +176,10 @@ class PosWiseFFN(nn.Module):
 
     def forward(self, x):
         silu = PosWiseFFN.silu(self.W1(x))
-        return self.W2(silu * self.W3(x))
+        if self.ffn_type == FFNType.SWIGLU:
+            return self.W2(silu * self.W3(x))
+        else:  # SILU
+            return self.W2(silu)
 
 
 def softmax(tensor: torch.Tensor, dim: int = 0):
@@ -153,18 +190,26 @@ def softmax(tensor: torch.Tensor, dim: int = 0):
 
 
 class MultiHeadSelfAttention(nn.Module):
-    def __init__(self, embedding_dim, num_heads, max_sequence_length):
+    def __init__(
+        self,
+        embedding_dim: int,
+        num_heads: int,
+        max_sequence_length: int,
+        pos_embedding: PosEmbeddingType = PosEmbeddingType.ROPE,
+    ):
         super().__init__()
         self.num_heads = num_heads
         self.head_size = embedding_dim // num_heads
         self.embedding_dim = embedding_dim
 
-        # TODO: what's the most optimal way of implementing this?
-        
         self.Q = Linear(embedding_dim, self.head_size * self.num_heads)
         self.K = Linear(embedding_dim, self.head_size * self.num_heads)
         self.V = Linear(embedding_dim, self.head_size * self.num_heads)
-        self.rope = RotaryPositionalEncoding(self.head_size, max_sequence_length)
+
+        if pos_embedding == PosEmbeddingType.ROPE:
+            self.rope = RotaryPositionalEncoding(self.head_size, max_sequence_length)
+        else:
+            self.rope = None
 
         self.W_O = Linear(embedding_dim, embedding_dim)
 
@@ -204,17 +249,47 @@ class MultiHeadSelfAttention(nn.Module):
         return wo
 
 
+def get_norm_class(norm_type: NormType, dim: int):
+    if norm_type == NormType.RMS:
+        return RMSNorm(dim)
+    elif norm_type == NormType.LAYER:
+        return nn.LayerNorm(dim)
+    elif norm_type == NormType.NONE:
+        return nn.Identity()
+
+
 class TransformerBlock(nn.Module):
-    def __init__(self, embedding_dim, num_heads, max_sequence_length):
+    def __init__(
+        self,
+        embedding_dim,
+        num_heads,
+        max_sequence_length,
+        pos_embedding: PosEmbeddingType = PosEmbeddingType.ROPE,
+        norm_type: NormType = NormType.RMS,
+        norm_position: NormPosition = NormPosition.PRE,
+        ffn_type: FFNType = FFNType.SWIGLU,
+    ):
         super().__init__()
-        self.attention_norm = RMSNorm(embedding_dim)
-        self.attention = MultiHeadSelfAttention(embedding_dim, num_heads, max_sequence_length)
-        self.pos_wise_norm = RMSNorm(embedding_dim)
-        self.pos_wise = PosWiseFFN(embedding_dim)
+
+        self.norm_position = norm_position
+        self.attention_norm = get_norm_class(norm_type, embedding_dim)
+        self.attention = MultiHeadSelfAttention(
+            embedding_dim,
+            num_heads,
+            max_sequence_length,
+            pos_embedding,
+        )
+        self.pos_wise_norm = get_norm_class(norm_type, embedding_dim)
+        self.pos_wise = PosWiseFFN(embedding_dim, ffn_type)
 
     def forward(self, x, padding_mask):
-        attention = self.attention(self.attention_norm(x), padding_mask) + x
-        output = self.pos_wise(self.pos_wise_norm(attention)) + attention
+        # TODO: implement norm position changes
+        if self.norm_position == NormPosition.PRE:
+            attention = self.attention(self.attention_norm(x), padding_mask) + x
+            output = self.pos_wise(self.pos_wise_norm(attention)) + attention
+        else:  # POST
+            attention = x + self.attention_norm(self.attention(x, padding_mask))
+            output = attention + self.pos_wise_norm(self.pos_wise(attention))
         return output
 
 
@@ -226,25 +301,50 @@ class Transformer(nn.Module):
         embedding_dim: int,
         num_layers: int,
         num_heads: int,
+        pos_embedding: PosEmbeddingType = PosEmbeddingType.ROPE,
+        norm_type: NormType = NormType.RMS,
+        norm_position: NormPosition = NormPosition.PRE,
+        ffn_type: FFNType = FFNType.SWIGLU,
     ):
         super().__init__()
         self.embeddings = Embedding(vocab_size, embedding_dim)
-        # pe = get_positional_encodings(embedding_dim, max_sequence_length)
-        # self.register_buffer("pe", pe)
+        self.pos_embedding = pos_embedding
+        self.norm_position = norm_position
+
+        if self.pos_embedding == PosEmbeddingType.SINUSOIDAL:
+            pe = get_positional_encodings(embedding_dim, max_sequence_length)
+            self.register_buffer("pe", pe)
 
         self.blocks = nn.ModuleList(
-            TransformerBlock(embedding_dim, num_heads, max_sequence_length) for _ in range(num_layers)
+            TransformerBlock(
+                embedding_dim,
+                num_heads,
+                max_sequence_length,
+                pos_embedding,
+                norm_type,
+                norm_position,
+                ffn_type,
+            )
+            for _ in range(num_layers)
         )
-        self.pre_output_norm = RMSNorm(embedding_dim)
+        if self.norm_position == NormPosition.PRE:
+            self.pre_output_norm = get_norm_class(norm_type, embedding_dim)
+
         self.output = nn.Parameter(torch.empty(embedding_dim, vocab_size))
         nn.init.normal_(self.output, std=0.02)
 
     def forward(self, input_ids, padding_mask):
-        tokens = self.embeddings(input_ids)  #  + self.pe[: input_ids.shape[-1], :]
+        tokens = self.embeddings(input_ids)
+
+        if self.pos_embedding == PosEmbeddingType.SINUSOIDAL:
+            tokens += self.pe[: input_ids.shape[-1], :]
+
         for block in self.blocks:
             tokens = block(tokens, padding_mask)
 
-        tokens = self.pre_output_norm(tokens)
+        if self.norm_position == NormPosition.PRE:
+            tokens = self.pre_output_norm(tokens)
+            
         output = tokens @ self.output
         return output  # output logits
 
