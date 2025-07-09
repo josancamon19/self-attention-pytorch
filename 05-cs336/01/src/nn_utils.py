@@ -67,6 +67,20 @@ def clip_gradients(params: Iterable, max_norm: float):
     return total_norm
 
 
+# test this at some point, thought above function was slowing down training
+# - but at the end was 7:08 to 7:13 per epoch, 1.1%, meh
+def clip_gradients(params: Iterable, max_norm: float):
+    grads = [p.grad for p in params if p.grad is not None]
+    if not grads:
+        return torch.tensor(0.0)
+    grad_norms = [torch.linalg.vector_norm(g) for g in grads]
+    total_norm = torch.linalg.vector_norm(torch.stack(grad_norms))
+    clip_coef = torch.clamp(max_norm / (total_norm + 1e-6), max=1.0)
+    for grad in grads:
+        grad.data.mul_(clip_coef)
+    return total_norm
+
+
 def cross_entropy_loss(result: torch.Tensor, labels: torch.Tensor):
     # TODO: understand deeper, how log/exponentials cancel, how that fixes numerical instability
     # -- cases like 0.00000 in logs include an infinite

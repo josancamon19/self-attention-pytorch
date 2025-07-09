@@ -226,14 +226,14 @@ def train():
         for j in range(train_steps):
             batch = data_loading(train_data, args.batch_size, args.seq_length, device)
             optim.zero_grad()
-            loss = compute_inputs_loss(batch)
-            train_loss += loss.item()
+            loss = compute_inputs_loss(batch).item()
+            train_loss += loss
             loss.backward()
-            # clip_gradients(model.parameters(), max_norm=1.0)
+            
             grad_norm = grad_clipping_fn(model.parameters(), max_norm=1.0)
 
-            # gradient_norms.append(grad_norm.item())
-            # loss_history.append(loss.item())
+            gradient_norms.append(grad_norm.item())
+            loss_history.append(loss)
 
             lr = cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, steps)
             for param_group in optim.param_groups:
@@ -241,21 +241,21 @@ def train():
             optim.step()
             steps += 1
 
-            # if steps % 20 == 0:
-            #     recent_grad_norm = np.mean(gradient_norms[-20:])
-            #     loss_moving_avg = np.mean(loss_history)
-            #     loss_std = np.std(loss_history)
+            if steps % 20 == 0:
+                recent_grad_norm = np.mean(gradient_norms[-20:])
+                loss_moving_avg = np.mean(loss_history)
+                loss_std = np.std(loss_history)
 
-            #     run.log(
-            #         {
-            #             "lr": lr,
-            #             "grad_norm": recent_grad_norm,
-            #             "loss_moving_avg": loss_moving_avg,
-            #             "loss_std": loss_std,
-            #             "loss_variance": loss_std**2,
-            #         },
-            #         step=steps,
-            #     )
+                run.log(
+                    {
+                        "lr": lr,
+                        "grad_norm": recent_grad_norm,
+                        "loss_moving_avg": loss_moving_avg,
+                        "loss_std": loss_std,
+                        "loss_variance": loss_std**2,
+                    },
+                    step=steps,
+                )
             pbar.update(1)
 
         train_loss = train_loss / train_steps
