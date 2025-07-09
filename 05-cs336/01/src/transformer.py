@@ -132,7 +132,7 @@ class RotaryPositionalEncoding(nn.Module):
             rope_complex = torch.view_as_complex(rope_selected)
             rotated_complex = x_complex * rope_complex
             rotated_real = torch.view_as_real(rotated_complex)
-        
+
         result = rotated_real.view(-1, seq_length, d_k)
         return result.view(original_shape)
 
@@ -150,7 +150,7 @@ class RMSNorm(nn.Module):
         # --- identify variance/means comp and name properly
         x_dtype = x.dtype
         x = x.to(torch.float32)
-        
+
         # variance = (x * x).mean(dim=-1, keepdim=True)
         # result = x * torch.rsqrt(variance + self.eps) * self.gain
         tsum = torch.sum(torch.pow(x, 2), dim=-1)
@@ -175,22 +175,24 @@ class PosWiseFFN(nn.Module):
         self.ffn_type = ffn_type
         value = 8 * embedding_dim / 3
         dff = round(value / 64) * 64
-        self.W1 = Linear(embedding_dim, dff)
-        self.W2 = Linear(dff, embedding_dim)
-
         if self.ffn_type == FFNType.SWIGLU:
-            self.W3 = Linear(embedding_dim, dff)
+            self.W1_W3 = Linear(embedding_dim, 2 * dff)  # fused op
+            self.W2 = Linear(dff, embedding_dim)
+        else:
+            self.W1 = Linear(embedding_dim, dff)
+            self.W2 = Linear(dff, embedding_dim)
 
     @staticmethod
     def silu(x):
         return x * torch.sigmoid(x)
 
     def forward(self, x):
-        silu = PosWiseFFN.silu(self.W1(x))
         if self.ffn_type == FFNType.SWIGLU:
-            return self.W2(silu * self.W3(x))
+            w1_w3_out = self.W1_W3(x)
+            w1_out, w3_out = w1_w3_out.chunk(2, dim=-1)
+            return self.W2(self.silu(w1_out) * w3_out)
         else:  # SILU
-            return self.W2(silu)
+            return self.W2(self.silu(self.W1(x)))
 
 
 # def softmax(tensor: torch.Tensor, dim: int = 0):
@@ -198,6 +200,7 @@ class PosWiseFFN(nn.Module):
 #     num_part = torch.exp(tensor - max_vals)
 #     div_term = torch.sum(num_part, dim=dim, keepdim=True)
 #     return num_part / div_term
+
 
 def softmax(tensor: torch.Tensor, dim: int = 0):
     return torch.softmax(tensor, dim=dim)
@@ -215,17 +218,9 @@ class MultiHeadSelfAttention(nn.Module):
         self.num_heads = num_heads
         self.head_size = embedding_dim // num_heads
         self.embedding_dim = embedding_dim
-        
-        self.QKV = Linear(embedding_dim, 3 * self.head_size * self.num_heads)
 
-        # self.Q = Linear(embedding_dim, self.head_size * self.num_heads)
-        # self.K = Linear(embedding_dim, self.head_size * self.num_heads)
-        # self.V = Linear(embedding_dim, self.head_size * self.num_heads)
-        
-        self.register_buffer(
-            "causal_mask",
-            torch.tril(torch.ones(max_sequence_length, max_sequence_length))
-        )
+        self.QKV = Linear(embedding_dim, 3 * self.head_size * self.num_heads)
+        self.register_buffer("causal_mask", torch.tril(torch.ones(max_sequence_length, max_sequence_length)))
 
         if pos_embedding == PosEmbeddingType.ROPE:
             self.rope = RotaryPositionalEncoding(self.head_size, max_sequence_length)
@@ -244,7 +239,7 @@ class MultiHeadSelfAttention(nn.Module):
         # -- you can combine any matmuls into a single operations.
         qkv = self.QKV(x)
         q, k, v = qkv.chunk(3, dim=-1)
-        
+
         q = self._reshape_to_heads(batch, seq_length, q).contiguous()
         k = self._reshape_to_heads(batch, seq_length, k).contiguous()
         v = self._reshape_to_heads(batch, seq_length, v)
