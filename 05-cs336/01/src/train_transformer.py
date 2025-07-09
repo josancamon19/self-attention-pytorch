@@ -185,19 +185,11 @@ def train():
     epochs, lr_min, lr_max, warmup_steps = args.epochs, args.lr_min, args.lr_max, args.lr_warmup_steps
     annealing_steps = train_steps * epochs
 
-    if args.checkpoint:
-        # assert args.wandb_id is not None
-        run = wandb.init(
-            id=args.wandb_id + "-1",
-            project="cs336-assignment-01-hyperparam-search",
-            config=vars(args),
-        )
-    else:
-        run = wandb.init(
-            id=args.wandb_id,
-            project="cs336-assignment-01-hyperparam-search",
-            config=vars(args),
-        )
+    run = wandb.init(
+        id=args.wandb_id,
+        project="cs336-assignment-01-oblations",
+        config=vars(args),
+    )
 
     AdamCLS = CustomAdamW if args.use_custom_adam else AdamW
     grad_clipping_fn = clip_gradients if args.use_custom_gradient_clipping else torch.nn.utils.clip_grad_norm_
