@@ -66,9 +66,10 @@ def get_args():
         default_epochs = 3
         default_lr_min = 1e-5
         # TODO: consider warm up steps for higher lr_max
-        default_lr_warmup = 2000
+        default_lr_warmup = 200
         default_lr_max = 1e-3
-        default_adam_weight_decay = 0.01
+        # default_adam_weight_decay = 0.01
+        default_adam_weight_decay = 0.1
         default_batch_size = 16
         # default_seq_length = 1024
         # default_embedding_dim = 512
@@ -190,7 +191,7 @@ def train():
 
     run = wandb.init(
         id=args.wandb_id,
-        project="cs336-assignment-01-oblations",
+        project="assignment-01-owt",
         config=vars(args),
     )
 
