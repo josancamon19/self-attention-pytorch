@@ -181,11 +181,14 @@ class PosWiseFFN(nn.Module):
             return self.W2(silu)
 
 
+# def softmax(tensor: torch.Tensor, dim: int = 0):
+#     max_vals = torch.max(tensor, dim=dim, keepdim=True)[0]
+#     num_part = torch.exp(tensor - max_vals)
+#     div_term = torch.sum(num_part, dim=dim, keepdim=True)
+#     return num_part / div_term
+
 def softmax(tensor: torch.Tensor, dim: int = 0):
-    max_vals = torch.max(tensor, dim=dim, keepdim=True)[0]
-    num_part = torch.exp(tensor - max_vals)
-    div_term = torch.sum(num_part, dim=dim, keepdim=True)
-    return num_part / div_term
+    return torch.softmax(tensor, dim=dim)
 
 
 class MultiHeadSelfAttention(nn.Module):
@@ -204,6 +207,11 @@ class MultiHeadSelfAttention(nn.Module):
         self.Q = Linear(embedding_dim, self.head_size * self.num_heads)
         self.K = Linear(embedding_dim, self.head_size * self.num_heads)
         self.V = Linear(embedding_dim, self.head_size * self.num_heads)
+        
+        self.register_buffer(
+            "causal_mask",
+            torch.tril(torch.ones(max_sequence_length, max_sequence_length))
+        )
 
         if pos_embedding == PosEmbeddingType.ROPE:
             self.rope = RotaryPositionalEncoding(self.head_size, max_sequence_length)
@@ -231,12 +239,9 @@ class MultiHeadSelfAttention(nn.Module):
         attention_scores = q @ k.transpose(-2, -1)  # b, num_heads, seq_length, seq_length
         attention_scores = attention_scores / math.sqrt(self.head_size)
 
-        mask = torch.tril(torch.ones((seq_length, seq_length))).to(q.device)
+        mask = self.causal_mask[:seq_length, :seq_length]
         if padding_mask is not None:
-            # print("mask.shape:", mask.shape)
             mask = (mask * padding_mask.unsqueeze(1)).unsqueeze(1)
-            # print("mask.shape:", mask.shape)
-            # print("attention_scores.shape:", attention_scores.shape)
 
         attention_scores = torch.masked_fill(attention_scores, mask == 0, -float("inf"))
         attention_weights = softmax(attention_scores, dim=-1)
