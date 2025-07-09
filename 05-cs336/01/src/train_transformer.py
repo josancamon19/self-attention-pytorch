@@ -24,6 +24,9 @@ from src.transformer import PosEmbeddingType, NormType, NormPosition, FFNType, T
 
 os.makedirs("./.models", exist_ok=True)
 
+# gpu opt, torch.compile
+# holy fuck, 20 it/s to 48, wtf
+torch.set_float32_matmul_precision('high')
 
 def get_tokenizer(args):
     return Tokenizer.from_files(args.tokenizer_vocab_path, args.tokenizer_merges_path, ["<|endoftext|>"])
