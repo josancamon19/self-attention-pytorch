@@ -58,23 +58,22 @@ def get_args():
         default_num_layers = 4
         default_num_attention_heads = 16
     else:  # owt
-        # TODO: when using owt, too big use memmap
         default_train_dataset = ".tokenizer/owt_train-encoded.npy"
         default_valid_dataset = ".tokenizer/owt_valid-encoded.npy"
         default_tokenizer_vocab = ".tokenizer/owt_train-vocab.json"
         default_tokenizer_merges = ".tokenizer/owt_train-merges.json"
         default_epochs = 3
         default_lr_min = 1e-5
-        # TODO: consider warm up steps for higher lr_max
-        default_lr_warmup = 200
+        default_lr_warmup = 200 # TODO: consider more warm up steps for higher lr_max
         default_lr_max = 1e-3
-        # default_adam_weight_decay = 0.01
-        default_adam_weight_decay = 0.1
+        default_adam_weight_decay = 0.1 # 0.01
         default_batch_size = 16
-        # default_seq_length = 1024
-        # default_embedding_dim = 512
-        # default_num_layers = 8
-        # default_num_attention_heads = 8
+        
+        # default_seq_length = 1024 # vs 512?
+        # default_embedding_dim = 768
+        # default_num_layers = 6
+        # default_num_attention_heads = 12
+        
         default_seq_length = 256
         default_embedding_dim = 512
         default_num_layers = 4
