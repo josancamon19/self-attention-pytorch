@@ -47,19 +47,19 @@ def cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, step):
 
 
 # TODO: not optimal when compared to original ones, not at all, why?
-def clip_gradients(params: Iterable, max_norm: float):
-    grads = [p.grad for p in params if p.grad is not None]
-    norms = [torch.linalg.vector_norm(g) for g in grads]
-    # TODO: is it the stacking
-    total_norm = torch.linalg.vector_norm(torch.stack(norms))
-    # TODO: conditionals, requires gpu to sync with python program,
-    # narrowing, tensor into a conditional, max vs torch.max()
-    # if it's built in python (not torch), communication overhead + wait for python + torch runtime.
-    if total_norm < max_norm:  # this is not legal in jax
-        return  # if the data depends on the tensor it's bad
-    scale_factor = max_norm / (total_norm + 1e-6)
-    [grad.data.mul_(scale_factor) for grad in grads]
-    return total_norm
+# def clip_gradients(params: Iterable, max_norm: float):
+#     grads = [p.grad for p in params if p.grad is not None]
+#     norms = [torch.linalg.vector_norm(g) for g in grads]
+#     # TODO: is it the stacking
+#     total_norm = torch.linalg.vector_norm(torch.stack(norms))
+#     # TODO: conditionals, requires gpu to sync with python program,
+#     # narrowing, tensor into a conditional, max vs torch.max()
+#     # if it's built in python (not torch), communication overhead + wait for python + torch runtime.
+#     if total_norm < max_norm:  # this is not legal in jax
+#         return  # if the data depends on the tensor it's bad
+#     scale_factor = max_norm / (total_norm + 1e-6)
+#     [grad.data.mul_(scale_factor) for grad in grads]
+#     return total_norm
 
 
 # test this at some point, thought above function was slowing down training
