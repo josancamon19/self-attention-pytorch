@@ -9,8 +9,9 @@ from jaxtyping import Float, Int
 import numpy.typing as npt
 import torch
 from torch import Tensor
-from src import tokenizer, train_tokenizer
-from src.nn_utils import (
+from src.models.tokenizer import Tokenizer
+from src.train.tokenizer import train_tokenizer
+from src.utils import (
     clip_gradients,
     cos_lr_schedule,
     cross_entropy_loss,
@@ -19,7 +20,7 @@ from src.nn_utils import (
     save_checkpoint,
     AdamW
 )
-from src.transformer import (
+from src.models.transformer import (
     Linear,
     Embedding,
     RMSNorm,
@@ -30,6 +31,9 @@ from src.transformer import (
     TransformerBlock,
     MultiHeadSelfAttention,
 )
+
+# =======
+# - After QKV and SwiGLU fused ops, it doesn't pass those tests
 
 
 def run_linear(
@@ -669,7 +673,7 @@ def get_tokenizer(
     Returns:
         A BPE tokenizer that uses the provided vocab, merges, and special tokens.
     """
-    return tokenizer.Tokenizer(vocab, merges, special_tokens)
+    return Tokenizer(vocab, merges, special_tokens)
 
 
 def run_train_bpe(
@@ -699,5 +703,4 @@ def run_train_bpe(
                 representing that <token1> was merged with <token2>.
                 Merges are ordered by order of creation.
     """
-    return train_tokenizer.train_tokenizer(input_path, vocab_size, special_tokens)
-    # return train_tokenizer.use_hf_tokenizer(input_path, vocab_size, special_tokens)
+    return train_tokenizer(input_path, vocab_size, special_tokens)

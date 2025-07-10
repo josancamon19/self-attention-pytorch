@@ -2,17 +2,15 @@ import argparse
 from collections import deque
 import torch
 from tqdm import tqdm
-import time
 from types import SimpleNamespace
 
-# from transformers import GPT2Tokenizer
-from src.tokenizer import Tokenizer
+from src.models.tokenizer import Tokenizer
 from torch.optim import AdamW
 import torch.nn.functional as F
 import os
 import wandb
 import numpy as np
-from src.nn_utils import (
+from src.utils import (
     data_loading,
     save_checkpoint,
     load_checkpoint,
@@ -21,7 +19,7 @@ from src.nn_utils import (
     clip_gradients,
     # cross_entropy_loss,
 )
-from src.transformer import PosEmbeddingType, NormType, NormPosition, FFNType, Transformer
+from src.models.transformer import PosEmbeddingType, NormType, NormPosition, FFNType, Transformer
 
 os.makedirs("./.models", exist_ok=True)
 
@@ -119,47 +117,6 @@ def get_args():
     parser.add_argument("--use-torch-compile", action="store_true", default=True)
 
     return parser.parse_args()
-
-
-def isolated_validation_check(model_path: str):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    data = torch.load(model_path, map_location=device)
-    args = SimpleNamespace(**data["args"]) if "args" in data else get_args()
-    print("isolated_validation_check args:", args)
-    tokenizer = get_tokenizer(args)
-
-    model = Transformer(
-        tokenizer.vocab_size,
-        args.seq_length,
-        args.embedding_dim,
-        args.num_layers,
-        args.num_attention_heads,
-        pos_embedding=PosEmbeddingType(args.pos_embedding.lower()),
-        norm_type=NormType(args.norm_type.lower()),
-        norm_position=NormPosition(args.norm_position.lower()),
-        ffn_type=FFNType(args.ffn_type.lower()),
-    )
-    valid_data = np.load(args.valid_dataset_path)
-    
-    if args.use_torch_compile:
-        model = torch.compile(model)
-        
-    model.load_state_dict(data["model"])
-    model.to(device)
-    valid_loss = 0
-    valid_steps = len(valid_data) // args.seq_length // args.batch_size
-    print("valid_steps:", valid_steps)
-    with torch.inference_mode():
-        pbar = tqdm(total=valid_steps, desc="valid-dataset")
-        for _ in range(valid_steps):
-            batch = data_loading(valid_data, args.batch_size, args.seq_length, device)
-            input_ids, labels = batch
-            output = model(input_ids, None)
-            output_flatten = output.view(-1, output.shape[-1])
-            labels = labels.contiguous().view(-1)
-            valid_loss += F.cross_entropy(output_flatten, labels).item()
-            pbar.update()
-    print(valid_loss / valid_steps)
 
 
 def train():
@@ -299,6 +256,46 @@ def train():
             )
 
         run.log({"train_loss": train_loss, "valid_loss": valid_loss, "steps": steps})
+
+
+def isolated_validation_check(model_path: str):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    data = torch.load(model_path, map_location=device)
+    args = SimpleNamespace(**data["args"]) if "args" in data else get_args()
+    print("isolated_validation_check args:", args)
+    tokenizer = get_tokenizer(args)
+
+    model = Transformer(
+        tokenizer.vocab_size,
+        args.seq_length,
+        args.embedding_dim,
+        args.num_layers,
+        args.num_attention_heads,
+        pos_embedding=PosEmbeddingType(args.pos_embedding.lower()),
+        norm_type=NormType(args.norm_type.lower()),
+        norm_position=NormPosition(args.norm_position.lower()),
+        ffn_type=FFNType(args.ffn_type.lower()),
+    )
+    valid_data = np.load(args.valid_dataset_path)
+
+    if args.use_torch_compile:
+        model = torch.compile(model)
+
+    model.load_state_dict(data["model"])
+    model.to(device)
+    valid_loss = 0
+    valid_steps = len(valid_data) // args.seq_length // args.batch_size
+    with torch.inference_mode():
+        pbar = tqdm(total=valid_steps, desc="valid-dataset")
+        for _ in range(valid_steps):
+            batch = data_loading(valid_data, args.batch_size, args.seq_length, device)
+            input_ids, labels = batch
+            output = model(input_ids, None)
+            output_flatten = output.view(-1, output.shape[-1])
+            labels = labels.contiguous().view(-1)
+            valid_loss += F.cross_entropy(output_flatten, labels).item()
+            pbar.update()
+    print(valid_loss / valid_steps)
 
 
 if __name__ == "__main__":
