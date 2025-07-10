@@ -40,7 +40,8 @@ def get_tokenizer(args):
 
 def get_model_path(epoch, args):
     arch = f"{args.seq_length}-{args.embedding_dim}-{args.num_layers}-{args.num_attention_heads}"
-    return f"./.models/{args.dataset}-epoch-{epoch}-lr-{args.lr_max}-batch-{args.batch_size}-arch-{arch}.pt"
+    custom = f"{int(args.use_custom_adam)}-{int(args.use_custom_gradient_clipping)}"
+    return f"./.models/{args.dataset}-epoch-{epoch}-lr-{args.lr_max}-batch-{args.batch_size}-arch-{arch}-custom-{custom}.pt"
 
 
 def get_args():
