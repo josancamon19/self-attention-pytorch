@@ -26,14 +26,16 @@ os.makedirs("./.models", exist_ok=True)
 
 # gpu opt, torch.compile
 # holy fuck, 20 it/s to 48, wtf
-torch.set_float32_matmul_precision('high')
+torch.set_float32_matmul_precision("high")
+
 
 def get_tokenizer(args):
     return Tokenizer.from_files(args.tokenizer_vocab_path, args.tokenizer_merges_path, ["<|endoftext|>"])
 
 
-def get_model_path(epoch, lr, batch_size):
-    return f"./.models/gpt2-epoch-{epoch}-lr-{lr}-batch-{batch_size}.pt"
+def get_model_path(epoch, args):
+    arch = f"{args.seq_length}-{args.embedding_dim}-{args.num_layers}-{args.num_attention_heads}"
+    return f"./.models/{args.dataset}-epoch-{epoch}-lr-{args.max_lr}-batch-{args.batch_size}-arch-{arch}.pt"
 
 
 def get_args():
@@ -64,20 +66,15 @@ def get_args():
         default_tokenizer_merges = ".tokenizer/owt_train-merges.json"
         default_epochs = 3
         default_lr_min = 1e-5
-        default_lr_warmup = 200 # TODO: consider more warm up steps for higher lr_max
-        default_lr_max = 1e-3
-        default_adam_weight_decay = 0.1 # 0.01
-        default_batch_size = 16
-        
-        # default_seq_length = 1024 # vs 512?
-        # default_embedding_dim = 768
-        # default_num_layers = 6
-        # default_num_attention_heads = 12
-        
-        default_seq_length = 256
-        default_embedding_dim = 512
-        default_num_layers = 4
-        default_num_attention_heads = 16
+        default_lr_warmup = 200  # TODO: consider more warm up steps for higher lr_max
+        default_lr_max = 2e-3
+        default_adam_weight_decay = 0.1  # 0.01
+        default_batch_size = 64
+
+        default_seq_length = 1024  # vs 512?
+        default_embedding_dim = 768
+        default_num_layers = 6
+        default_num_attention_heads = 12
 
     # parser.add_argument("--hf-tokenizer", action="store_true", default=False)
     parser.add_argument("--tokenizer-vocab-path", type=str, default=default_tokenizer_vocab)
@@ -231,7 +228,7 @@ def train():
             loss = compute_inputs_loss(batch)
             train_loss += loss.item()
             loss.backward()
-            
+
             grad_norm = grad_clipping_fn(model.parameters(), max_norm=1.0)
 
             gradient_norms.append(grad_norm.item())
@@ -279,7 +276,7 @@ def train():
             save_checkpoint(
                 model,
                 optim,
-                get_model_path(i + 1, args.lr_max, args.batch_size),
+                get_model_path(i + 1, args),
                 args=vars(args),
                 iteration=i + 1,
             )

@@ -171,4 +171,5 @@ result.json
 tests/fixtures/snapshots/*.json
 .models
 .tokenizer/owt_train-encoded.npy
+.tokenizer/owt_train-encoded.npy.gz
 wandb.sh

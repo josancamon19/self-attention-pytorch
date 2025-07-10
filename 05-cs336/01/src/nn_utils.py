@@ -23,12 +23,7 @@ def save_checkpoint(
     args: dict = {},
     iteration: int | None = None,  # adapter
 ):
-    data = {
-        "model": model.state_dict(),
-        "optimizer": optimizer.state_dict(),
-        "iteration": iteration,
-        "args": args
-    }
+    data = {"model": model.state_dict(), "optimizer": optimizer.state_dict(), "iteration": iteration, "args": args}
     torch.save(data, path)
 
 
@@ -176,12 +171,3 @@ class AdamW(torch.optim.Optimizer):
 
         self.t += 1
         return loss
-
-
-# TODO: optimize
-# - Flash Attention
-# - Mixed Precision ✅
-# - QKV fussion ✅
-# - RMS Norm optimization ✅
-# - Fused SwiGLU ✅
-# - torch.compile model ✅
