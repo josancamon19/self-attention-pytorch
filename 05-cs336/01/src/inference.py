@@ -1,7 +1,8 @@
 import torch
 
 from src.train_transformer import get_args, get_tokenizer
-from src.transformer import Transformer, softmax
+from types import SimpleNamespace
+from src.transformer import PosEmbeddingType, NormType, NormPosition, FFNType, Transformer, softmax
 
 
 def generate(
@@ -11,15 +12,16 @@ def generate(
     temperature: float = 1.0,
     top_p: float = 1.0,
 ):
-    args = get_args()
-
     assert top_p <= 1.0
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    data = torch.load(model_path, map_location=device)
+    args = SimpleNamespace(**data["args"]) if "args" in data else get_args()
 
     tokenizer = get_tokenizer(args)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
     encoded = tokenizer.encode_batched([prompt], True, args.seq_length, True)
     input_ids, attention_mask = encoded["input_ids"], encoded["attention_mask"]
+    
     assert (len(input_ids) + target_seq_length) < args.seq_length
 
     data = torch.load(model_path, map_location=device)
@@ -29,11 +31,19 @@ def generate(
         args.embedding_dim,
         args.num_layers,
         args.num_attention_heads,
+        pos_embedding=PosEmbeddingType(args.pos_embedding.lower()),
+        norm_type=NormType(args.norm_type.lower()),
+        norm_position=NormPosition(args.norm_position.lower()),
+        ffn_type=FFNType(args.ffn_type.lower()),
     )
-
-    model.load_state_dict(data["model"])
+    
+    state_dict = data["model"]
+    if any(key.startswith("_orig_mod.") for key in state_dict.keys()):
+        state_dict = {key.replace("_orig_mod.", ""): value for key, value in state_dict.items()}
+    model.load_state_dict(state_dict)
+    
     with torch.inference_mode():
-        for _ in range(target_seq_length):
+        for i in range(target_seq_length):
             logits = model(input_ids, attention_mask)[:, -1, :]
             if temperature == 0:
                 next_token = torch.argmax(logits).unsqueeze(0).unsqueeze(0)
@@ -52,6 +62,7 @@ def generate(
 
                 # TODO: check details, more than random.choice(weighted?)
                 next_token = torch.multinomial(probs, 1)  
+                # print("next_token:",i, next_token)
 
             if next_token == 256:
                 print("generate hit <|endoftext|> token.")
@@ -68,9 +79,9 @@ def generate(
 
 if __name__ == "__main__":
     generate(
-        ".models/gpt2-epoch-4.pt",
-        "Hi,",
-        target_seq_length=254,
+        ".models/owt-epoch-8-lr-0.004-batch-64-arch-1024-768-6-12.pt",
+        "So, as of today ",
+        target_seq_length=920,
         temperature=1,
-        top_p=0.9,
+        top_p=1,
     )

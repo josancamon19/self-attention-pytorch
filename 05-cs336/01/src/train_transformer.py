@@ -3,6 +3,7 @@ from collections import deque
 import torch
 from tqdm import tqdm
 import time
+from types import SimpleNamespace
 
 # from transformers import GPT2Tokenizer
 from src.tokenizer import Tokenizer
@@ -19,7 +20,6 @@ from src.nn_utils import (
     AdamW as CustomAdamW,
     clip_gradients,
     # cross_entropy_loss,
-    # SGD,
 )
 from src.transformer import PosEmbeddingType, NormType, NormPosition, FFNType, Transformer
 
@@ -120,40 +120,45 @@ def get_args():
     return parser.parse_args()
 
 
-# def isolated_validation_check(model_path: str):
-#     args = get_args()
-#     tokenizer = get_tokenizer(args)
-#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def isolated_validation_check(model_path: str):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    data = torch.load(model_path, map_location=device)
+    args = SimpleNamespace(**data["args"]) if "args" in data else get_args()
+    print("isolated_validation_check args:", args)
+    tokenizer = get_tokenizer(args)
 
-#     model = Transformer(
-#         tokenizer.vocab_size,
-#         args.seq_length,
-#         args.embedding_dim,
-#         args.num_layers,
-#         args.num_attention_heads,
-#         pos_embedding=PosEmbeddingType(args.pos_embedding.lower()),
-#         norm_type=NormType(args.norm_type.lower()),
-#         norm_position=NormPosition(args.norm_position.lower()),
-#         ffn_type=FFNType(args.ffn_type.lower()),
-#     )
-
-#     valid_data = np.load(args.valid_dataset_path)[:100000]
-#     data = torch.load(model_path, map_location=device)
-#     model.load_state_dict(data["model"])
-#     model.to(device)
-#     valid_loss = 0
-#     valid_steps = len(valid_data) // args.seq_length // args.batch_size
-#     with torch.inference_mode():
-#         pbar = tqdm(total=valid_steps, desc="valid-dataset")
-#         for _ in range(valid_steps):
-#             batch = data_loading(valid_data, args.batch_size, args.seq_length, device)
-#             input_ids, labels = batch
-#             output = model(input_ids, None)
-#             output_flatten = output.view(-1, output.shape[-1])
-#             labels = labels.contiguous().view(-1)
-#             valid_loss += F.cross_entropy(output_flatten, labels).item()
-#             pbar.update()
-#     print(valid_loss / valid_steps)
+    model = Transformer(
+        tokenizer.vocab_size,
+        args.seq_length,
+        args.embedding_dim,
+        args.num_layers,
+        args.num_attention_heads,
+        pos_embedding=PosEmbeddingType(args.pos_embedding.lower()),
+        norm_type=NormType(args.norm_type.lower()),
+        norm_position=NormPosition(args.norm_position.lower()),
+        ffn_type=FFNType(args.ffn_type.lower()),
+    )
+    valid_data = np.load(args.valid_dataset_path)
+    
+    if args.use_torch_compile:
+        model = torch.compile(model)
+        
+    model.load_state_dict(data["model"])
+    model.to(device)
+    valid_loss = 0
+    valid_steps = len(valid_data) // args.seq_length // args.batch_size
+    print("valid_steps:", valid_steps)
+    with torch.inference_mode():
+        pbar = tqdm(total=valid_steps, desc="valid-dataset")
+        for _ in range(valid_steps):
+            batch = data_loading(valid_data, args.batch_size, args.seq_length, device)
+            input_ids, labels = batch
+            output = model(input_ids, None)
+            output_flatten = output.view(-1, output.shape[-1])
+            labels = labels.contiguous().view(-1)
+            valid_loss += F.cross_entropy(output_flatten, labels).item()
+            pbar.update()
+    print(valid_loss / valid_steps)
 
 
 def train():
@@ -290,5 +295,5 @@ def train():
 
 
 if __name__ == "__main__":
-    train()
-    # run_validation(".models/gpt2-epoch-4.pt")
+    # train()
+    isolated_validation_check(".models/owt-epoch-8-lr-0.004-batch-64-arch-1024-768-6-12.pt")
