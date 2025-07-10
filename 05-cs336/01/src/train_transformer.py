@@ -2,6 +2,7 @@ import argparse
 from collections import deque
 import torch
 from tqdm import tqdm
+import time
 
 # from transformers import GPT2Tokenizer
 from src.tokenizer import Tokenizer
@@ -27,6 +28,10 @@ os.makedirs("./.models", exist_ok=True)
 # gpu opt, torch.compile
 # holy fuck, 20 it/s to 48, wtf
 torch.set_float32_matmul_precision("high")
+
+# fuck, easier to experiment, a bit late
+torch.manual_seed(42)
+np.random.seed(42)
 
 
 def get_tokenizer(args):
@@ -111,6 +116,7 @@ def get_args():
     # Further
     parser.add_argument("-mp", "--use-mixed-precision", action="store_true", default=False)
     parser.add_argument("--use-torch-compile", action="store_true", default=True)
+    parser.add_argument("--max-time-minutes", type=int, default=None, help="Maximum training time in minutes")
 
     return parser.parse_args()
 
@@ -218,11 +224,17 @@ def train():
     loss_history = deque(maxlen=100)
 
     steps = 0
+    total_time = 0
+    max_time = args.max_time_minutes * 60 - 5
     for i in range(epochs):
         train_loss = 0
         model.train()
         pbar = tqdm(total=train_steps, desc=f"train-epoch {i + 1}")
+        start_time = time.time()
         for j in range(train_steps):
+            if total_time >= max_time:
+                print(f"\n[INFO] Maximum training time reached. Stopping training early at epoch {i}.")
+                break
             batch = data_loading(train_data, args.batch_size, args.seq_length, device)
             optim.zero_grad()
             loss = compute_inputs_loss(batch)
@@ -256,7 +268,7 @@ def train():
                     step=steps,
                 )
             pbar.update(1)
-
+        total_time += time.time() - start_time
         train_loss = train_loss / train_steps
         print(f"epoch {i + 1} train_loss: {train_loss}")
 
@@ -282,6 +294,8 @@ def train():
             )
 
         run.log({"train_loss": train_loss, "valid_loss": valid_loss, "steps": steps})
+        if total_time >= max_time:
+            break
 
 
 if __name__ == "__main__":
