@@ -26,7 +26,6 @@ os.makedirs("./.models", exist_ok=True)
 # gpu opt, torch.compile
 # holy fuck, 20 it/s to 48, wtf
 torch.set_float32_matmul_precision("high")
-torch.backends.cudnn.benchmark = True
 
 # fuck, easier to experiment, a bit late
 torch.manual_seed(42)
@@ -149,7 +148,6 @@ def train():
     model.to(device)
 
     if args.use_torch_compile:
-        # model = torch.compile(model, mode="max-autotune", fullgraph=True)
         model = torch.compile(model)
         print("[INFO] Pre-compiling model...")
         dummy_input = torch.randint(0, tokenizer.vocab_size, (args.batch_size, args.seq_length), device=device)
