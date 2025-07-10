@@ -68,10 +68,10 @@ def get_args():
         default_valid_dataset = ".tokenizer/owt_valid-encoded.npy"
         default_tokenizer_vocab = ".tokenizer/owt_train-vocab.json"
         default_tokenizer_merges = ".tokenizer/owt_train-merges.json"
-        default_epochs = 3
+        default_epochs = 5
         default_lr_min = 1e-5
         default_lr_warmup = 200  # TODO: consider more warm up steps for higher lr_max
-        default_lr_max = 2e-3
+        default_lr_max = 4e-3
         default_adam_weight_decay = 0.1  # 0.01
         default_batch_size = 64
 
@@ -299,5 +299,5 @@ def isolated_validation_check(model_path: str):
 
 
 if __name__ == "__main__":
-    # train()
-    isolated_validation_check(".models/owt-epoch-8-lr-0.004-batch-64-arch-1024-768-6-12.pt")
+    train()
+    # isolated_validation_check(".models/owt-epoch-8-lr-0.004-batch-64-arch-1024-768-6-12.pt")
