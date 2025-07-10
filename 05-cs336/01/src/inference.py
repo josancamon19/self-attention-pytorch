@@ -1,8 +1,8 @@
 import torch
 
-from src.train_transformer import get_args, get_tokenizer
+from src.train.transformer import get_args, get_tokenizer
 from types import SimpleNamespace
-from src.transformer import PosEmbeddingType, NormType, NormPosition, FFNType, Transformer, softmax
+from src.models.transformer import PosEmbeddingType, NormType, NormPosition, FFNType, Transformer, softmax
 
 
 def generate(
