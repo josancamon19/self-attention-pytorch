@@ -192,6 +192,12 @@ def train():
 
     if args.use_torch_compile:
         model = torch.compile(model)
+        print("[INFO] Pre-compiling model...")
+        dummy_input = torch.randint(0, tokenizer.vocab_size, (args.batch_size, args.seq_length), device=device)
+        with torch.no_grad():
+            _ = model(dummy_input, None)
+        print("[INFO] Model compilation complete.")
+        torch.cuda.empty_cache()  # Clean up compilation memory
 
     epochs, lr_min, lr_max, warmup_steps = args.epochs, args.lr_min, args.lr_max, args.lr_warmup_steps
     annealing_steps = train_steps * epochs
