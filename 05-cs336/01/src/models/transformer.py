@@ -4,6 +4,8 @@ import torch.nn as nn
 import torch
 from torch.nn.parameter import Parameter
 
+from src.utils import softmax
+
 # from transformers import GPT2Tokenizer
 
 
@@ -194,17 +196,6 @@ class PosWiseFFN(nn.Module):
             return self.W2(self.silu(w1_out) * w3_out)
         else:  # SILU
             return self.W2(self.silu(self.W1(x)))
-
-
-# def softmax(tensor: torch.Tensor, dim: int = 0):
-#     max_vals = torch.max(tensor, dim=dim, keepdim=True)[0]
-#     num_part = torch.exp(tensor - max_vals)
-#     div_term = torch.sum(num_part, dim=dim, keepdim=True)
-#     return num_part / div_term
-
-
-def softmax(tensor: torch.Tensor, dim: int = 0):
-    return torch.softmax(tensor, dim=dim)
 
 
 class MultiHeadSelfAttention(nn.Module):

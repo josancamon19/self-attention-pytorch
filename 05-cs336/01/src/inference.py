@@ -2,7 +2,8 @@ import torch
 
 from src.train.transformer import get_args, get_tokenizer
 from types import SimpleNamespace
-from src.models.transformer import PosEmbeddingType, NormType, NormPosition, FFNType, Transformer, softmax
+from src.models.transformer import PosEmbeddingType, NormType, NormPosition, FFNType, Transformer
+from src.utils import softmax
 
 
 def generate(
@@ -13,7 +14,7 @@ def generate(
     top_p: float = 1.0,
 ):
     assert top_p <= 1.0
-    
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data = torch.load(model_path, map_location=device)
     args = SimpleNamespace(**data["args"]) if "args" in data else get_args()
@@ -21,7 +22,7 @@ def generate(
     tokenizer = get_tokenizer(args)
     encoded = tokenizer.encode_batched([prompt], True, args.seq_length, True)
     input_ids, attention_mask = encoded["input_ids"], encoded["attention_mask"]
-    
+
     assert (len(input_ids) + target_seq_length) < args.seq_length
 
     data = torch.load(model_path, map_location=device)
@@ -36,12 +37,12 @@ def generate(
         norm_position=NormPosition(args.norm_position.lower()),
         ffn_type=FFNType(args.ffn_type.lower()),
     )
-    
+
     state_dict = data["model"]
     if any(key.startswith("_orig_mod.") for key in state_dict.keys()):
         state_dict = {key.replace("_orig_mod.", ""): value for key, value in state_dict.items()}
     model.load_state_dict(state_dict)
-    
+
     with torch.inference_mode():
         for i in range(target_seq_length):
             logits = model(input_ids, attention_mask)[:, -1, :]
@@ -61,7 +62,7 @@ def generate(
                     probs = probs / probs.sum(dim=1, keepdim=True)
 
                 # TODO: check details, more than random.choice(weighted?)
-                next_token = torch.multinomial(probs, 1)  
+                next_token = torch.multinomial(probs, 1)
                 # print("next_token:",i, next_token)
 
             if next_token == 256:

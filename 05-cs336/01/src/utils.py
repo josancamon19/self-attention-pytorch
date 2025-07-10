@@ -171,3 +171,14 @@ class AdamW(torch.optim.Optimizer):
 
         self.t += 1
         return loss
+
+
+# def softmax(tensor: torch.Tensor, dim: int = 0):
+#     max_vals = torch.max(tensor, dim=dim, keepdim=True)[0]
+#     num_part = torch.exp(tensor - max_vals)
+#     div_term = torch.sum(num_part, dim=dim, keepdim=True)
+#     return num_part / div_term
+
+
+def softmax(tensor: torch.Tensor, dim: int = 0):
+    return torch.softmax(tensor, dim=dim)

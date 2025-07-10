@@ -26,6 +26,7 @@ os.makedirs("./.models", exist_ok=True)
 # gpu opt, torch.compile
 # holy fuck, 20 it/s to 48, wtf
 torch.set_float32_matmul_precision("high")
+# torch.backends.cudnn.benchmark = True
 
 # fuck, easier to experiment, a bit late
 torch.manual_seed(42)
