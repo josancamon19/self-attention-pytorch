@@ -179,7 +179,7 @@ def train():
         model.parameters(),
         lr=lr_min,
         weight_decay=args.adam_weight_decay,
-        # betas=(0.9, 0.999), # vs 0.9, 0.95
+        betas=(0.9, 0.999), # vs 0.9, 0.95
     )
 
     if args.checkpoint:
@@ -199,7 +199,7 @@ def train():
     gradient_norms = []
     loss_history = deque(maxlen=100)
 
-    def compute_valid_loss(best_valid_loss):
+    def compute_valid_loss(best_valid_loss, step):
         valid_loss = 0
         model.eval()
         with torch.inference_mode():
@@ -247,7 +247,6 @@ def train():
 
         if step % 100 == 0:
             curr_loss = train_loss / step
-            print(f"step {step} train_loss: {curr_loss}")
 
             recent_grad_norm = np.mean(gradient_norms[-20:])
             loss_moving_avg = np.mean(loss_history)
@@ -270,10 +269,10 @@ def train():
             )
 
         if step % 5000 == 0:
-            best_valid_loss = compute_valid_loss(best_valid_loss)
+            best_valid_loss = compute_valid_loss(best_valid_loss, step)
             model.train()
 
-    compute_valid_loss(best_valid_loss)
+    compute_valid_loss(best_valid_loss, train_steps)
 
 
 def isolated_validation_check(model_path: str):
