@@ -36,10 +36,12 @@ def get_tokenizer(args):
     return Tokenizer.from_files(args.tokenizer_vocab_path, args.tokenizer_merges_path, ["<|endoftext|>"])
 
 
-def get_model_path(epoch, args):
+def get_model_path(step, args):
     arch = f"{args.seq_length}-{args.embedding_dim}-{args.num_layers}-{args.num_attention_heads}"
     custom = f"{int(args.use_custom_adam)}-{int(args.use_custom_gradient_clipping)}"
-    return f"./.models/{args.dataset}-epoch-{epoch}-lr-{args.lr_max}-batch-{args.batch_size}-arch-{arch}-custom-{custom}.pt"
+    return (
+        f"./.models/{args.dataset}-step-{step}-lr-{args.lr_max}-batch-{args.batch_size}-arch-{arch}-custom-{custom}.pt"
+    )
 
 
 def get_args():
@@ -53,7 +55,8 @@ def get_args():
         default_valid_dataset = ".tokenizer/TinyStoriesV2-GPT4-valid-encoded.npy"
         default_tokenizer_vocab = ".tokenizer/TinyStoriesV2-GPT4-train-vocab.json"
         default_tokenizer_merges = ".tokenizer/TinyStoriesV2-GPT4-train-merges.json"
-        default_epochs = 20
+        training_tokens = 3.27e8  # 327000000
+
         default_lr_min = 1e-5
         default_lr_warmup = 200
         default_lr_max = 3e-4
@@ -68,7 +71,8 @@ def get_args():
         default_valid_dataset = ".tokenizer/owt_valid-encoded.npy"
         default_tokenizer_vocab = ".tokenizer/owt_train-vocab.json"
         default_tokenizer_merges = ".tokenizer/owt_train-merges.json"
-        default_epochs = 8
+        training_tokens = 2.6e9
+
         default_lr_min = 1e-5
         default_lr_warmup = 200  # TODO: consider more warm up steps for higher lr_max
         default_lr_max = 4e-3
@@ -86,7 +90,7 @@ def get_args():
 
     parser.add_argument("--train-dataset-path", type=str, default=default_train_dataset)
     parser.add_argument("--valid-dataset-path", type=str, default=default_valid_dataset)
-    parser.add_argument("--epochs", type=int, default=default_epochs)
+    parser.add_argument("-tt", "--tokens", type=float, default=training_tokens)
     parser.add_argument("--lr-min", type=float, default=default_lr_min)
     parser.add_argument("--lr-warmup-steps", type=int, default=default_lr_warmup)
     parser.add_argument("--lr-max", type=float, default=default_lr_max)
@@ -127,8 +131,9 @@ def train():
 
     train_data = np.load(args.train_dataset_path, mmap_mode="r")
     valid_data = np.load(args.valid_dataset_path, mmap_mode="r")
-    train_steps = 327000000 // args.seq_length // args.batch_size
-    valid_steps = len(valid_data) // args.seq_length // args.batch_size
+
+    train_steps = int(args.tokens / args.seq_length / args.batch_size)
+    valid_steps = int(len(valid_data) /args.seq_length / args.batch_size)
 
     if args.small_subset:
         train_steps = int(train_steps * 0.005)
@@ -150,15 +155,15 @@ def train():
     if args.use_torch_compile:
         # TODO: consider torch.compile warning on RoPE complex numbers
         model = torch.compile(model)
-        print("[INFO] Pre-compiling model...")
-        dummy_input = torch.randint(0, tokenizer.vocab_size, (args.batch_size, args.seq_length), device=device)
-        with torch.no_grad():
-            _ = model(dummy_input, None)
-        print("[INFO] Model compilation complete.")
-        torch.cuda.empty_cache()  # Clean up compilation memory
+        # print("[INFO] Pre-compiling model...")
+        # dummy_input = torch.randint(0, tokenizer.vocab_size, (args.batch_size, args.seq_length), device=device)
+        # with torch.no_grad():
+        #     _ = model(dummy_input, None)
+        # print("[INFO] Model compilation complete.")
+        # torch.cuda.empty_cache()  # Clean up compilation memory
 
-    epochs, lr_min, lr_max, warmup_steps = args.epochs, args.lr_min, args.lr_max, args.lr_warmup_steps
-    annealing_steps = train_steps * epochs
+    lr_min, lr_max, warmup_steps = args.lr_min, args.lr_max, args.lr_warmup_steps
+    annealing_steps = train_steps
 
     run = wandb.init(
         id=args.wandb_id,
@@ -173,6 +178,7 @@ def train():
         model.parameters(),
         lr=lr_min,
         weight_decay=args.adam_weight_decay,
+        # betas=(0.9, 0.999), # vs 0.9, 0.95
     )
 
     if args.checkpoint:
@@ -192,75 +198,74 @@ def train():
     gradient_norms = []
     loss_history = deque(maxlen=100)
 
-    steps = 0
-    for i in range(epochs):
-        train_loss = 0
-        model.train()
-        pbar = tqdm(total=train_steps, desc=f"train-epoch {i + 1}")
-        for j in range(train_steps):
-            batch = data_loading(train_data, args.batch_size, args.seq_length, device)
-            optim.zero_grad()
-            loss = compute_inputs_loss(batch)
-            train_loss += loss.item()
-            loss.backward()
-
-            grad_norm = grad_clipping_fn(model.parameters(), max_norm=1.0)
-
-            gradient_norms.append(grad_norm.item())
-            loss_history.append(loss.item())
-
-            lr = cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, steps)
-            for param_group in optim.param_groups:
-                param_group["lr"] = lr
-            optim.step()
-            steps += 1
-
-            if steps % 20 == 0:
-                recent_grad_norm = np.mean(gradient_norms[-20:])
-                loss_moving_avg = np.mean(loss_history)
-                loss_std = np.std(loss_history)
-                param_norm = torch.linalg.vector_norm(
-                    torch.stack([torch.linalg.vector_norm(p) for p in model.parameters()])
-                )
-
-                run.log(
-                    {
-                        "lr": lr,
-                        "grad_norm": recent_grad_norm,
-                        "loss_moving_avg": loss_moving_avg,
-                        "loss_std": loss_std,
-                        "loss_variance": loss_std**2,
-                        "param_norm": param_norm.item(),
-                    },
-                    step=steps,
-                )
-            pbar.update(1)
-
-        train_loss = train_loss / train_steps
-        print(f"epoch {i + 1} train_loss: {train_loss}")
-
+    def compute_valid_loss(best_valid_loss):
         valid_loss = 0
         model.eval()
         with torch.inference_mode():
-            pbar = tqdm(total=valid_steps, desc=f"valid-epoch {i + 1}")
+            pbar = tqdm(range(valid_steps), total=valid_steps, desc="validation-check")
             for _ in range(valid_steps):
                 batch = data_loading(valid_data, args.batch_size, args.seq_length, device)
                 valid_loss += compute_inputs_loss(batch).item()
                 pbar.update()
 
         valid_loss = valid_loss / valid_steps
-        print(f"epoch {i + 1} valid_loss: {valid_loss}")
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
-            save_checkpoint(
-                model,
-                optim,
-                get_model_path(i + 1, args),
-                args=vars(args),
-                iteration=i + 1,
+            save_checkpoint(model, optim, get_model_path(step, args), args=vars(args), iteration=step)
+        run.log({"valid_loss": valid_loss}, step=step)
+        print(f"step {step} valid_loss: {valid_loss}")
+        return best_valid_loss
+
+    train_loss = 0
+    model.train()
+    for step in tqdm(range(1, train_steps + 1), total=train_steps, desc="training-steps"):
+        batch = data_loading(train_data, args.batch_size, args.seq_length, device)
+        optim.zero_grad()
+        loss = compute_inputs_loss(batch)
+        train_loss += loss.item()
+        loss.backward()
+
+        grad_norm = grad_clipping_fn(model.parameters(), max_norm=1.0)
+
+        gradient_norms.append(grad_norm.item())
+        loss_history.append(loss.item())
+
+        lr = cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, step)
+        for param_group in optim.param_groups:
+            param_group["lr"] = lr
+
+        optim.step()
+
+        if step % 100 == 0:
+            train_loss = train_loss / train_steps
+            print(f"step {step} train_loss: {train_loss}")
+
+            recent_grad_norm = np.mean(gradient_norms[-20:])
+            loss_moving_avg = np.mean(loss_history)
+            loss_std = np.std(loss_history)
+            param_norm = torch.linalg.vector_norm(
+                torch.stack([torch.linalg.vector_norm(p) for p in model.parameters()])
             )
 
-        run.log({"train_loss": train_loss, "valid_loss": valid_loss, "steps": steps})
+            run.log(
+                {
+                    "train_loss": train_loss,
+                    "lr": lr,
+                    "grad_norm": recent_grad_norm,
+                    "loss_moving_avg": loss_moving_avg,
+                    "loss_std": loss_std,
+                    "loss_variance": loss_std**2,
+                    "param_norm": param_norm.item(),
+                },
+                step=step,
+            )
+            train_loss = 0
+
+        if step % 5000 == 0:
+            best_valid_loss = compute_valid_loss(best_valid_loss)
+            model.train()
+
+    compute_valid_loss(best_valid_loss)
 
 
 def isolated_validation_check(model_path: str):
