@@ -14,6 +14,10 @@ from src.utils import (
     save_checkpoint,
     load_checkpoint,
     cos_lr_schedule,
+    inverse_sqrt_schedule,
+    constant_with_warmup,
+    linear_lr_schedule,
+    cosine_with_restarts,
     AdamW as CustomAdamW,
     clip_gradients,
     # single_data_loading,
@@ -83,23 +87,30 @@ def get_args():
     # parser.add_argument("--hf-tokenizer", action="store_true", default=False)
     parser.add_argument("--tokenizer-vocab-path", type=str, default=default_tokenizer_vocab)
     parser.add_argument("--tokenizer-merges-path", type=str, default=default_tokenizer_merges)
-
     parser.add_argument("--train-dataset-path", type=str, default=default_train_dataset)
     parser.add_argument("--valid-dataset-path", type=str, default=default_valid_dataset)
-    parser.add_argument("-tt", "--tokens", type=float, default=training_tokens)
-    parser.add_argument("--lr-min", type=float, default=default_lr_min)
-    parser.add_argument("--lr-warmup-steps", type=int, default=default_lr_warmup)
-    parser.add_argument("--lr-max", type=float, default=default_lr_max)
-    parser.add_argument("--adam-weight-decay", type=float, default=default_adam_weight_decay)
-    parser.add_argument("--batch-size", type=int, default=default_batch_size)
+
+    # architecture
     parser.add_argument("--seq-length", type=int, default=default_seq_length)
     parser.add_argument("--embedding-dim", type=int, default=default_embedding_dim)
     parser.add_argument("--num-layers", type=int, default=default_num_layers)
     parser.add_argument("--num-attention-heads", type=int, default=default_num_attention_heads)
-    parser.add_argument("-c", "--checkpoint", type=str, default=None)
-    parser.add_argument("--wandb-id", type=str, default=None)
-    parser.add_argument("-v", "--verbose", action="store_true", default=False)
-    parser.add_argument("-g", "--gpu-id", type=int, default=0)
+
+    parser.add_argument("-tt", "--tokens", type=float, default=training_tokens)
+
+    parser.add_argument("--batch-size", type=int, default=default_batch_size)
+
+    parser.add_argument("--lr-min", type=float, default=default_lr_min)
+    parser.add_argument("--lr-max", type=float, default=default_lr_max)
+    parser.add_argument("--lr-warmup-steps", type=int, default=default_lr_warmup)
+    parser.add_argument(
+        "--lr-schedule",
+        type=str,
+        default="cosine",
+        choices=["cosine", "linear", "sqrt", "constant"],  # "cosine_restarts"
+    )
+    # parser.add_argument("--lr-cosine-restarts", type=int, default=0)
+    parser.add_argument("--adam-weight-decay", type=float, default=default_adam_weight_decay)
 
     # compare slow down
     parser.add_argument("-uca", "--use-custom-adam", action="store_true", default=False)
@@ -116,6 +127,12 @@ def get_args():
     # Further
     parser.add_argument("-mp", "--use-mixed-precision", action="store_true", default=False)
     parser.add_argument("--use-torch-compile", action="store_true", default=True)
+
+    # ops
+    parser.add_argument("-c", "--checkpoint", type=str, default=None)
+    parser.add_argument("--wandb-id", type=str, default=None)
+    parser.add_argument("-v", "--verbose", action="store_true", default=False)
+    parser.add_argument("-g", "--gpu-id", type=int, default=0)
 
     return parser.parse_args()
 
@@ -204,10 +221,21 @@ def execute_validation_loss(
     return best_valid_loss
 
 
+schedule_map = {
+    "cosine": cos_lr_schedule,
+    "linear": linear_lr_schedule,
+    "sqrt": inverse_sqrt_schedule,
+    "constant": constant_with_warmup,
+    "cosine_restarts": cosine_with_restarts,
+}
+
+
 def train():
     args = get_args()
     print("[train]: ", vars(args))
     device = torch.device(f"cuda:{args.gpu_id}" if torch.cuda.is_available() else "cpu")
+
+    lr_schedule_fn = schedule_map[args.lr_schedule]
 
     train_data = np.load(args.train_dataset_path, mmap_mode="r")
     valid_data = np.load(args.valid_dataset_path, mmap_mode="r")
@@ -261,7 +289,7 @@ def train():
         gradient_norms.append(grad_norm.item())
         loss_history.append(loss.item())
 
-        lr = cos_lr_schedule(args.lr_min, args.lr_max, args.lr_warmup_steps, train_steps, step)
+        lr = lr_schedule_fn(args.lr_min, args.lr_max, args.lr_warmup_steps, train_steps, step)
         for param_group in optim.param_groups:
             param_group["lr"] = lr
 

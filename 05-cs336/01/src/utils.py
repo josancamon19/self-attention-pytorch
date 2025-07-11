@@ -60,6 +60,41 @@ def cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, step):
         return lr_min
 
 
+def inverse_sqrt_schedule(_, lr_max, warmup_steps, __, step):
+    if step < warmup_steps:
+        return lr_max * (step / warmup_steps)
+    else:
+        return lr_max * (warmup_steps / step) ** 0.5
+
+
+def constant_with_warmup(_, lr_max, warmup_steps, __, step):
+    """What BERT actually used"""
+    if step < warmup_steps:
+        return (step / warmup_steps) * lr_max
+    else:
+        return lr_max  # No decay!
+
+
+def linear_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, step):
+    """Simple linear decay after warmup"""
+    if step < warmup_steps:
+        return (step / warmup_steps) * lr_max
+    elif warmup_steps <= step <= annealing_steps:
+        progress = (step - warmup_steps) / (annealing_steps - warmup_steps)
+        return lr_max - progress * (lr_max - lr_min)
+    else:
+        return lr_min
+
+
+def cosine_with_restarts(lr_max, lr_min, warmup_steps, _, step, restart_interval=5000):
+    cycle_step = step % restart_interval
+    if cycle_step < warmup_steps:
+        return lr_max * (cycle_step / warmup_steps)
+    else:
+        cos_inner = math.pi * (cycle_step - warmup_steps) / (restart_interval - warmup_steps)
+        return lr_min + (lr_max - lr_min) * 0.5 * (1 + math.cos(cos_inner))
+
+
 # TODO: not optimal when compared to original ones, not at all, why?
 # def clip_gradients(params: Iterable, max_norm: float):
 #     grads = [p.grad for p in params if p.grad is not None]
