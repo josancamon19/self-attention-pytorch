@@ -136,7 +136,7 @@ def train():
     valid_data = np.load(args.valid_dataset_path, mmap_mode="r")
 
     train_steps = int(args.tokens / args.seq_length / args.batch_size)
-    valid_steps = int(len(valid_data) / args.seq_length / args.batch_size / 5)
+    valid_steps = int(len(valid_data) / args.seq_length / args.batch_size)
 
     if args.small_subset:
         train_steps = int(train_steps * 0.005)
@@ -183,7 +183,7 @@ def train():
         model.parameters(),
         lr=lr_min,
         weight_decay=args.adam_weight_decay,
-        betas=(0.9, 0.95), # vs 0.9, 0.95
+        betas=(0.9, 0.95),  # vs 0.9, 0.95
     )
 
     if args.checkpoint:
@@ -203,36 +203,46 @@ def train():
     gradient_norms = []
     loss_history = deque(maxlen=100)
 
-    def compute_valid_loss(best_valid_loss, step):
+    def compute_valid_loss(
+        best_valid_loss: float,
+        valid_steps: int,
+        step: int,
+        save_best: bool = True,
+        show_progress: bool = True,
+    ):
         valid_loss = 0
-        model.eval()
+        # model.eval()
         with torch.inference_mode():
-            for _ in tqdm(range(valid_steps), total=valid_steps, desc="validation-check"):
+            for _ in tqdm(range(valid_steps), total=valid_steps, desc="validation-check", disable=not show_progress):
                 batch = data_loading(valid_data, args.batch_size, args.seq_length, device)
                 valid_loss += compute_inputs_loss(batch).item()
 
         valid_loss = valid_loss / valid_steps
+        run.log({"valid_loss": valid_loss}, step=step)
+
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
-            save_checkpoint(model, optim, get_model_path(step, args), args=vars(args), iteration=step)
-        run.log({"valid_loss": valid_loss}, step=step)
-        print(f"step {step} valid_loss: {valid_loss}")
+            if save_best:
+                save_checkpoint(model, optim, get_model_path(step, args), args=vars(args), iteration=step)
+                print(f"saved model at step {step} with valid_loss: {valid_loss}")
+
         return best_valid_loss
 
-    inputs, labels = single_data_loading(
-        train_data,
-        args.batch_size,
-        train_steps,
-        args.seq_length,
-        device,
-    )
+    # inputs, labels = single_data_loading(
+    #     train_data,
+    #     args.batch_size,
+    #     train_steps,
+    #     args.seq_length,
+    #     device,
+    # )
 
     train_loss = 0
     model.train()
     for step in tqdm(range(1, train_steps + 1), total=train_steps, desc="training-steps"):
-        # batch = data_loading(train_data, args.batch_size, args.seq_length, device)
+        batch = data_loading(train_data, args.batch_size, args.seq_length, device)
         optim.zero_grad()
-        loss = compute_inputs_loss((inputs[step-1, ...], labels[step-1, ...]))
+        # loss = compute_inputs_loss((inputs[step - 1, ...], labels[step - 1, ...]))
+        loss = compute_inputs_loss(batch)
         train_loss += loss.item()
         loss.backward()
 
@@ -247,7 +257,7 @@ def train():
 
         optim.step()
 
-        if step % 100 == 0:
+        if step % 25 == 0:
             curr_loss = train_loss / step
 
             recent_grad_norm = np.mean(gradient_norms[-20:])
@@ -270,12 +280,12 @@ def train():
                 step=step,
             )
 
-        if step % 5000 == 0:
-            best_valid_loss = compute_valid_loss(best_valid_loss, step)
-            model.train()
+        if step % 250 == 0:
+            best_valid_loss = compute_valid_loss(best_valid_loss, 20, step, False, False)
+            # model.train()
 
     print(f"Final training loss: {train_loss / train_steps:.6f}")
-    compute_valid_loss(best_valid_loss, train_steps)
+    compute_valid_loss(best_valid_loss, valid_steps, train_steps)
 
 
 def isolated_validation_check(model_path: str):
