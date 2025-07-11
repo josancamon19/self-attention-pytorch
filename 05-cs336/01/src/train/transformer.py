@@ -116,6 +116,7 @@ def get_args():
     parser.add_argument("--norm-type", type=str, default="rms")  # rms, layer, none
     parser.add_argument("--norm-position", type=str, default="pre")  # pre, post
     parser.add_argument("--ffn-type", type=str, default="swiglu")  # swiglu, silu
+    parser.add_argument("--weight-tying", action="store_true", default=False)
 
     # Further
     parser.add_argument("-mp", "--use-mixed-precision", action="store_true", default=True)
@@ -134,7 +135,7 @@ def train():
     valid_data = np.load(args.valid_dataset_path, mmap_mode="r")
 
     train_steps = int(args.tokens / args.seq_length / args.batch_size)
-    valid_steps = int(len(valid_data) / args.seq_length / args.batch_size)
+    valid_steps = int(len(valid_data) / args.seq_length / args.batch_size / 5)
 
     if args.small_subset:
         train_steps = int(train_steps * 0.005)
@@ -150,6 +151,7 @@ def train():
         norm_type=NormType(args.norm_type.lower()),
         norm_position=NormPosition(args.norm_position.lower()),
         ffn_type=FFNType(args.ffn_type.lower()),
+        weight_tying=args.weight_tying,
     )
     model.to(device)
 
@@ -179,7 +181,7 @@ def train():
         model.parameters(),
         lr=lr_min,
         weight_decay=args.adam_weight_decay,
-        betas=(0.9, 0.999), # vs 0.9, 0.95
+        betas=(0.9, 0.95), # vs 0.9, 0.95
     )
 
     if args.checkpoint:
@@ -203,11 +205,9 @@ def train():
         valid_loss = 0
         model.eval()
         with torch.inference_mode():
-            pbar = tqdm(range(valid_steps), total=valid_steps, desc="validation-check")
-            for _ in range(valid_steps):
+            for _ in tqdm(range(valid_steps), total=valid_steps, desc="validation-check"):
                 batch = data_loading(valid_data, args.batch_size, args.seq_length, device)
                 valid_loss += compute_inputs_loss(batch).item()
-                pbar.update()
 
         valid_loss = valid_loss / valid_steps
         if valid_loss < best_valid_loss:
@@ -230,7 +230,7 @@ def train():
     for step in tqdm(range(1, train_steps + 1), total=train_steps, desc="training-steps"):
         # batch = data_loading(train_data, args.batch_size, args.seq_length, device)
         optim.zero_grad()
-        loss = compute_inputs_loss((inputs[step, ...], labels[step, ...]))
+        loss = compute_inputs_loss((inputs[step-1, ...], labels[step-1, ...]))
         train_loss += loss.item()
         loss.backward()
 
@@ -272,6 +272,7 @@ def train():
             best_valid_loss = compute_valid_loss(best_valid_loss, step)
             model.train()
 
+    print(f"Final training loss: {train_loss / train_steps:.6f}")
     compute_valid_loss(best_valid_loss, train_steps)
 
 

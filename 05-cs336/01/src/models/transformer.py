@@ -39,12 +39,16 @@ class FFNType(Enum):
 
 
 class Embedding(nn.Module):
-    def __init__(self, vocab_size: int, embed_dim):
+    def __init__(self, vocab_size: int, embed_dim: int, weight_tying: bool = False):
         super().__init__()
         self.embeddings = nn.Parameter(torch.empty((vocab_size, embed_dim)))
         # no weight tying 4.2 loss
         # with weight tying
-        nn.init.trunc_normal_(self.embeddings, mean=0, std=1, a=-3, b=3)  # 8.2 loss
+        if weight_tying:
+            nn.init.xavier_uniform_(self.embeddings)
+        else:
+            # nn.init.normal_(self.embeddings, mean=0, std=0.02)
+            nn.init.trunc_normal_(self.embeddings, mean=0, std=1, a=-3, b=3)  # 8.2 loss
         # nn.init.normal_(self.embeddings, mean=0, std=0.02) # 6.2 loss
         # nn.init.xavier_uniform_(self.embeddings)
 
@@ -53,17 +57,29 @@ class Embedding(nn.Module):
 
 
 class Linear(nn.Module):
-    def __init__(self, inp: int, out: int, bias: bool = False, device: torch.device = None, dtype: torch.dtype = None):
+    def __init__(
+        self,
+        inp: int,
+        out: int,
+        bias: bool = False,
+        device: torch.device = None,
+        dtype: torch.dtype = None,
+        # num_layers: int = 1 # https://arxiv.org/abs/1908.11365
+        is_out_proj: bool = False,
+    ):
         super().__init__()
         self.inp = inp
         self.out = out
         self.weights = nn.Parameter(torch.empty((out, inp), device=device, dtype=dtype))
         self.bias = None if not bias else nn.Parameter(torch.zeros((out,), device=device, dtype=dtype))
-        self.reset_parameters()
+        self.reset_parameters(is_out_proj)
 
-    def reset_parameters(self) -> None:
-        std = math.sqrt(2 / (self.inp + self.out))
-        nn.init.trunc_normal_(self.weights, mean=0, std=std, a=-3 * std, b=3 * std)
+    def reset_parameters(self, is_out_proj: bool) -> None:
+        if is_out_proj:
+            nn.init.normal_(self.weights, mean=0, std=0.02)
+        else:
+            std = math.sqrt(2 / (self.inp + self.out))
+            nn.init.trunc_normal_(self.weights, mean=0, std=std, a=-3 * std, b=3 * std)
 
     def forward(self, x):
         if self.bias is not None:
@@ -318,11 +334,14 @@ class Transformer(nn.Module):
         norm_type: NormType = NormType.RMS,
         norm_position: NormPosition = NormPosition.PRE,
         ffn_type: FFNType = FFNType.SWIGLU,
+        weight_tying: bool = False,
     ):
         super().__init__()
-        self.embeddings = Embedding(vocab_size, embedding_dim)
         self.pos_embedding = pos_embedding
         self.norm_position = norm_position
+        self.weight_tying = weight_tying
+
+        self.embeddings = Embedding(vocab_size, embedding_dim, weight_tying)
 
         if self.pos_embedding == PosEmbeddingType.SINUSOIDAL:
             pe = get_positional_encodings(embedding_dim, max_sequence_length)
@@ -343,8 +362,8 @@ class Transformer(nn.Module):
         if self.norm_position == NormPosition.PRE:
             self.pre_output_norm = get_norm_class(norm_type, embedding_dim)
 
-        self.output = nn.Parameter(torch.empty(embedding_dim, vocab_size))
-        nn.init.normal_(self.output, std=0.02)
+        if not self.weight_tying:
+            self.output = Linear(embedding_dim, vocab_size, is_out_proj=True)
 
     def forward(self, input_ids, padding_mask):
         tokens = self.embeddings(input_ids)
@@ -358,8 +377,10 @@ class Transformer(nn.Module):
         if self.norm_position == NormPosition.PRE:
             tokens = self.pre_output_norm(tokens)
 
-        output = tokens @ self.output
-        # output = tokens @ self.embeddings.embeddings.T
+        if self.weight_tying:
+            output = tokens @ self.embeddings.embeddings.T
+        else:
+            output = self.output(tokens)
         return output  # output logits
 
 
