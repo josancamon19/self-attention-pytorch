@@ -117,9 +117,10 @@ def get_args():
     parser.add_argument("--norm-position", type=str, default="pre")  # pre, post
     parser.add_argument("--ffn-type", type=str, default="swiglu")  # swiglu, silu
     parser.add_argument("--weight-tying", action="store_true", default=False)
+    parser.add_argument("--qk-norm", action="store_true", default=False)
 
     # Further
-    parser.add_argument("-mp", "--use-mixed-precision", action="store_true", default=True)
+    parser.add_argument("-mp", "--use-mixed-precision", action="store_true", default=False)
     parser.add_argument("--use-torch-compile", action="store_true", default=True)
 
     return parser.parse_args()
@@ -152,6 +153,7 @@ def train():
         norm_position=NormPosition(args.norm_position.lower()),
         ffn_type=FFNType(args.ffn_type.lower()),
         weight_tying=args.weight_tying,
+        qk_norm=args.qk_norm,
     )
     model.to(device)
 

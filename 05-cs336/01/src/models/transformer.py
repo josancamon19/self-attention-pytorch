@@ -3,6 +3,7 @@ import math
 import torch.nn as nn
 import torch
 from torch.nn.parameter import Parameter
+import torch.nn.functional as F
 
 from src.utils import softmax
 
@@ -225,15 +226,20 @@ class MultiHeadSelfAttention(nn.Module):
         num_heads: int,
         max_sequence_length: int,
         pos_embedding: PosEmbeddingType = PosEmbeddingType.ROPE,
+        qk_norm: bool = False,
     ):
         super().__init__()
         self.num_heads = num_heads
         self.head_size = embedding_dim // num_heads
         self.embedding_dim = embedding_dim
+        self.qk_norm = qk_norm
 
         self.QKV = Linear(embedding_dim, 3 * self.head_size * self.num_heads)
         self.register_buffer("causal_mask", torch.tril(torch.ones(max_sequence_length, max_sequence_length)))
         self.scale = 1.0 / math.sqrt(self.head_size)
+        
+        if self.qk_norm:
+            self.qk_scale = nn.Parameter(torch.ones(self.head_size))
 
         if pos_embedding == PosEmbeddingType.ROPE:
             self.rope = RotaryPositionalEncoding(self.head_size, max_sequence_length)
@@ -260,9 +266,14 @@ class MultiHeadSelfAttention(nn.Module):
         if self.rope:  # test logic
             q = self.rope(q)
             k = self.rope(k)
-
-        attention_scores = q @ k.transpose(-2, -1)  # b, num_heads, seq_length, seq_length
-        attention_scores = attention_scores * self.scale
+        
+        if self.qk_norm:
+            q = F.normalize(q, dim=-1)
+            k = F.normalize(k, dim=-1)
+            attention_scores = q @ k.transpose(-2, -1)
+            attention_scores *= self.qk_scale.view(-1, 1, 1, 1)
+        else:
+            attention_scores = (q @ k.transpose(-2, -1)) * self.scale  # b, num_heads, seq_length, seq_length
 
         mask = self.causal_mask[:seq_length, :seq_length]
         if padding_mask is not None:
@@ -297,6 +308,7 @@ class TransformerBlock(nn.Module):
         norm_type: NormType = NormType.RMS,
         norm_position: NormPosition = NormPosition.PRE,
         ffn_type: FFNType = FFNType.SWIGLU,
+        qk_norm: bool = False,
     ):
         super().__init__()
 
@@ -307,6 +319,7 @@ class TransformerBlock(nn.Module):
             num_heads,
             max_sequence_length,
             pos_embedding,
+            qk_norm,
         )
         self.pos_wise_norm = get_norm_class(norm_type, embedding_dim)
         self.pos_wise = PosWiseFFN(embedding_dim, ffn_type)
@@ -335,6 +348,7 @@ class Transformer(nn.Module):
         norm_position: NormPosition = NormPosition.PRE,
         ffn_type: FFNType = FFNType.SWIGLU,
         weight_tying: bool = False,
+        qk_norm: bool = False,
     ):
         super().__init__()
         self.pos_embedding = pos_embedding
@@ -356,6 +370,7 @@ class Transformer(nn.Module):
                 norm_type,
                 norm_position,
                 ffn_type,
+                qk_norm,
             )
             for _ in range(num_layers)
         )
