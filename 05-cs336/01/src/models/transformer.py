@@ -5,6 +5,7 @@ import torch
 from torch.nn.parameter import Parameter
 import torch.nn.functional as F
 
+from src.models.tokenizer import Tokenizer
 from src.utils import softmax
 
 # from transformers import GPT2Tokenizer
@@ -237,7 +238,7 @@ class MultiHeadSelfAttention(nn.Module):
         self.QKV = Linear(embedding_dim, 3 * self.head_size * self.num_heads)
         self.register_buffer("causal_mask", torch.tril(torch.ones(max_sequence_length, max_sequence_length)))
         self.scale = 1.0 / math.sqrt(self.head_size)
-        
+
         if self.qk_norm:
             self.qk_scale = nn.Parameter(torch.ones(self.head_size))
 
@@ -266,7 +267,7 @@ class MultiHeadSelfAttention(nn.Module):
         if self.rope:  # test logic
             q = self.rope(q)
             k = self.rope(k)
-        
+
         if self.qk_norm:
             q = F.normalize(q, dim=-1)
             k = F.normalize(k, dim=-1)
@@ -379,6 +380,30 @@ class Transformer(nn.Module):
 
         if not self.weight_tying:
             self.output = Linear(embedding_dim, vocab_size, is_out_proj=True)
+
+    @classmethod
+    def from_args(cls, args, return_tokenizer: bool = False):
+        tokenizer = Tokenizer.from_files(
+            args.tokenizer_vocab_path,
+            args.tokenizer_merges_path,
+            ["<|endoftext|>"],
+        )
+        transformer = cls(
+            # TODO: else defaults if args.$param doesn't exists when inference
+            tokenizer.vocab_size,
+            args.seq_length,
+            args.embedding_dim,
+            args.num_layers,
+            args.num_attention_heads,
+            pos_embedding=PosEmbeddingType(args.pos_embedding.lower()),
+            norm_type=NormType(args.norm_type.lower()),
+            norm_position=NormPosition(args.norm_position.lower()),
+            ffn_type=FFNType(args.ffn_type.lower()),
+            qk_norm=args.qk_norm,
+        )
+        if return_tokenizer:
+            return transformer, tokenizer
+        return transformer
 
     def forward(self, input_ids, padding_mask):
         tokens = self.embeddings(input_ids)

@@ -1,9 +1,11 @@
 import torch
 
-from src.train.transformer import get_args, get_tokenizer
+from src.train.transformer import get_args
 from types import SimpleNamespace
-from src.models.transformer import PosEmbeddingType, NormType, NormPosition, FFNType, Transformer
-from src.utils import softmax
+from src.models.transformer import Transformer
+from src.utils import data_loading, softmax
+import numpy as np
+from tqdm import tqdm
 
 
 def generate(
@@ -18,25 +20,14 @@ def generate(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data = torch.load(model_path, map_location=device)
     args = SimpleNamespace(**data["args"]) if "args" in data else get_args()
+    
+    data = torch.load(model_path, map_location=device)
+    model, tokenizer = Transformer.from_args(args, return_tokenizer=True)
 
-    tokenizer = get_tokenizer(args)
     encoded = tokenizer.encode_batched([prompt], True, args.seq_length, True)
     input_ids, attention_mask = encoded["input_ids"], encoded["attention_mask"]
 
     assert (len(input_ids) + target_seq_length) < args.seq_length
-
-    data = torch.load(model_path, map_location=device)
-    model = Transformer(
-        tokenizer.vocab_size,
-        args.seq_length,
-        args.embedding_dim,
-        args.num_layers,
-        args.num_attention_heads,
-        pos_embedding=PosEmbeddingType(args.pos_embedding.lower()),
-        norm_type=NormType(args.norm_type.lower()),
-        norm_position=NormPosition(args.norm_position.lower()),
-        ffn_type=FFNType(args.ffn_type.lower()),
-    )
 
     state_dict = data["model"]
     if any(key.startswith("_orig_mod.") for key in state_dict.keys()):
@@ -76,6 +67,35 @@ def generate(
     decoded = tokenizer.decode(generated_tokens)
     print("decoded:", decoded)
     return decoded
+
+
+def isolated_validation_check(model_path: str):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    data = torch.load(model_path, map_location=device)
+    args = SimpleNamespace(**data["args"]) if "args" in data else get_args()
+    print("isolated_validation_check args:", args)
+
+    model: Transformer = Transformer.from_args(args, return_tokenizer=False)
+    valid_data = np.load(args.valid_dataset_path)
+
+    if args.use_torch_compile:
+        model = torch.compile(model)
+
+    model.load_state_dict(data["model"])
+    model.to(device)
+    valid_loss = 0
+    valid_steps = len(valid_data) // args.seq_length // args.batch_size
+    with torch.inference_mode():
+        pbar = tqdm(total=valid_steps, desc="valid-dataset")
+        for _ in range(valid_steps):
+            batch = data_loading(valid_data, args.batch_size, args.seq_length, device)
+            input_ids, labels = batch
+            output = model(input_ids, None)
+            output_flatten = output.view(-1, output.shape[-1])
+            labels = labels.contiguous().view(-1)
+            valid_loss += F.cross_entropy(output_flatten, labels).item()
+            pbar.update()
+    print(valid_loss / valid_steps)
 
 
 if __name__ == "__main__":

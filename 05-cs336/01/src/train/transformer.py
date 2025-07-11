@@ -2,7 +2,6 @@ import argparse
 from collections import deque
 import torch
 from tqdm import tqdm
-from types import SimpleNamespace
 
 from src.models.tokenizer import Tokenizer
 from torch.optim import AdamW
@@ -17,10 +16,10 @@ from src.utils import (
     cos_lr_schedule,
     AdamW as CustomAdamW,
     clip_gradients,
-    single_data_loading,
+    # single_data_loading,
     # cross_entropy_loss,
 )
-from src.models.transformer import PosEmbeddingType, NormType, NormPosition, FFNType, Transformer
+from src.models.transformer import Transformer
 
 os.makedirs("./.models", exist_ok=True)
 
@@ -31,10 +30,6 @@ torch.set_float32_matmul_precision("high")
 # fuck, easier to experiment, a bit late
 torch.manual_seed(42)
 np.random.seed(42)
-
-
-def get_tokenizer(args):
-    return Tokenizer.from_files(args.tokenizer_vocab_path, args.tokenizer_merges_path, ["<|endoftext|>"])
 
 
 def get_model_path(step, args):
@@ -104,7 +99,6 @@ def get_args():
     parser.add_argument("-c", "--checkpoint", type=str, default=None)
     parser.add_argument("--wandb-id", type=str, default=None)
     parser.add_argument("-v", "--verbose", action="store_true", default=False)
-    parser.add_argument("-ss", "--small-subset", action="store_true", default=False)
     parser.add_argument("-g", "--gpu-id", type=int, default=0)
 
     # compare slow down
@@ -126,11 +120,94 @@ def get_args():
     return parser.parse_args()
 
 
+# Add this function to your training script CLAUDE IMPLEMENTS
+def get_simple_diagnostic_metrics(model, loss: torch.Tensor, step: int, initial_loss: float | None = None):
+    """Just the essentials for architectural comparison."""
+    # They make sense, but had never seen them, so gotta check, many of this are relative values, cause are upscaled
+    metrics = {}
+
+    # 1. Are layers learning different things? (Capacity)
+    with torch.no_grad():
+        # Just check if first and last layer weights are becoming similar
+        first_layer_weight = model.blocks[0].attention.QKV.weights
+        last_layer_weight = model.blocks[-1].attention.QKV.weights
+
+        # Simple cosine similarity
+        weight_similarity = F.cosine_similarity(
+            first_layer_weight.flatten().unsqueeze(0), last_layer_weight.flatten().unsqueeze(0)
+        ).item()
+
+        metrics["capacity/layer_similarity"] = weight_similarity  # Want this LOW
+
+    # 2. How efficiently are we learning? (Efficiency)
+    total_params = sum(p.numel() for p in model.parameters()) / 1e6  # millions
+
+    metrics["efficiency/loss_per_million_params"] = loss.item() / total_params
+    metrics["efficiency/params_millions"] = total_params
+
+    # 3. Are we using the full model? (Dead neurons in FFN)
+    # Sample one middle layer
+    mid_layer = len(model.blocks) // 2
+    ffn_weight = model.blocks[mid_layer].pos_wise.W2.weights
+
+    # Neurons with very small outgoing weights are probably dead
+    dead_neurons = (ffn_weight.abs().max(dim=0)[0] < 0.01).float().mean()
+    metrics["capacity/dead_neurons_percent"] = dead_neurons.item() * 100
+
+    if initial_loss is not None:
+        loss_reduction = initial_loss - loss.item()
+        # How much loss reduction per million parameters per step
+        learning_efficiency = (loss_reduction / total_params) / step * 1000
+        metrics["efficiency/learning_efficiency"] = learning_efficiency
+
+    return metrics
+
+
+def compute_batch_loss(model, args, batch):
+    with torch.autocast("cuda", dtype=torch.bfloat16, enabled=args.use_mixed_precision):
+        input_ids, labels = batch
+        output = model(input_ids, None)
+        output_flatten = output.view(-1, output.shape[-1])
+        labels = labels.contiguous().view(-1)
+        # return cross_entropy_loss(output_flatten, labels)
+        return F.cross_entropy(output_flatten, labels)
+
+
+def execute_validation_loss(
+    model,
+    optim,
+    args,
+    device,
+    valid_data,
+    wandb_run,
+    best_valid_loss: float,
+    valid_steps: int,
+    step: int,
+    save_best: bool = True,
+    show_progress: bool = True,
+):
+    valid_loss = 0
+    with torch.inference_mode():
+        for _ in tqdm(range(valid_steps), total=valid_steps, desc="validation-check", disable=not show_progress):
+            batch = data_loading(valid_data, args.batch_size, args.seq_length, device)
+            valid_loss += compute_batch_loss(model, args, batch).item()
+
+    valid_loss = valid_loss / valid_steps
+    wandb_run.log({"valid_loss": valid_loss}, step=step)
+
+    if valid_loss < best_valid_loss:
+        best_valid_loss = valid_loss
+        if save_best:
+            save_checkpoint(model, optim, get_model_path(step, args), args=vars(args), iteration=step)
+            print(f"saved model at step {step} with valid_loss: {valid_loss}")
+
+    return best_valid_loss
+
+
 def train():
     args = get_args()
     print("[train]: ", vars(args))
     device = torch.device(f"cuda:{args.gpu_id}" if torch.cuda.is_available() else "cpu")
-    tokenizer = get_tokenizer(args)
 
     train_data = np.load(args.train_dataset_path, mmap_mode="r")
     valid_data = np.load(args.valid_dataset_path, mmap_mode="r")
@@ -138,120 +215,53 @@ def train():
     train_steps = int(args.tokens / args.seq_length / args.batch_size)
     valid_steps = int(len(valid_data) / args.seq_length / args.batch_size)
 
-    if args.small_subset:
-        train_steps = int(train_steps * 0.005)
-        valid_steps = int(valid_steps * 0.05)
-
-    model = Transformer(
-        tokenizer.vocab_size,
-        args.seq_length,
-        args.embedding_dim,
-        args.num_layers,
-        args.num_attention_heads,
-        pos_embedding=PosEmbeddingType(args.pos_embedding.lower()),
-        norm_type=NormType(args.norm_type.lower()),
-        norm_position=NormPosition(args.norm_position.lower()),
-        ffn_type=FFNType(args.ffn_type.lower()),
-        weight_tying=args.weight_tying,
-        qk_norm=args.qk_norm,
-    )
+    model: Transformer = Transformer.from_args(args)
     model.to(device)
 
     if args.use_torch_compile:
-        # TODO: consider torch.compile warning on RoPE complex numbers
         model = torch.compile(model)
-        # print("[INFO] Pre-compiling model...")
-        # dummy_input = torch.randint(0, tokenizer.vocab_size, (args.batch_size, args.seq_length), device=device)
-        # with torch.no_grad():
-        #     _ = model(dummy_input, None)
-        # print("[INFO] Model compilation complete.")
-        # torch.cuda.empty_cache()  # Clean up compilation memory
 
-    lr_min, lr_max, warmup_steps = args.lr_min, args.lr_max, args.lr_warmup_steps
-    annealing_steps = train_steps
-
-    run = wandb.init(
-        id=args.wandb_id,
-        project="assignment-01-owt",
-        config=vars(args),
-    )
+    run = wandb.init(id=args.wandb_id, project="assignment-01-owt", config=vars(args))
 
     AdamCLS = CustomAdamW if args.use_custom_adam else AdamW
     grad_clipping_fn = clip_gradients if args.use_custom_gradient_clipping else torch.nn.utils.clip_grad_norm_
 
     optim = AdamCLS(
         model.parameters(),
-        lr=lr_min,
+        lr=args.lr_min,
         weight_decay=args.adam_weight_decay,
-        betas=(0.9, 0.95),  # vs 0.9, 0.95
+        betas=(0.9, 0.95),
     )
 
     if args.checkpoint:
         load_checkpoint(model, optim, args.checkpoint)
 
-    def compute_inputs_loss(batch):
-        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=args.use_mixed_precision):
-            input_ids, labels = batch
-            output = model(input_ids, None)
-            output_flatten = output.view(-1, output.shape[-1])
-            labels = labels.contiguous().view(-1)
-            # return cross_entropy_loss(output_flatten, labels)
-            loss = F.cross_entropy(output_flatten, labels)
-        return loss
-
     best_valid_loss = float("inf")
     gradient_norms = []
     loss_history = deque(maxlen=100)
 
-    def compute_valid_loss(
-        best_valid_loss: float,
-        valid_steps: int,
-        step: int,
-        save_best: bool = True,
-        show_progress: bool = True,
-    ):
-        valid_loss = 0
-        # model.eval()
-        with torch.inference_mode():
-            for _ in tqdm(range(valid_steps), total=valid_steps, desc="validation-check", disable=not show_progress):
-                batch = data_loading(valid_data, args.batch_size, args.seq_length, device)
-                valid_loss += compute_inputs_loss(batch).item()
-
-        valid_loss = valid_loss / valid_steps
-        run.log({"valid_loss": valid_loss}, step=step)
-
-        if valid_loss < best_valid_loss:
-            best_valid_loss = valid_loss
-            if save_best:
-                save_checkpoint(model, optim, get_model_path(step, args), args=vars(args), iteration=step)
-                print(f"saved model at step {step} with valid_loss: {valid_loss}")
-
-        return best_valid_loss
-
-    # inputs, labels = single_data_loading(
-    #     train_data,
-    #     args.batch_size,
-    #     train_steps,
-    #     args.seq_length,
-    #     device,
-    # )
+    # inputs, labels = single_data_loading(train_data, args.batch_size, train_steps, args.seq_length, device)
 
     train_loss = 0
+    initial_loss = None
     model.train()
     for step in tqdm(range(1, train_steps + 1), total=train_steps, desc="training-steps"):
         batch = data_loading(train_data, args.batch_size, args.seq_length, device)
         optim.zero_grad()
-        # loss = compute_inputs_loss((inputs[step - 1, ...], labels[step - 1, ...]))
-        loss = compute_inputs_loss(batch)
+        # loss = compute_inputs_loss(model, args, (inputs[step - 1, ...], labels[step - 1, ...]))
+        loss = compute_batch_loss(model, args, batch)
         train_loss += loss.item()
         loss.backward()
+
+        if step == 1:
+            initial_loss = loss.item()
 
         grad_norm = grad_clipping_fn(model.parameters(), max_norm=1.0)
 
         gradient_norms.append(grad_norm.item())
         loss_history.append(loss.item())
 
-        lr = cos_lr_schedule(lr_min, lr_max, warmup_steps, annealing_steps, step)
+        lr = cos_lr_schedule(args.lr_min, args.lr_max, args.lr_warmup_steps, train_steps, step)
         for param_group in optim.param_groups:
             param_group["lr"] = lr
 
@@ -271,61 +281,24 @@ def train():
                 {
                     "train_loss": curr_loss,
                     "lr": lr,
-                    "grad_norm": recent_grad_norm,
-                    "loss_moving_avg": loss_moving_avg,
-                    "loss_std": loss_std,
-                    "loss_variance": loss_std**2,
-                    "param_norm": param_norm.item(),
+                    "stability/grad_norm": recent_grad_norm,
+                    "stability/loss_moving_avg": loss_moving_avg,
+                    "stability/loss_std": loss_std,
+                    "stability/loss_variance": loss_std**2,
+                    "stability/param_norm": param_norm.item(),
                 },
                 step=step,
             )
 
-        if step % 250 == 0:
-            best_valid_loss = compute_valid_loss(best_valid_loss, 20, step, False, False)
-            # model.train()
+            if step % 250 == 0:
+                best_valid_loss = execute_validation_loss(
+                    model, optim, args, device, valid_data, run, best_valid_loss, 20, step, False, False
+                )
+                diagnostic_metrics = get_simple_diagnostic_metrics(model, loss, step, initial_loss)
+                run.log(diagnostic_metrics, step=step)
 
     print(f"Final training loss: {train_loss / train_steps:.6f}")
-    compute_valid_loss(best_valid_loss, valid_steps, train_steps)
-
-
-def isolated_validation_check(model_path: str):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    data = torch.load(model_path, map_location=device)
-    args = SimpleNamespace(**data["args"]) if "args" in data else get_args()
-    print("isolated_validation_check args:", args)
-    tokenizer = get_tokenizer(args)
-
-    model = Transformer(
-        tokenizer.vocab_size,
-        args.seq_length,
-        args.embedding_dim,
-        args.num_layers,
-        args.num_attention_heads,
-        pos_embedding=PosEmbeddingType(args.pos_embedding.lower()),
-        norm_type=NormType(args.norm_type.lower()),
-        norm_position=NormPosition(args.norm_position.lower()),
-        ffn_type=FFNType(args.ffn_type.lower()),
-    )
-    valid_data = np.load(args.valid_dataset_path)
-
-    if args.use_torch_compile:
-        model = torch.compile(model)
-
-    model.load_state_dict(data["model"])
-    model.to(device)
-    valid_loss = 0
-    valid_steps = len(valid_data) // args.seq_length // args.batch_size
-    with torch.inference_mode():
-        pbar = tqdm(total=valid_steps, desc="valid-dataset")
-        for _ in range(valid_steps):
-            batch = data_loading(valid_data, args.batch_size, args.seq_length, device)
-            input_ids, labels = batch
-            output = model(input_ids, None)
-            output_flatten = output.view(-1, output.shape[-1])
-            labels = labels.contiguous().view(-1)
-            valid_loss += F.cross_entropy(output_flatten, labels).item()
-            pbar.update()
-    print(valid_loss / valid_steps)
+    execute_validation_loss(model, optim, args, device, valid_data, run, best_valid_loss, valid_steps, step)
 
 
 if __name__ == "__main__":
