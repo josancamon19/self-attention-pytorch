@@ -149,6 +149,7 @@ def train():
     model.to(device)
 
     if args.use_torch_compile:
+        # TODO: consider torch.compile warning on RoPE complex numbers
         model = torch.compile(model)
         print("[INFO] Pre-compiling model...")
         dummy_input = torch.randint(0, tokenizer.vocab_size, (args.batch_size, args.seq_length), device=device)
@@ -219,6 +220,9 @@ def train():
                 recent_grad_norm = np.mean(gradient_norms[-20:])
                 loss_moving_avg = np.mean(loss_history)
                 loss_std = np.std(loss_history)
+                param_norm = torch.linalg.vector_norm(
+                    torch.stack([torch.linalg.vector_norm(p) for p in model.parameters()])
+                )
 
                 run.log(
                     {
@@ -227,6 +231,7 @@ def train():
                         "loss_moving_avg": loss_moving_avg,
                         "loss_std": loss_std,
                         "loss_variance": loss_std**2,
+                        "param_norm": param_norm.item(),
                     },
                     step=steps,
                 )

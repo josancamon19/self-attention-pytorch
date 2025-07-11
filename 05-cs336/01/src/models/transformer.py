@@ -339,8 +339,8 @@ class Transformer(nn.Module):
         if self.norm_position == NormPosition.PRE:
             self.pre_output_norm = get_norm_class(norm_type, embedding_dim)
 
-        self.output = nn.Parameter(torch.empty(embedding_dim, vocab_size))
-        nn.init.normal_(self.output, std=0.02)
+        # self.output = nn.Parameter(torch.empty(embedding_dim, vocab_size))
+        # nn.init.normal_(self.output, std=0.02)
 
     def forward(self, input_ids, padding_mask):
         tokens = self.embeddings(input_ids)
@@ -354,7 +354,8 @@ class Transformer(nn.Module):
         if self.norm_position == NormPosition.PRE:
             tokens = self.pre_output_norm(tokens)
 
-        output = tokens @ self.output
+        # output = tokens @ self.output
+        output = tokens @ self.embeddings.embeddings.T
         return output  # output logits
 
 
