@@ -16,6 +16,20 @@ def data_loading(
     return batch[:, :-1], batch[:, 1:]
 
 
+def single_data_loading(
+    x: np.ndarray,
+    batch_size: int,
+    steps: int,
+    context_length: int,
+    device: torch.device,
+):
+    starting_indices = torch.randint(0, len(x) - context_length, (steps, batch_size))
+    indices = starting_indices.unsqueeze(-1) + torch.arange(context_length + 1)
+    batches = torch.from_numpy(x[indices]).to(device, dtype=torch.long)
+    print("single_data_loading", batches.shape)
+    return batches[:, :, :-1], batches[:, :, 1:]  # inputs, labels
+
+
 def save_checkpoint(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,

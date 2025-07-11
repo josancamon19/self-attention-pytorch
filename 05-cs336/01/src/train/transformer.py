@@ -17,6 +17,7 @@ from src.utils import (
     cos_lr_schedule,
     AdamW as CustomAdamW,
     clip_gradients,
+    single_data_loading,
     # cross_entropy_loss,
 )
 from src.models.transformer import PosEmbeddingType, NormType, NormPosition, FFNType, Transformer
@@ -133,7 +134,7 @@ def train():
     valid_data = np.load(args.valid_dataset_path, mmap_mode="r")
 
     train_steps = int(args.tokens / args.seq_length / args.batch_size)
-    valid_steps = int(len(valid_data) /args.seq_length / args.batch_size)
+    valid_steps = int(len(valid_data) / args.seq_length / args.batch_size)
 
     if args.small_subset:
         train_steps = int(train_steps * 0.005)
@@ -216,12 +217,20 @@ def train():
         print(f"step {step} valid_loss: {valid_loss}")
         return best_valid_loss
 
+    inputs, labels = single_data_loading(
+        train_data,
+        args.batch_size,
+        train_steps,
+        args.seq_length,
+        device,
+    )
+
     train_loss = 0
     model.train()
     for step in tqdm(range(1, train_steps + 1), total=train_steps, desc="training-steps"):
-        batch = data_loading(train_data, args.batch_size, args.seq_length, device)
+        # batch = data_loading(train_data, args.batch_size, args.seq_length, device)
         optim.zero_grad()
-        loss = compute_inputs_loss(batch)
+        loss = compute_inputs_loss((inputs[step, ...], labels[step, ...]))
         train_loss += loss.item()
         loss.backward()
 
