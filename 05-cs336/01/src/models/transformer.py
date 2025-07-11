@@ -42,7 +42,11 @@ class Embedding(nn.Module):
     def __init__(self, vocab_size: int, embed_dim):
         super().__init__()
         self.embeddings = nn.Parameter(torch.empty((vocab_size, embed_dim)))
-        nn.init.trunc_normal_(self.embeddings, mean=0, std=1, a=-3, b=3)
+        # no weight tying 4.2 loss
+        # with weight tying
+        nn.init.trunc_normal_(self.embeddings, mean=0, std=1, a=-3, b=3)  # 8.2 loss
+        # nn.init.normal_(self.embeddings, mean=0, std=0.02) # 6.2 loss
+        # nn.init.xavier_uniform_(self.embeddings)
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
         return self.embeddings[token_ids]
@@ -186,7 +190,7 @@ class PosWiseFFN(nn.Module):
 
     @staticmethod
     def silu(x):
-        return torch.nn.functional.silu(x) # minor gain, maybe not even
+        return torch.nn.functional.silu(x)  # minor gain, maybe not even
         # return x * torch.sigmoid(x)
 
     def forward(self, x):
@@ -339,8 +343,8 @@ class Transformer(nn.Module):
         if self.norm_position == NormPosition.PRE:
             self.pre_output_norm = get_norm_class(norm_type, embedding_dim)
 
-        # self.output = nn.Parameter(torch.empty(embedding_dim, vocab_size))
-        # nn.init.normal_(self.output, std=0.02)
+        self.output = nn.Parameter(torch.empty(embedding_dim, vocab_size))
+        nn.init.normal_(self.output, std=0.02)
 
     def forward(self, input_ids, padding_mask):
         tokens = self.embeddings(input_ids)
@@ -354,8 +358,8 @@ class Transformer(nn.Module):
         if self.norm_position == NormPosition.PRE:
             tokens = self.pre_output_norm(tokens)
 
-        # output = tokens @ self.output
-        output = tokens @ self.embeddings.embeddings.T
+        output = tokens @ self.output
+        # output = tokens @ self.embeddings.embeddings.T
         return output  # output logits
 
 
