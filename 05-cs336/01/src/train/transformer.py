@@ -237,8 +237,8 @@ def train():
         optim.step()
 
         if step % 100 == 0:
-            train_loss = train_loss / train_steps
-            print(f"step {step} train_loss: {train_loss}")
+            curr_loss = train_loss / step
+            print(f"step {step} train_loss: {curr_loss}")
 
             recent_grad_norm = np.mean(gradient_norms[-20:])
             loss_moving_avg = np.mean(loss_history)
@@ -249,7 +249,7 @@ def train():
 
             run.log(
                 {
-                    "train_loss": train_loss,
+                    "train_loss": curr_loss,
                     "lr": lr,
                     "grad_norm": recent_grad_norm,
                     "loss_moving_avg": loss_moving_avg,
@@ -259,7 +259,6 @@ def train():
                 },
                 step=step,
             )
-            train_loss = 0
 
         if step % 5000 == 0:
             best_valid_loss = compute_valid_loss(best_valid_loss)
