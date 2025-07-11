@@ -26,7 +26,6 @@ os.makedirs("./.models", exist_ok=True)
 # gpu opt, torch.compile
 # holy fuck, 20 it/s to 48, wtf
 torch.set_float32_matmul_precision("high")
-# torch.backends.cudnn.benchmark = True
 
 # fuck, easier to experiment, a bit late
 torch.manual_seed(42)
@@ -45,7 +44,7 @@ def get_model_path(epoch, args):
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, choices=["tinystories", "owt"], default="tinystories")
+    parser.add_argument("--dataset", type=str, choices=["tinystories", "owt"], default="owt")
 
     args, _ = parser.parse_known_args()
 
@@ -69,7 +68,7 @@ def get_args():
         default_valid_dataset = ".tokenizer/owt_valid-encoded.npy"
         default_tokenizer_vocab = ".tokenizer/owt_train-vocab.json"
         default_tokenizer_merges = ".tokenizer/owt_train-merges.json"
-        default_epochs = 5
+        default_epochs = 8
         default_lr_min = 1e-5
         default_lr_warmup = 200  # TODO: consider more warm up steps for higher lr_max
         default_lr_max = 4e-3
@@ -104,8 +103,8 @@ def get_args():
     parser.add_argument("-g", "--gpu-id", type=int, default=0)
 
     # compare slow down
-    parser.add_argument("--use-custom-adam", action="store_true", default=False)
-    parser.add_argument("--use-custom-gradient-clipping", action="store_true", default=False)
+    parser.add_argument("-uca", "--use-custom-adam", action="store_true", default=False)
+    parser.add_argument("-ucgc", "--use-custom-gradient-clipping", action="store_true", default=False)
 
     # Oblations
     parser.add_argument("--pos-embedding", type=str, default="rope")  # rope, nope, sinusoidal
@@ -114,7 +113,7 @@ def get_args():
     parser.add_argument("--ffn-type", type=str, default="swiglu")  # swiglu, silu
 
     # Further
-    parser.add_argument("-mp", "--use-mixed-precision", action="store_true", default=False)
+    parser.add_argument("-mp", "--use-mixed-precision", action="store_true", default=True)
     parser.add_argument("--use-torch-compile", action="store_true", default=True)
 
     return parser.parse_args()
