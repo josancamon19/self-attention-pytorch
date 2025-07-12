@@ -8,9 +8,9 @@ import wandb
 
 # Architecture search space based on your configs
 config = {
-    "embedding_dim": tune.choice([768, 1024, 1280]),
-    "num_layers": tune.choice([6, 8, 12, 16, 20, 24]),
-    "num_heads": tune.choice([8, 12, 16, 20]),
+    "embedding_dim": tune.grid_search([768, 1024, 1280]),
+    "num_layers": tune.grid_search([6, 8, 12, 16, 20, 24]),
+    "num_heads": tune.grid_search([8, 12, 16, 20]),
 }
 
 
@@ -109,12 +109,12 @@ def main():
     # Multi-GPU configuration
     num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     print(f"Detected {num_gpus} GPUs")
-    scheduler = ASHAScheduler(
-        time_attr="training_iteration",
-        max_t=10,  # Max iterations
-        grace_period=1,
-        reduction_factor=2,
-    )
+    # scheduler = ASHAScheduler(
+    #     time_attr="training_iteration",
+    #     max_t=10,  # Max iterations
+    #     grace_period=1,
+    #     reduction_factor=2,
+    # )
 
     # Run as many concurrent trials as we have GPUs
     max_concurrent_trials = num_gpus if num_gpus > 0 else 1
@@ -124,8 +124,8 @@ def main():
         tune_config=tune.TuneConfig(
             metric="valid_loss",
             mode="min",
-            scheduler=scheduler,
-            num_samples=max_concurrent_trials * 10,
+            # scheduler=scheduler, # no scheduler, test it all (exhaustive search)
+            # num_samples=max_concurrent_trials * 10, # ignored by tune.grid_search instead of tune.choice
             max_concurrent_trials=max_concurrent_trials,
         ),
         param_space=config,
