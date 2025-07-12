@@ -31,6 +31,12 @@ def train_transformer_architecture(config):
         train.report({"valid_loss": float("inf"), "status": "invalid_config"})
         return
 
+    # Skip configurations where head dimension is too small
+    head_dim = embedding_dim // num_heads
+    if head_dim < 64:
+        train.report({"valid_loss": float("inf"), "status": "head_dim_too_small"})
+        return
+
     # Create wandb run ID for this trial
     wandb_id = f"arch_search_{embedding_dim}_{config['num_layers']}_{num_heads}"
 
@@ -56,7 +62,7 @@ def train_transformer_architecture(config):
         "--gpu-id",
         str(gpu_id),
         "--max-wall-time",
-        str(10)
+        str(10),
     ]
 
     try:
