@@ -59,7 +59,7 @@ def train_transformer_architecture(config):
         "--gpu-id",
         str(gpu_id),
         "--max-wall-time",
-        str(10),
+        str(15),
         # relative path issues
         "--train-dataset-path",
         f"{project_root}/.tokenizer/owt_train-encoded.npy",
@@ -79,6 +79,8 @@ def train_transformer_architecture(config):
         "0.1",
         "--batch-size",
         "64",
+        "--use-mixed-precision",
+        # "--use-torch-compile",
     ]
 
     try:

@@ -136,12 +136,11 @@ def get_args():
 
     # Further
     parser.add_argument("-mp", "--use-mixed-precision", action="store_true", default=True)
-    parser.add_argument("--use-torch-compile", action="store_true", default=True)
+    parser.add_argument("-tc", "--use-torch-compile", action="store_true", default=False)
 
     # ops
     parser.add_argument("-c", "--checkpoint", type=str, default=None)
     parser.add_argument("--wandb-id", type=str, default=None)
-    parser.add_argument("-v", "--verbose", action="store_true", default=False)
     parser.add_argument("-g", "--gpu-id", type=int, default=0)
     parser.add_argument("--max-wall-time", type=int, default=None, help="Maximum wall clock time in minutes")
 
