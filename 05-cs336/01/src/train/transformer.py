@@ -45,6 +45,15 @@ def get_model_path(step, args):
     )
 
 
+schedule_map = {
+    "cosine": cos_lr_schedule,
+    "linear": linear_lr_schedule,
+    "sqrt": inverse_sqrt_schedule,
+    "constant": constant_with_warmup,
+    "cosine_restarts": cosine_with_restarts,
+}
+
+
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, choices=["tinystories", "owt"], default="owt")
@@ -209,10 +218,6 @@ def compute_batch_loss(model, args, batch):
         return loss
 
 
-# python src/train/transformer.py --tokens 2e8 --embedding-dim 1024 --num-layers 6 --num-heads 8 #-- nan's
-# python src/train/transformer.py --tokens 2e8 --embedding-dim 1024 --num-layers 6 --num-heads 16 # -- assert % 2
-
-
 def execute_validation_loss(
     model,
     optim,
@@ -242,15 +247,6 @@ def execute_validation_loss(
             print(f"saved model at step {step} with valid_loss: {valid_loss}")
 
     return best_valid_loss
-
-
-schedule_map = {
-    "cosine": cos_lr_schedule,
-    "linear": linear_lr_schedule,
-    "sqrt": inverse_sqrt_schedule,
-    "constant": constant_with_warmup,
-    "cosine_restarts": cosine_with_restarts,
-}
 
 
 def train():
@@ -287,19 +283,19 @@ def train():
     if args.checkpoint:
         load_checkpoint(model, optim, args.checkpoint)
 
-    best_valid_loss = float("inf")
-    gradient_norms = []
-    loss_history = deque(maxlen=100)
+    # gradient_norms = deque(maxlen=20)
+    # loss_history = deque(maxlen=100)
+    # initial_loss = None
 
     # inputs, labels = single_data_loading(train_data, args.batch_size, train_steps, args.seq_length, device)
 
+    best_valid_loss = float("inf")
     train_loss = 0
-    initial_loss = None
     model.train()
 
     # Wall clock timer setup
-    # start_time = time.time()
-    # max_wall_seconds = args.max_wall_time * 60 if args.max_wall_time else None
+    start_time = time.time()
+    max_wall_seconds = args.max_wall_time * 60 if args.max_wall_time else None
 
     for step in tqdm(range(1, train_steps + 1), total=train_steps, desc="training-steps"):
         batch = data_loading(train_data, args.batch_size, args.seq_length, device)
@@ -309,8 +305,8 @@ def train():
         train_loss += loss.item()
         loss.backward()
 
-        if step == 1:
-            initial_loss = loss.item()
+        # if step == 1:
+        #     initial_loss = loss.item()
 
         grad_norm = grad_clipping_fn(model.parameters(), max_norm=1.0)
 
@@ -325,8 +321,8 @@ def train():
 
         #     raise Exception("grad_norm has nan's")
 
-        gradient_norms.append(grad_norm.item())
-        loss_history.append(loss.item())
+        # gradient_norms.append(grad_norm.item())
+        # loss_history.append(loss.item())
 
         lr = lr_schedule_fn(args.lr_min, args.lr_max, args.lr_warmup_steps, train_steps, step)
         for param_group in optim.param_groups:
@@ -334,11 +330,9 @@ def train():
 
         optim.step()
 
-        # Efficient wall clock check (only every 25 steps to minimize overhead)
         if step % 50 == 0:
-            # current_time = time.time()
-            # elapsed_time = current_time - start_time
-
+            current_time = time.time()
+            elapsed_time = current_time - start_time
 
             # recent_grad_norm = np.mean(gradient_norms[-20:])
             # loss_moving_avg = np.mean(loss_history)
@@ -347,12 +341,11 @@ def train():
             #     torch.stack([torch.linalg.vector_norm(p) for p in model.parameters()])
             # )
 
-            # Calculate steps per second for efficiency tracking
-
             run.log(
                 {
                     "train_loss": train_loss / step,
                     "lr": lr,
+                    "speed": elapsed_time / step,
                     # "stability/grad_norm": recent_grad_norm,
                     # "stability/loss_moving_avg": loss_moving_avg,
                     # "stability/loss_std": loss_std,
@@ -363,10 +356,11 @@ def train():
             )
 
             # Check wall clock limit
-            # if max_wall_seconds and elapsed_time >= max_wall_seconds:
-            #     print(f"\n[WALL CLOCK] Reached time limit of {args.max_wall_time} minutes ({elapsed_time:.1f}s)")
-            #     print(f"[WALL CLOCK] Completed {step}/{train_steps} steps ({step / train_steps * 100:.1f}%)")
-            #     break
+            if max_wall_seconds and elapsed_time >= max_wall_seconds:
+                print(f"\n[WALL CLOCK] Reached time limit of {args.max_wall_time} minutes ({elapsed_time:.1f}s)")
+                print(f"[WALL CLOCK] Completed {step}/{train_steps} steps ({step / train_steps * 100:.1f}%)")
+                train_steps = step  # train_loss / train_steps work
+                break
 
             if step % 1000 == 0:
                 best_valid_loss = execute_validation_loss(
@@ -381,5 +375,4 @@ def train():
 
 if __name__ == "__main__":
     train()
-    torch.nn.Linear
     # isolated_validation_check(".models/owt-epoch-8-lr-0.004-batch-64-arch-1024-768-6-12.pt")
