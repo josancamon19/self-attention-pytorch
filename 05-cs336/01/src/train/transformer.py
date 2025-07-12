@@ -187,24 +187,24 @@ def compute_batch_loss(model, args, batch):
         input_ids, labels = batch
         output = model(input_ids, None)
 
-        if torch.isnan(output).any():
-            print("[NaN DETECTED] Model output contains NaN values!")
-            print(f"[NaN DETECTED] Output shape: {output.shape}")
-            print(f"[NaN DETECTED] NaN count: {torch.isnan(output).sum().item()}")
-            # Check which parameters have NaN
-            for name, param in model.named_parameters():
-                if torch.isnan(param).any():
-                    print(f"[NaN DETECTED] Parameter {name} has NaN values")
+        # if torch.isnan(output).any():
+        #     print("[NaN DETECTED] Model output contains NaN values!")
+        #     print(f"[NaN DETECTED] Output shape: {output.shape}")
+        #     print(f"[NaN DETECTED] NaN count: {torch.isnan(output).sum().item()}")
+        #     # Check which parameters have NaN
+        #     for name, param in model.named_parameters():
+        #         if torch.isnan(param).any():
+        #             print(f"[NaN DETECTED] Parameter {name} has NaN values")
 
-        if torch.isinf(output).any():
-            print("[INF DETECTED] Model output contains Inf values!")
-            print(f"[INF DETECTED] Output range: [{output.min().item():.4f}, {output.max().item():.4f}]")
+        # if torch.isinf(output).any():
+        #     print("[INF DETECTED] Model output contains Inf values!")
+        #     print(f"[INF DETECTED] Output range: [{output.min().item():.4f}, {output.max().item():.4f}]")
 
         output_flatten = output.view(-1, output.shape[-1])
         labels = labels.contiguous().view(-1)
         loss = F.cross_entropy(output_flatten, labels)
-        if torch.isnan(loss):
-            print("NaN loss detected!")
+        # if torch.isnan(loss):
+        #     print("NaN loss detected!")
         # return cross_entropy_loss(output_flatten, labels)
         return loss
 
@@ -298,8 +298,8 @@ def train():
     model.train()
 
     # Wall clock timer setup
-    start_time = time.time()
-    max_wall_seconds = args.max_wall_time * 60 if args.max_wall_time else None
+    # start_time = time.time()
+    # max_wall_seconds = args.max_wall_time * 60 if args.max_wall_time else None
 
     for step in tqdm(range(1, train_steps + 1), total=train_steps, desc="training-steps"):
         batch = data_loading(train_data, args.batch_size, args.seq_length, device)
@@ -314,16 +314,16 @@ def train():
 
         grad_norm = grad_clipping_fn(model.parameters(), max_norm=1.0)
 
-        if torch.isnan(grad_norm) or torch.isinf(grad_norm):
-            print(f"[GRAD NaN/INF] Step {step}: Gradient norm is {grad_norm.item()}")
-            # Check individual parameter gradients
-            for name, param in model.named_parameters():
-                if param.grad is not None:
-                    param_grad_norm = torch.linalg.vector_norm(param.grad)
-                    if torch.isnan(param_grad_norm) or torch.isinf(param_grad_norm):
-                        print(f"[GRAD NaN/INF] Parameter {name} grad norm: {param_grad_norm.item()}")
+        # if torch.isnan(grad_norm) or torch.isinf(grad_norm):
+        #     print(f"[GRAD NaN/INF] Step {step}: Gradient norm is {grad_norm.item()}")
+        #     # Check individual parameter gradients
+        #     for name, param in model.named_parameters():
+        #         if param.grad is not None:
+        #             param_grad_norm = torch.linalg.vector_norm(param.grad)
+        #             if torch.isnan(param_grad_norm) or torch.isinf(param_grad_norm):
+        #                 print(f"[GRAD NaN/INF] Parameter {name} grad norm: {param_grad_norm.item()}")
 
-            raise Exception("grad_norm has nan's")
+        #     raise Exception("grad_norm has nan's")
 
         gradient_norms.append(grad_norm.item())
         loss_history.append(loss.item())
@@ -335,46 +335,45 @@ def train():
         optim.step()
 
         # Efficient wall clock check (only every 25 steps to minimize overhead)
-        if step % 25 == 0:
-            current_time = time.time()
-            elapsed_time = current_time - start_time
+        if step % 50 == 0:
+            # current_time = time.time()
+            # elapsed_time = current_time - start_time
 
-            curr_loss = train_loss / step
 
-            recent_grad_norm = np.mean(gradient_norms[-20:])
-            loss_moving_avg = np.mean(loss_history)
-            loss_std = np.std(loss_history)
-            param_norm = torch.linalg.vector_norm(
-                torch.stack([torch.linalg.vector_norm(p) for p in model.parameters()])
-            )
+            # recent_grad_norm = np.mean(gradient_norms[-20:])
+            # loss_moving_avg = np.mean(loss_history)
+            # loss_std = np.std(loss_history)
+            # param_norm = torch.linalg.vector_norm(
+            #     torch.stack([torch.linalg.vector_norm(p) for p in model.parameters()])
+            # )
 
             # Calculate steps per second for efficiency tracking
 
             run.log(
                 {
-                    "train_loss": curr_loss,
+                    "train_loss": train_loss / step,
                     "lr": lr,
-                    "stability/grad_norm": recent_grad_norm,
-                    "stability/loss_moving_avg": loss_moving_avg,
-                    "stability/loss_std": loss_std,
-                    "stability/loss_variance": loss_std**2,
-                    "stability/param_norm": param_norm.item(),
+                    # "stability/grad_norm": recent_grad_norm,
+                    # "stability/loss_moving_avg": loss_moving_avg,
+                    # "stability/loss_std": loss_std,
+                    # "stability/loss_variance": loss_std**2,
+                    # "stability/param_norm": param_norm.item(),
                 },
                 step=step,
             )
 
             # Check wall clock limit
-            if max_wall_seconds and elapsed_time >= max_wall_seconds:
-                print(f"\n[WALL CLOCK] Reached time limit of {args.max_wall_time} minutes ({elapsed_time:.1f}s)")
-                print(f"[WALL CLOCK] Completed {step}/{train_steps} steps ({step / train_steps * 100:.1f}%)")
-                break
+            # if max_wall_seconds and elapsed_time >= max_wall_seconds:
+            #     print(f"\n[WALL CLOCK] Reached time limit of {args.max_wall_time} minutes ({elapsed_time:.1f}s)")
+            #     print(f"[WALL CLOCK] Completed {step}/{train_steps} steps ({step / train_steps * 100:.1f}%)")
+            #     break
 
-            if step % 250 == 0:
+            if step % 1000 == 0:
                 best_valid_loss = execute_validation_loss(
                     model, optim, args, device, valid_data, run, best_valid_loss, 20, step, False, False
                 )
-                diagnostic_metrics = get_simple_diagnostic_metrics(model, loss, step, initial_loss)
-                run.log(diagnostic_metrics, step=step)
+                # diagnostic_metrics = get_simple_diagnostic_metrics(model, loss, step, initial_loss)
+                # run.log(diagnostic_metrics, step=step)
 
     print(f"Final training loss: {train_loss / train_steps:.6f}")
     execute_validation_loss(model, optim, args, device, valid_data, run, best_valid_loss, valid_steps, step)

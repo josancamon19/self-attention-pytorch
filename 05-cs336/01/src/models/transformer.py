@@ -224,12 +224,12 @@ class PosWiseFFN(nn.Module):
         # return x * torch.sigmoid(x)
 
     def forward(self, x):
-        if self.ffn_type == FFNType.SWIGLU:
-            w1_w3_out = self.W1_W3(x)
-            w1_out, w3_out = w1_w3_out.chunk(2, dim=-1)
-            return self.W2(self.silu(w1_out) * w3_out)
-        else:  # SILU
-            return self.W2(self.silu(self.W1(x)))
+        # if self.ffn_type == FFNType.SWIGLU:
+        w1_w3_out = self.W1_W3(x)
+        w1_out, w3_out = w1_w3_out.chunk(2, dim=-1)
+        return self.W2(self.silu(w1_out) * w3_out)
+        # else:  # SILU
+        #     return self.W2(self.silu(self.W1(x)))
 
 
 class MultiHeadSelfAttention(nn.Module):
@@ -252,14 +252,14 @@ class MultiHeadSelfAttention(nn.Module):
         self.register_buffer("causal_mask", torch.tril(torch.ones(max_sequence_length, max_sequence_length)))
         self.scale = 1.0 / math.sqrt(self.head_size)
 
-        if self.qk_norm:
-            # self.qk_scale = nn.Parameter(torch.ones(self.head_size))
-            self.qk_scale = nn.Parameter(torch.ones(1))
+        # if self.qk_norm:
+        #     # self.qk_scale = nn.Parameter(torch.ones(self.head_size))
+        #     self.qk_scale = nn.Parameter(torch.ones(1))
 
-        if pos_embedding == PosEmbeddingType.ROPE:
-            self.rope = RotaryPositionalEncoding(self.head_size, max_sequence_length)
-        else:
-            self.rope = None
+        # if pos_embedding == PosEmbeddingType.ROPE:
+        self.rope = RotaryPositionalEncoding(self.head_size, max_sequence_length)
+        # else:
+        #     self.rope = None
 
         self.W_O = Linear(embedding_dim, embedding_dim)
 
@@ -272,8 +272,8 @@ class MultiHeadSelfAttention(nn.Module):
         # Marcel: matmul's are linear, very strict properties
         # -- you can combine any matmuls into a single operations.
         qkv = self.QKV(x)
-        if torch.isnan(qkv).any() or torch.isinf(qkv).any():
-            print(f"[DEBUG] QKV has NaN/Inf! Input x range: [{x.min():.4f}, {x.max():.4f}]")
+        # if torch.isnan(qkv).any() or torch.isinf(qkv).any():
+        #     print(f"[DEBUG] QKV has NaN/Inf! Input x range: [{x.min():.4f}, {x.max():.4f}]")
 
         q, k, v = qkv.chunk(3, dim=-1)
 
@@ -281,24 +281,24 @@ class MultiHeadSelfAttention(nn.Module):
         k = self._reshape_to_heads(batch, seq_length, k).contiguous()
         v = self._reshape_to_heads(batch, seq_length, v)
 
-        if self.rope:  # test logic
-            q = self.rope(q)
-            k = self.rope(k)
+        # if self.rope:  # test logic
+        q = self.rope(q)
+        k = self.rope(k)
 
-            # Debug: Check after RoPE
-            if torch.isnan(q).any() or torch.isinf(q).any():
-                print("[DEBUG] Q has NaN/Inf after RoPE!")
-            if torch.isnan(k).any() or torch.isinf(k).any():
-                print("[DEBUG] K has NaN/Inf after RoPE!")
+        # Debug: Check after RoPE
+        # if torch.isnan(q).any() or torch.isinf(q).any():
+        #     print("[DEBUG] Q has NaN/Inf after RoPE!")
+        # if torch.isnan(k).any() or torch.isinf(k).any():
+        #     print("[DEBUG] K has NaN/Inf after RoPE!")
 
-        if self.qk_norm:
-            q = F.normalize(q, dim=-1)
-            k = F.normalize(k, dim=-1)
-            attention_scores = q @ k.transpose(-2, -1)
-            # attention_scores *= self.qk_scale.view(-1, 1, 1, 1)
-            attention_scores *= self.qk_scale
-        else:
-            attention_scores = (q @ k.transpose(-2, -1)) * self.scale  # b, num_heads, seq_length, seq_length
+        # if self.qk_norm:
+        #     q = F.normalize(q, dim=-1)
+        #     k = F.normalize(k, dim=-1)
+        #     attention_scores = q @ k.transpose(-2, -1)
+        #     # attention_scores *= self.qk_scale.view(-1, 1, 1, 1)
+        #     attention_scores *= self.qk_scale
+        # else:
+        attention_scores = (q @ k.transpose(-2, -1)) * self.scale  # b, num_heads, seq_length, seq_length
 
         mask = self.causal_mask[:seq_length, :seq_length]
         if padding_mask is not None:
@@ -307,18 +307,18 @@ class MultiHeadSelfAttention(nn.Module):
         attention_scores = torch.masked_fill(attention_scores, mask == 0, -float("inf"))
 
         # Debug: Check attention scores before softmax
-        if torch.isnan(attention_scores).any():
-            print("[DEBUG] Attention scores have NaN before softmax!")
-        if torch.isinf(attention_scores).any() and not torch.all(
-            attention_scores[torch.isinf(attention_scores)] == -float("inf")
-        ):
-            print(
-                f"[DEBUG] Attention scores have +Inf before softmax! Range: [{attention_scores.min():.4f}, {attention_scores.max():.4f}]"
-            )
+        # if torch.isnan(attention_scores).any():
+        #     print("[DEBUG] Attention scores have NaN before softmax!")
+        # if torch.isinf(attention_scores).any() and not torch.all(
+        #     attention_scores[torch.isinf(attention_scores)] == -float("inf")
+        # ):
+        #     print(
+        #         f"[DEBUG] Attention scores have +Inf before softmax! Range: [{attention_scores.min():.4f}, {attention_scores.max():.4f}]"
+        #     )
 
         attention_weights = softmax(attention_scores, dim=-1)
-        if torch.isnan(attention_weights).any() or torch.isinf(attention_weights).any():
-            print("[DEBUG] Attention weights have NaN/Inf after softmax!")
+        # if torch.isnan(attention_weights).any() or torch.isinf(attention_weights).any():
+        #     print("[DEBUG] Attention weights have NaN/Inf after softmax!")
 
         x = attention_weights @ v
         x = x.transpose(1, 2)
@@ -365,12 +365,12 @@ class TransformerBlock(nn.Module):
 
     def forward(self, x, padding_mask):
         # TODO: implement norm position changes
-        if self.norm_position == NormPosition.PRE:
-            attention = self.attention(self.attention_norm(x), padding_mask) + x
-            output = self.pos_wise(self.pos_wise_norm(attention)) + attention
-        else:  # POST
-            attention = x + self.attention_norm(self.attention(x, padding_mask))
-            output = attention + self.pos_wise_norm(self.pos_wise(attention))
+        # if self.norm_position == NormPosition.PRE:
+        attention = self.attention(self.attention_norm(x), padding_mask) + x
+        output = self.pos_wise(self.pos_wise_norm(attention)) + attention
+        # else:  # POST
+        #     attention = x + self.attention_norm(self.attention(x, padding_mask))
+        #     output = attention + self.pos_wise_norm(self.pos_wise(attention))
         return output
 
 
