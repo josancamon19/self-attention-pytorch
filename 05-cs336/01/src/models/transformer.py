@@ -390,22 +390,25 @@ class Transformer(nn.Module):
             args.tokenizer_merges_path,
             ["<|endoftext|>"],
         )
-        transformer = cls(
+        model = cls(
             # TODO: else defaults if args.$param doesn't exists when inference
             tokenizer.vocab_size,
             args.seq_length,
             args.embedding_dim,
             args.num_layers,
-            args.num_attention_heads,
+            args.num_heads,
             pos_embedding=PosEmbeddingType(args.pos_embedding.lower()),
             norm_type=NormType(args.norm_type.lower()),
             norm_position=NormPosition(args.norm_position.lower()),
             ffn_type=FFNType(args.ffn_type.lower()),
             qk_norm=args.qk_norm,
         )
+        total_params = sum(p.numel() for p in model.parameters())
+        print(f"[Transformer.from_args]: {total_params} parameters")
+        
         if return_tokenizer:
-            return transformer, tokenizer
-        return transformer
+            return model, tokenizer
+        return model
 
     def forward(self, input_ids, padding_mask):
         tokens = self.embeddings(input_ids)

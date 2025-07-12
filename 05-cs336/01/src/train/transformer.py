@@ -37,7 +37,7 @@ np.random.seed(42)
 
 
 def get_model_path(step, args):
-    arch = f"{args.seq_length}-{args.embedding_dim}-{args.num_layers}-{args.num_attention_heads}"
+    arch = f"{args.seq_length}-{args.embedding_dim}-{args.num_layers}-{args.num_heads}"
     custom = f"{int(args.use_custom_adam)}-{int(args.use_custom_gradient_clipping)}"
     return (
         f"./.models/{args.dataset}-step-{step}-lr-{args.lr_max}-batch-{args.batch_size}-arch-{arch}-custom-{custom}.pt"
@@ -65,7 +65,7 @@ def get_args():
         default_seq_length = 256
         default_embedding_dim = 512
         default_num_layers = 4
-        default_num_attention_heads = 16
+        default_num_heads = 16
     else:  # owt
         default_train_dataset = ".tokenizer/owt_train-encoded.npy"
         default_valid_dataset = ".tokenizer/owt_valid-encoded.npy"
@@ -79,10 +79,10 @@ def get_args():
         default_adam_weight_decay = 0.1  # 0.01
         default_batch_size = 64
 
-        default_seq_length = 1024  # vs 512?
+        default_seq_length = 512
         default_embedding_dim = 768
         default_num_layers = 6
-        default_num_attention_heads = 12
+        default_num_heads = 12
 
     # parser.add_argument("--hf-tokenizer", action="store_true", default=False)
     parser.add_argument("--tokenizer-vocab-path", type=str, default=default_tokenizer_vocab)
@@ -94,7 +94,7 @@ def get_args():
     parser.add_argument("--seq-length", type=int, default=default_seq_length)
     parser.add_argument("--embedding-dim", type=int, default=default_embedding_dim)
     parser.add_argument("--num-layers", type=int, default=default_num_layers)
-    parser.add_argument("--num-attention-heads", type=int, default=default_num_attention_heads)
+    parser.add_argument("--num-heads", type=int, default=default_num_heads)
 
     parser.add_argument("-tt", "--tokens", type=float, default=training_tokens)
 
@@ -125,7 +125,7 @@ def get_args():
     parser.add_argument("--qk-norm", action="store_true", default=False)
 
     # Further
-    parser.add_argument("-mp", "--use-mixed-precision", action="store_true", default=False)
+    parser.add_argument("-mp", "--use-mixed-precision", action="store_true", default=True)
     parser.add_argument("--use-torch-compile", action="store_true", default=True)
 
     # ops
@@ -331,4 +331,5 @@ def train():
 
 if __name__ == "__main__":
     train()
+    torch.nn.Linear
     # isolated_validation_check(".models/owt-epoch-8-lr-0.004-batch-64-arch-1024-768-6-12.pt")
