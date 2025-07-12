@@ -69,7 +69,16 @@ def train_transformer_architecture(config):
         f"{project_root}/.tokenizer/owt_train-vocab.json",
         "--tokenizer-merges-path",
         f"{project_root}/.tokenizer/owt_train-merges.json",
-        # warmup-steps 200/3000, 7% or so, not bad.
+        "--lr-warmup-steps",
+        "300",  # 5% of abotu 6000 steps
+        "--lr-max",
+        "3e-4",  # unfair to start with 4e-3 that was found for 6 layers, 12 heads standard (too high for most).
+        "--lr-schedule",
+        "cosine",
+        "--adam-weight-decay",
+        "0.1",
+        "--batch-size",
+        "64",
     ]
 
     try:
