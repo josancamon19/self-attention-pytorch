@@ -184,10 +184,31 @@ def compute_batch_loss(model, args, batch):
     with torch.autocast("cuda", dtype=torch.bfloat16, enabled=args.use_mixed_precision):
         input_ids, labels = batch
         output = model(input_ids, None)
+
+        if torch.isnan(output).any():
+            print("[NaN DETECTED] Model output contains NaN values!")
+            print(f"[NaN DETECTED] Output shape: {output.shape}")
+            print(f"[NaN DETECTED] NaN count: {torch.isnan(output).sum().item()}")
+            # Check which parameters have NaN
+            for name, param in model.named_parameters():
+                if torch.isnan(param).any():
+                    print(f"[NaN DETECTED] Parameter {name} has NaN values")
+
+        if torch.isinf(output).any():
+            print("[INF DETECTED] Model output contains Inf values!")
+            print(f"[INF DETECTED] Output range: [{output.min().item():.4f}, {output.max().item():.4f}]")
+
         output_flatten = output.view(-1, output.shape[-1])
         labels = labels.contiguous().view(-1)
+        loss = F.cross_entropy(output_flatten, labels)
+        if torch.isnan(loss):
+            print("NaN loss detected!")
         # return cross_entropy_loss(output_flatten, labels)
-        return F.cross_entropy(output_flatten, labels)
+        return loss
+
+
+# python src/train/transformer.py --tokens 2e8 --embedding-dim 1024 --num-layers 6 --num-heads 8 #-- nan's
+# python src/train/transformer.py --tokens 2e8 --embedding-dim 1024 --num-layers 6 --num-heads 16 # -- assert % 2
 
 
 def execute_validation_loss(
@@ -285,6 +306,17 @@ def train():
             initial_loss = loss.item()
 
         grad_norm = grad_clipping_fn(model.parameters(), max_norm=1.0)
+
+        if torch.isnan(grad_norm) or torch.isinf(grad_norm):
+            print(f"[GRAD NaN/INF] Step {step}: Gradient norm is {grad_norm.item()}")
+            # Check individual parameter gradients
+            for name, param in model.named_parameters():
+                if param.grad is not None:
+                    param_grad_norm = torch.linalg.vector_norm(param.grad)
+                    if torch.isnan(param_grad_norm) or torch.isinf(param_grad_norm):
+                        print(f"[GRAD NaN/INF] Parameter {name} grad norm: {param_grad_norm.item()}")
+
+            raise Exception("grad_norm has nan's")
 
         gradient_norms.append(grad_norm.item())
         loss_history.append(loss.item())

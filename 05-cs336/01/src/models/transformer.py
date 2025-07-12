@@ -144,18 +144,31 @@ class RotaryPositionalEncoding(nn.Module):
 
         # some black magic where complex numbers i,j parts can be computed like this
         # TODO: this part below is definitely not clear
-        if x_pairs.dtype == torch.bfloat16:
-            original_dtype = x_pairs.dtype
-            x_complex = torch.view_as_complex(x_pairs.float())
-            rope_complex = torch.view_as_complex(rope_selected.float())
-            rotated_complex = x_complex * rope_complex
-            rotated_real = torch.view_as_real(rotated_complex).to(original_dtype)
-        else:
-            # Direct path for FP32
-            x_complex = torch.view_as_complex(x_pairs)
-            rope_complex = torch.view_as_complex(rope_selected)
-            rotated_complex = x_complex * rope_complex
-            rotated_real = torch.view_as_real(rotated_complex)
+        # if x_pairs.dtype == torch.bfloat16:
+        #     original_dtype = x_pairs.dtype
+        #     x_complex = torch.view_as_complex(x_pairs.float())
+        #     rope_complex = torch.view_as_complex(rope_selected.float())
+        #     rotated_complex = x_complex * rope_complex
+        #     rotated_real = torch.view_as_real(rotated_complex).to(original_dtype)
+        # else:
+        #     # Direct path for FP32
+        #     x_complex = torch.view_as_complex(x_pairs)
+        #     rope_complex = torch.view_as_complex(rope_selected)
+        #     rotated_complex = x_complex * rope_complex
+        #     rotated_real = torch.view_as_real(rotated_complex)
+
+        # ===== No Complex Num =====
+        # Sin/cos rotation (torch.compile friendly - no complex numbers)
+        cos_vals = rope_selected[..., 0]  # shape: [seq_length, d_k//2]
+        sin_vals = rope_selected[..., 1]  # shape: [seq_length, d_k//2]
+
+        x0 = x_pairs[..., 0]  # even indices: [batch, seq_length, d_k//2]
+        x1 = x_pairs[..., 1]  # odd indices:  [batch, seq_length, d_k//2]
+        # Apply rotation: [x0', x1'] = [x0*cos - x1*sin, x0*sin + x1*cos]
+        rotated_x0 = x0 * cos_vals - x1 * sin_vals
+        rotated_x1 = x0 * sin_vals + x1 * cos_vals
+        rotated_real = torch.stack([rotated_x0, rotated_x1], dim=-1)
+        # ===== No Complex Num =====
 
         result = rotated_real.view(-1, seq_length, d_k)
         return result.view(original_shape)
@@ -236,6 +249,7 @@ class MultiHeadSelfAttention(nn.Module):
         self.qk_norm = qk_norm
 
         self.QKV = Linear(embedding_dim, 3 * self.head_size * self.num_heads)
+
         self.register_buffer("causal_mask", torch.tril(torch.ones(max_sequence_length, max_sequence_length)))
         self.scale = 1.0 / math.sqrt(self.head_size)
 
@@ -259,6 +273,9 @@ class MultiHeadSelfAttention(nn.Module):
         # Marcel: matmul's are linear, very strict properties
         # -- you can combine any matmuls into a single operations.
         qkv = self.QKV(x)
+        if torch.isnan(qkv).any() or torch.isinf(qkv).any():
+            print(f"[DEBUG] QKV has NaN/Inf! Input x range: [{x.min():.4f}, {x.max():.4f}]")
+
         q, k, v = qkv.chunk(3, dim=-1)
 
         q = self._reshape_to_heads(batch, seq_length, q).contiguous()
@@ -268,6 +285,12 @@ class MultiHeadSelfAttention(nn.Module):
         if self.rope:  # test logic
             q = self.rope(q)
             k = self.rope(k)
+
+            # Debug: Check after RoPE
+            if torch.isnan(q).any() or torch.isinf(q).any():
+                print("[DEBUG] Q has NaN/Inf after RoPE!")
+            if torch.isnan(k).any() or torch.isinf(k).any():
+                print("[DEBUG] K has NaN/Inf after RoPE!")
 
         if self.qk_norm:
             q = F.normalize(q, dim=-1)
@@ -283,7 +306,21 @@ class MultiHeadSelfAttention(nn.Module):
             mask = (mask * padding_mask.unsqueeze(1)).unsqueeze(1)
 
         attention_scores = torch.masked_fill(attention_scores, mask == 0, -float("inf"))
+
+        # Debug: Check attention scores before softmax
+        if torch.isnan(attention_scores).any():
+            print("[DEBUG] Attention scores have NaN before softmax!")
+        if torch.isinf(attention_scores).any() and not torch.all(
+            attention_scores[torch.isinf(attention_scores)] == -float("inf")
+        ):
+            print(
+                f"[DEBUG] Attention scores have +Inf before softmax! Range: [{attention_scores.min():.4f}, {attention_scores.max():.4f}]"
+            )
+
         attention_weights = softmax(attention_scores, dim=-1)
+        if torch.isnan(attention_weights).any() or torch.isinf(attention_weights).any():
+            print("[DEBUG] Attention weights have NaN/Inf after softmax!")
+
         x = attention_weights @ v
         x = x.transpose(1, 2)
         x = x.contiguous().view(batch, seq_length, -1)
@@ -405,7 +442,7 @@ class Transformer(nn.Module):
         )
         total_params = sum(p.numel() for p in model.parameters())
         print(f"[Transformer.from_args]: {total_params} parameters")
-        
+
         if return_tokenizer:
             return model, tokenizer
         return model
