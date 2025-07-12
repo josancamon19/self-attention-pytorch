@@ -345,7 +345,7 @@ def train():
                 {
                     "train_loss": train_loss / step,
                     "lr": lr,
-                    "speed": elapsed_time / step,
+                    "speed": step / elapsed_time,
                     # "stability/grad_norm": recent_grad_norm,
                     # "stability/loss_moving_avg": loss_moving_avg,
                     # "stability/loss_std": loss_std,

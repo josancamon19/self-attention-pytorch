@@ -6,49 +6,40 @@ import subprocess
 import torch
 import wandb
 
-SMOKE_TEST = True
-
 # Architecture search space based on your configs
 config = {
     "embedding_dim": tune.choice([768, 1024, 1280]),
     "num_layers": tune.choice([6, 8, 12, 16, 20, 24]),
     "num_heads": tune.choice([8, 12, 16, 20]),
-    "tokens": 1e9,
-    "smoke_test": SMOKE_TEST,
 }
 
 
 def train_transformer_architecture(config):
-    """Train a transformer with the given architecture config."""
-
-    # Validate architecture constraints
     embedding_dim = config["embedding_dim"]
     num_heads = config["num_heads"]
-
-    # Skip invalid head configurations
-    if embedding_dim % num_heads != 0:
-        # Report failure for invalid configs
-        train.report({"valid_loss": float("inf"), "status": "invalid_config"})
-        return
-
-    # Skip configurations where head dimension is too small
     head_dim = embedding_dim // num_heads
+
+    if embedding_dim % num_heads != 0:
+        tune.report({"valid_loss": float("inf"), "status": "embedding_dim % num_heads != 0"})
+        return
     if head_dim < 64:
-        train.report({"valid_loss": float("inf"), "status": "head_dim_too_small"})
+        tune.report({"valid_loss": float("inf"), "status": "head_dim < 64"})
         return
 
-    # Create wandb run ID for this trial
     wandb_id = f"arch_search_{embedding_dim}_{config['num_layers']}_{num_heads}"
-
     # Get assigned GPU ID from Ray
-    gpu_id = train.get_context().get_trial_resources().get("gpu", [0])[0] if torch.cuda.is_available() else 0
+    # gpu_id = train.get_context().get_trial_resources().get("gpu", [0])[0] if torch.cuda.is_available() else 0
+    gpu_id = 0  # apparently ray always makes each gpu visible for each process as 0
 
-    # Build command
+    current_dir = os.path.dirname(os.path.abspath(__file__))  # Gets src/train/
+    project_root = os.path.dirname(os.path.dirname(current_dir))  # Gets project root
+    train_script = os.path.join(project_root, "src", "train", "transformer.py")
+
     cmd = [
         sys.executable,
-        "src/train/transformer.py",
+        train_script,
         "--tokens",
-        str(int(config["tokens"])),
+        str(int(2e8)),
         "--embedding-dim",
         str(embedding_dim),
         "--num-layers",
@@ -63,43 +54,40 @@ def train_transformer_architecture(config):
         str(gpu_id),
         "--max-wall-time",
         str(10),
+        # relative path issues
+        "--train-dataset-path",
+        f"{project_root}/.tokenizer/owt_train-encoded.npy",
+        "--valid-dataset-path",
+        f"{project_root}/.tokenizer/owt_valid-encoded.npy",
+        "--tokenizer-vocab-path",
+        f"{project_root}/.tokenizer/owt_train-vocab.json",
+        "--tokenizer-merges-path",
+        f"{project_root}/.tokenizer/owt_train-merges.json",
     ]
 
     try:
-        # Run training subprocess
-        result = subprocess.run(
-            cmd,
-            cwd=os.getcwd(),
-            capture_output=True,
-            text=True,
-            timeout=900 if SMOKE_TEST else 1800,  # 1-2 hours timeout
-        )
-
+        result = subprocess.run(cmd, cwd=project_root, capture_output=True, text=True, timeout=900)
         if result.returncode != 0:
             print(f"Training failed: {result.stderr}")
-            train.report({"valid_loss": float("inf"), "status": "training_failed"})
+            tune.report({"valid_loss": float("inf"), "status": "training_failed"})
             return
 
-        run = wandb.Api().run(f"your-entity/assignment-01-owt/{wandb_id}")
-        history = run.history(keys=["valid_loss"])
-        # if len(history) > 0:
-        final_valid_loss = history["valid_loss"].iloc[-1]
-        train.report({"valid_loss": final_valid_loss, "status": "completed"})
+        run = wandb.Api().run(f"assignment-01-owt/{wandb_id}")
+        final_valid_loss = run.history(keys=["valid_loss"])["valid_loss"].iloc[-1]
+        # final_train_loss = run.history(keys=["train_loss"])["train_loss"].iloc[-1]
+        tune.report({"valid_loss": final_valid_loss, "status": "completed"})
 
     except subprocess.TimeoutExpired:
-        train.report({"valid_loss": float("inf"), "status": "timeout"})
+        tune.report({"valid_loss": float("inf"), "status": "timeout"})
     except Exception as e:
         print(f"Error in training: {e}")
-        train.report({"valid_loss": float("inf"), "status": "error"})
+        tune.report({"valid_loss": float("inf"), "status": "error"})
 
 
 def main():
     # Multi-GPU configuration
     num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     print(f"Detected {num_gpus} GPUs")
-
-    # Always use 1 GPU per trial - compute bound, not memory bound
-
     scheduler = ASHAScheduler(
         time_attr="training_iteration",
         max_t=10,  # Max iterations
@@ -116,7 +104,7 @@ def main():
             metric="valid_loss",
             mode="min",
             scheduler=scheduler,
-            num_samples=max_concurrent_trials * 10,  # Scale with GPU count for more experiments
+            num_samples=max_concurrent_trials * 10,
             max_concurrent_trials=max_concurrent_trials,
         ),
         param_space=config,
