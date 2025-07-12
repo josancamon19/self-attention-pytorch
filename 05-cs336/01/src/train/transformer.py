@@ -2,6 +2,7 @@ import argparse
 from collections import deque
 import torch
 from tqdm import tqdm
+import time
 
 from src.models.tokenizer import Tokenizer
 from torch.optim import AdamW
@@ -133,6 +134,7 @@ def get_args():
     parser.add_argument("--wandb-id", type=str, default=None)
     parser.add_argument("-v", "--verbose", action="store_true", default=False)
     parser.add_argument("-g", "--gpu-id", type=int, default=0)
+    parser.add_argument("--max-wall-time", type=int, default=None, help="Maximum wall clock time in minutes")
 
     return parser.parse_args()
 
@@ -294,6 +296,11 @@ def train():
     train_loss = 0
     initial_loss = None
     model.train()
+
+    # Wall clock timer setup
+    start_time = time.time()
+    max_wall_seconds = args.max_wall_time * 60 if args.max_wall_time else None
+
     for step in tqdm(range(1, train_steps + 1), total=train_steps, desc="training-steps"):
         batch = data_loading(train_data, args.batch_size, args.seq_length, device)
         optim.zero_grad()
@@ -327,7 +334,11 @@ def train():
 
         optim.step()
 
+        # Efficient wall clock check (only every 25 steps to minimize overhead)
         if step % 25 == 0:
+            current_time = time.time()
+            elapsed_time = current_time - start_time
+
             curr_loss = train_loss / step
 
             recent_grad_norm = np.mean(gradient_norms[-20:])
@@ -336,6 +347,8 @@ def train():
             param_norm = torch.linalg.vector_norm(
                 torch.stack([torch.linalg.vector_norm(p) for p in model.parameters()])
             )
+
+            # Calculate steps per second for efficiency tracking
 
             run.log(
                 {
@@ -349,6 +362,12 @@ def train():
                 },
                 step=step,
             )
+
+            # Check wall clock limit
+            if max_wall_seconds and elapsed_time >= max_wall_seconds:
+                print(f"\n[WALL CLOCK] Reached time limit of {args.max_wall_time} minutes ({elapsed_time:.1f}s)")
+                print(f"[WALL CLOCK] Completed {step}/{train_steps} steps ({step / train_steps * 100:.1f}%)")
+                break
 
             if step % 250 == 0:
                 best_valid_loss = execute_validation_loss(
