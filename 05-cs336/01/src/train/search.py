@@ -35,6 +35,12 @@ def train_transformer_architecture(config):
     project_root = os.path.dirname(os.path.dirname(current_dir))  # Gets project root
     train_script = os.path.join(project_root, "src", "train", "transformer.py")
 
+    # clear torch.compile cache on every iteration, cause when changing architectures .compile causes nan's wtf.
+    trial_id = f"{embedding_dim}_{config['num_layers']}_{num_heads}"
+    cache_dir = f"/tmp/torch_compile_cache_{trial_id}"
+    env = os.environ.copy()
+    env["TORCH_COMPILE_CACHE_DIR"] = cache_dir
+
     cmd = [
         sys.executable,
         train_script,
@@ -63,10 +69,11 @@ def train_transformer_architecture(config):
         f"{project_root}/.tokenizer/owt_train-vocab.json",
         "--tokenizer-merges-path",
         f"{project_root}/.tokenizer/owt_train-merges.json",
+        # warmup-steps 200/3000, 7% or so, not bad.
     ]
 
     try:
-        result = subprocess.run(cmd, cwd=project_root, capture_output=True, text=True, timeout=900)
+        result = subprocess.run(cmd, cwd=project_root, capture_output=True, text=True, timeout=900, env=env)
         if result.returncode != 0:
             print(f"Training failed: {result.stderr}")
             tune.report({"valid_loss": float("inf"), "status": "training_failed"})
@@ -82,6 +89,11 @@ def train_transformer_architecture(config):
     except Exception as e:
         print(f"Error in training: {e}")
         tune.report({"valid_loss": float("inf"), "status": "error"})
+    finally:
+        import shutil
+
+        if os.path.exists(cache_dir):
+            shutil.rmtree(cache_dir, ignore_errors=True)
 
 
 def main():

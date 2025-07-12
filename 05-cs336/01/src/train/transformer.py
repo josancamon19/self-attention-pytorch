@@ -250,6 +250,7 @@ def execute_validation_loss(
 
 
 def train():
+    # TODO: pass ray here to avoid bad iterations fast
     args = get_args()
     print("[train]: ", vars(args))
     device = torch.device(f"cuda:{args.gpu_id}" if torch.cuda.is_available() else "cpu")
