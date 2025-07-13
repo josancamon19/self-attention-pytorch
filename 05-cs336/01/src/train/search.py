@@ -7,10 +7,31 @@ import torch
 import wandb
 
 # Architecture search space based on your configs
+# max_time_minutes = 15
+# config = {
+#     "embedding_dim": tune.grid_search([768, 1024, 1280]),
+#     "num_layers": tune.grid_search([6, 8, 12, 16, 20, 24]),
+#     "num_heads": tune.grid_search([8, 12, 16, 20]),
+#     "tokens": 2e8,
+# }
+
+max_time_minutes = 20
 config = {
     "embedding_dim": tune.grid_search([768, 1024, 1280]),
-    "num_layers": tune.grid_search([6, 8, 12, 16, 20, 24]),
-    "num_heads": tune.grid_search([8, 12, 16, 20]),
+    "num_layers": tune.grid_search([6, 8]),
+    "num_heads": tune.grid_search([8, 10, 10, 12, 16]),
+    "tokens": 1e9,
+}   
+
+valid_only = {
+    (1280, 6, 8),
+    (1024, 8, 8),
+    (1024, 6, 8),
+    (1024, 6, 10),
+    (1280, 6, 16),
+    (1280, 6, 10),
+    (768, 6, 12),
+    (768, 6, 6),
 }
 
 
@@ -25,11 +46,16 @@ def train_transformer_architecture(config):
     if head_dim < 64:
         tune.report({"valid_loss": float("inf"), "status": "head_dim < 64"})
         return
+    if (embedding_dim, config["num_layers"], num_heads) not in valid_only:
+        tune.report({"valid_loss": float("inf"), "status": "invalid_arch"})
+        return
 
-    wandb_id = f"arch_search_{embedding_dim}_{config['num_layers']}_{num_heads}"
+    # TODO: using _2, to avoid updating an existing name
+    wandb_id = f"arch_search_{embedding_dim}_{config['num_layers']}_{num_heads}_2"
     # Get assigned GPU ID from Ray
     # gpu_id = train.get_context().get_trial_resources().get("gpu", [0])[0] if torch.cuda.is_available() else 0
-    gpu_id = 0  # apparently ray always makes each gpu visible for each process as 0
+    # apparently ray always makes each gpu visible for each process as 0
+    gpu_id = config.get("gpu_id", 0)
 
     current_dir = os.path.dirname(os.path.abspath(__file__))  # Gets src/train/
     project_root = os.path.dirname(os.path.dirname(current_dir))  # Gets project root
@@ -45,7 +71,7 @@ def train_transformer_architecture(config):
         sys.executable,
         train_script,
         "--tokens",
-        str(int(2e8)),
+        str(int(config["tokens"])),
         "--embedding-dim",
         str(embedding_dim),
         "--num-layers",
@@ -59,7 +85,7 @@ def train_transformer_architecture(config):
         "--gpu-id",
         str(gpu_id),
         "--max-wall-time",
-        str(15),
+        str(max_time_minutes),
         # relative path issues
         "--train-dataset-path",
         f"{project_root}/.tokenizer/owt_train-encoded.npy",
@@ -70,7 +96,8 @@ def train_transformer_architecture(config):
         "--tokenizer-merges-path",
         f"{project_root}/.tokenizer/owt_train-merges.json",
         "--lr-warmup-steps",
-        "300",  # 5% of abotu 6000 steps
+        # "300",  # 5% of abotu 6000 steps
+        "1500",  # 5% of about 30000 steps
         "--lr-max",
         "3e-4",  # unfair to start with 4e-3 that was found for 6 layers, 12 heads standard (too high for most).
         "--lr-schedule",
@@ -84,7 +111,14 @@ def train_transformer_architecture(config):
     ]
 
     try:
-        result = subprocess.run(cmd, cwd=project_root, capture_output=True, text=True, timeout=1200, env=env)
+        result = subprocess.run(
+            cmd,
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=(max_time_minutes + 5) * 60,
+            env=env,
+        )
         if result.returncode != 0:
             print(f"Training failed: {result.stderr}")
             tune.report({"valid_loss": float("inf"), "status": "training_failed"})
@@ -109,17 +143,8 @@ def train_transformer_architecture(config):
 
 
 def main():
-    # Multi-GPU configuration
     num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     print(f"Detected {num_gpus} GPUs")
-    # scheduler = ASHAScheduler(
-    #     time_attr="training_iteration",
-    #     max_t=10,  # Max iterations
-    #     grace_period=1,
-    #     reduction_factor=2,
-    # )
-
-    # Run as many concurrent trials as we have GPUs
     max_concurrent_trials = num_gpus if num_gpus > 0 else 1
 
     tuner = tune.Tuner(
@@ -127,35 +152,15 @@ def main():
         tune_config=tune.TuneConfig(
             metric="valid_loss",
             mode="min",
-            # scheduler=scheduler, # no scheduler, test it all (exhaustive search)
-            # num_samples=max_concurrent_trials * 10, # ignored by tune.grid_search instead of tune.choice
             max_concurrent_trials=max_concurrent_trials,
         ),
         param_space=config,
     )
 
-    results = tuner.fit()
-
-    best_result = results.get_best_result("valid_loss", "min")
-
+    tuner.fit()
     print("\n" + "=" * 50)
-    print("ARCHITECTURE SEARCH RESULTS")
+    print("ARCHITECTURE SEARCH FINISHED")
     print("=" * 50)
-    print(f"Best config: {best_result.config}")
-    print(f"Best validation loss: {best_result.metrics['valid_loss']:.4f}")
-    print(f"Total parameters: {best_result.metrics.get('total_params', 'Unknown'):,}")
-    print(f"Efficiency (loss/M params): {best_result.metrics.get('efficiency', 'Unknown'):.4f}")
-
-    # Print top 5 results
-    print("\nTop 5 configurations:")
-    for i, result in enumerate(results.get_dataframe().nsmallest(5, "valid_loss").iterrows()):
-        config_data = result[1]
-        print(
-            f"{i + 1}. Loss: {config_data['valid_loss']:.4f} | "
-            f"dim: {config_data['config/embedding_dim']} | "
-            f"layers: {config_data['config/num_layers']} | "
-            f"heads: {config_data['config/num_heads']}"
-        )
 
 
 if __name__ == "__main__":
