@@ -15,13 +15,36 @@ config = {
     "batch_size": tune.grid_search([64]),  # maybe 48
     # "lr": tune.grid_search([3e-4, 5e-4, 6e-4, 7e-4, 9e-4, 1e-3, 3e-3, 4e-3]),
     # "warmup_steps": tune.grid_search([300, 800, 1200]),
+    # "tokens": 5e8,
     # this lr's exploded nan's, (prob attention softmax) testing qk-norm
     # "lr": tune.grid_search([9e-4, 1e-3, 3e-3, 4e-3]),
     # "warmup_steps": tune.grid_search([1200]),
-    "tokens": 1.82e9,  # (closer to the max amount it should be able to execute)
+    # Official Run ----
+    # "tokens": 1.82e9,  # (closer to the max amount it should be able to execute)
+    # "lr": tune.grid_search([7e-4, 4e-3, 6e-3]),
+    # "warmup_steps": tune.grid_search([2500]), # 5%
+    # "qk_norm": tune.grid_search([0, 1]),
+    # Testing High high lr's
+    # "lr": tune.grid_search([7e-3, 8e-3, 9e-3, 01e-2]), # they still perform well, can try higher .-.
+    # "qk_norm": tune.grid_search([1]),
+    # "warmup_steps": tune.grid_search([1200]),
+    # "tokens": 5e8,
+    # --- results not what expected
+    # "tokens": 1.82e9,
+    # "lr": tune.grid_search([7e-4, 4e-3]),
+    # "warmup_steps": tune.grid_search([1200]), # lowered to ~2%  # literally the same curve, slightly faster, 7e-4 exploded, 4e-3 same
+    # "qk_norm": tune.grid_search([0, 1]),
+    # -- HIGHER
+    # "lr": tune.grid_search([3e-2, 4e-2, 5e-2, 6e-2]), (Beyond this nah, sticking at 4e-3 as max)
+    # "qk_norm": tune.grid_search([1]),
+    # "warmup_steps": tune.grid_search([1200]),
+    # "tokens": 5e8,
+    # -- Trying relu^2
     "lr": tune.grid_search([7e-4, 4e-3]),
-    "warmup_steps": tune.grid_search([2500]), # 5% 
     "qk_norm": tune.grid_search([0, 1]),
+    "warmup_steps": tune.grid_search([1200]),
+    "ffn_type": tune.grid_search(["relu2"]),
+    "tokens": 5e8,
 }
 # lr, 1e-4, 6e-4 9e-4 1e-3 3e-3 4e-3 6e-3
 
@@ -40,10 +63,11 @@ config = {
 # 3e-3, 800, qk-norm also performed better
 
 
-# Maybe try higher ones, with qk norm
-
 # Run multiple full trains 90 minutes on 2.6B tokens. (almost max 13x model size instead of 20x scaling laws)
 # different warmup steps
+
+# 7e-4 is at edge stability without qk norm
+
 
 valid = {(7e-4, 0), (4e-3, 1)}
 
@@ -65,12 +89,8 @@ def train_transformer_architecture(config):
         tune.report({"valid_loss": float("inf"), "status": "invalid_arch"})
         return
 
-    # wandb_id = f"arch_search_{embedding_dim}_{config['num_layers']}_{num_heads}_{uuid.uuid4().hex[:8]}"
-    # wandb_id = f"lr_search_{config['lr']}_{config['warmup_steps']}_{uuid.uuid4().hex[:8]}"
-    wandb_id = f"lr_search_{config['lr']}_{config['qk_norm']}_{uuid.uuid4().hex[:8]}"
-    # Get assigned GPU ID from Ray
-    # gpu_id = train.get_context().get_trial_resources().get("gpu", [0])[0] if torch.cuda.is_available() else 0
-    # apparently ray always makes each gpu visible for each process as 0
+    ffn_type = config.get("ffn_type", "swiglu")
+    wandb_id = f"search_{config['lr']}_{config['warmup_steps']}_{config['qk_norm']}_{ffn_type}_{uuid.uuid4().hex[:8]}"
     gpu_id = config.get("gpu_id", 0)
 
     current_dir = os.path.dirname(os.path.abspath(__file__))  # Gets src/train/
@@ -124,6 +144,8 @@ def train_transformer_architecture(config):
         str(config["batch_size"]),
         "--use-mixed-precision",
         "--use-torch-compile",
+        "--ffn-type",
+        ffn_type,
     ]
 
     if config.get("qk_norm"):

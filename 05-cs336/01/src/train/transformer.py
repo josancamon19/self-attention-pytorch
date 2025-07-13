@@ -81,7 +81,7 @@ def get_args():
         default_valid_dataset = ".tokenizer/owt_valid-encoded.npy"
         default_tokenizer_vocab = ".tokenizer/owt_train-vocab.json"
         default_tokenizer_merges = ".tokenizer/owt_train-merges.json"
-        training_tokens = 2.6e9
+        training_tokens = 5e8
 
         default_lr_min = 1e-5
         default_lr_warmup = 1200

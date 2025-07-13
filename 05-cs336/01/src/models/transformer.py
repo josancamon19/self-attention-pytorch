@@ -36,6 +36,7 @@ class NormPosition(Enum):
 
 
 class FFNType(Enum):
+    RELU2 = "relu2"
     SWIGLU = "swiglu"
     SILU = "silu"
 
@@ -196,10 +197,6 @@ class RMSNorm(nn.Module):
 
 
 class PosWiseFFN(nn.Module):
-    # TODO: understand the reasoning of SiLU and SwiGLU
-    # We offer no explanation as to why these architectures seem to work; we attribute their success,
-    # as all else, to divine benevolence
-
     def __init__(
         self,
         embedding_dim: int,
@@ -214,22 +211,31 @@ class PosWiseFFN(nn.Module):
         if self.ffn_type == FFNType.SWIGLU:
             self.W1_W3 = Linear(embedding_dim, 2 * dff)  # fused op
             self.W2 = Linear(dff, embedding_dim)
+        elif self.ffn_type == FFNType.RELU2:
+            self.W1 = Linear(embedding_dim, dff * 4)
+            self.W2 = Linear(dff * 4, embedding_dim)
         else:
             self.W1 = Linear(embedding_dim, dff)
             self.W2 = Linear(dff, embedding_dim)
 
     @staticmethod
     def silu(x):
-        return torch.nn.functional.silu(x)  # minor gain, maybe not even
+        return torch.nn.functional.silu(x)
         # return x * torch.sigmoid(x)
 
+    @staticmethod
+    def relu2(x):
+        return torch.clamp(x, min=0) ** 2
+
     def forward(self, x):
-        # if self.ffn_type == FFNType.SWIGLU:
-        w1_w3_out = self.W1_W3(x)
-        w1_out, w3_out = w1_w3_out.chunk(2, dim=-1)
-        return self.W2(self.silu(w1_out) * w3_out)
-        # else:  # SILU
-        #     return self.W2(self.silu(self.W1(x)))
+        if self.ffn_type == FFNType.SWIGLU:
+            w1_w3_out = self.W1_W3(x)
+            w1_out, w3_out = w1_w3_out.chunk(2, dim=-1)
+            return self.W2(self.silu(w1_out) * w3_out)
+        elif self.ffn_type == FFNType.SWIGLU:
+            return self.W2(self.relu2(self.W1(x)))
+        else:  # SILU
+            return self.W2(self.silu(self.W1(x)))
 
 
 class MultiHeadSelfAttention(nn.Module):
