@@ -84,7 +84,7 @@ def train_transformer_architecture(config):
     ]
 
     try:
-        result = subprocess.run(cmd, cwd=project_root, capture_output=True, text=True, timeout=900, env=env)
+        result = subprocess.run(cmd, cwd=project_root, capture_output=True, text=True, timeout=1200, env=env)
         if result.returncode != 0:
             print(f"Training failed: {result.stderr}")
             tune.report({"valid_loss": float("inf"), "status": "training_failed"})
@@ -97,6 +97,7 @@ def train_transformer_architecture(config):
 
     except subprocess.TimeoutExpired:
         tune.report({"valid_loss": float("inf"), "status": "timeout"})
+        # lots like this, they should be still alive, check wandb instead of this
     except Exception as e:
         print(f"Error in training: {e}")
         tune.report({"valid_loss": float("inf"), "status": "error"})
