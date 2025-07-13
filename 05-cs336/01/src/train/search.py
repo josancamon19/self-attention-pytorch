@@ -23,8 +23,16 @@ config = {
     "num_heads": tune.grid_search([8]),
     # "batch_size": tune.grid_search([16, 32, 48, 64, 96, 128, 192]),
     "batch_size": tune.grid_search([64]),  # maybe 48
-    "lr": tune.grid_search([5e-4, 6e-4, 7e-4, 9e-4, 1e-3, 3e-3, 4e-3]),  # 3e-4 is the default used before
+    # "lr": tune.grid_search([3e-4, 5e-4, 6e-4, 7e-4, 9e-4, 1e-3, 3e-3, 4e-3]),
+    # "warmup_steps": tune.grid_search([300, 800, 1200]),
+    # this lr's exploded nan's, (prob attention softmax) testing qk-norm
+    # "lr": tune.grid_search([9e-4, 1e-3, 3e-3, 4e-3]), 
+    # "warmup_steps": tune.grid_search([1200]),
+    # "qk_norm": tune.grid_search([1]),
     "tokens": 5e8,  # (closer to the max amount it should be able to execute)
+    "lr": tune.grid_search([7e-4, 4e-3]),
+    "warmup_steps": tune.grid_search([1200]),
+    
 }
 # lr, 1e-4, 6e-4 9e-4 1e-3 3e-3 4e-3 6e-3
 
@@ -36,7 +44,12 @@ config = {
 # 64, 48
 
 # Best lr's
-#
+# 7e-4 (best with 300, 800, 1200) warmup steps
+# 9e-4 800 slightly better, but chance, very unstable
+
+# 4e-3, 1200, qk-norm, outperformed everyone. (feels too risky tho) (train loss is higher than other winning) ~ which could mean qk regularization working
+# 3e-3, 800, qk-norm also performed better
+
 
 # Maybe try higher ones, with qk norm
 
@@ -62,7 +75,8 @@ def train_transformer_architecture(config):
     #     return
 
     # wandb_id = f"arch_search_{embedding_dim}_{config['num_layers']}_{num_heads}_{uuid.uuid4().hex[:8]}"
-    wandb_id = f"lr_search_{config['lr']}_{uuid.uuid4().hex[:8]}"
+    # wandb_id = f"lr_search_{config['lr']}_{config['warmup_steps']}_{uuid.uuid4().hex[:8]}"
+    wandb_id = f"lr_search_{config['lr']}_{config['qk_norm']}_{uuid.uuid4().hex[:8]}"
     # Get assigned GPU ID from Ray
     # gpu_id = train.get_context().get_trial_resources().get("gpu", [0])[0] if torch.cuda.is_available() else 0
     # apparently ray always makes each gpu visible for each process as 0
@@ -107,7 +121,8 @@ def train_transformer_architecture(config):
         "--tokenizer-merges-path",
         f"{project_root}/.tokenizer/owt_train-merges.json",
         "--lr-warmup-steps",
-        "300",  # 5% of abotu 6000 steps
+        # "300",  # 2% of about 15000 steps
+        str(config["warmup_steps"]),
         "--lr-max",
         str(config["lr"]),  # started with 3e-4
         "--lr-schedule",
@@ -119,6 +134,9 @@ def train_transformer_architecture(config):
         "--use-mixed-precision",
         "--use-torch-compile",
     ]
+    
+    if config.get("qk_norm"):
+        cmd.append("--qk-norm")
 
     try:
         result = subprocess.run(

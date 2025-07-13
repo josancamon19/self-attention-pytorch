@@ -84,15 +84,15 @@ def get_args():
         training_tokens = 2.6e9
 
         default_lr_min = 1e-5
-        default_lr_warmup = 200  # TODO: consider more warm up steps for higher lr_max
-        default_lr_max = 4e-3
+        default_lr_warmup = 1200
+        default_lr_max = 7e-4
         default_adam_weight_decay = 0.1  # 0.01
         default_batch_size = 64
 
         default_seq_length = 512
-        default_embedding_dim = 768
+        default_embedding_dim = 1280
         default_num_layers = 6
-        default_num_heads = 12
+        default_num_heads = 8
 
     # parser.add_argument("--hf-tokenizer", action="store_true", default=False)
     parser.add_argument("--tokenizer-vocab-path", type=str, default=default_tokenizer_vocab)
@@ -211,8 +211,10 @@ def compute_batch_loss(model, args, batch):
         output_flatten = output.view(-1, output.shape[-1])
         labels = labels.contiguous().view(-1)
         loss = F.cross_entropy(output_flatten, labels)
-        # if torch.isnan(loss):
-        #     print("NaN loss detected!")
+
+        if torch.isnan(loss):
+            print("NaN loss detected!")
+            raise Exception("loss is nan")  # quick exit, don't waste compute
         # return cross_entropy_loss(output_flatten, labels)
         return loss
 

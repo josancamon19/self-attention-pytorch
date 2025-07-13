@@ -252,9 +252,9 @@ class MultiHeadSelfAttention(nn.Module):
         self.register_buffer("causal_mask", torch.tril(torch.ones(max_sequence_length, max_sequence_length)))
         self.scale = 1.0 / math.sqrt(self.head_size)
 
-        # if self.qk_norm:
-        #     # self.qk_scale = nn.Parameter(torch.ones(self.head_size))
-        #     self.qk_scale = nn.Parameter(torch.ones(1))
+        if self.qk_norm:
+            # self.qk_scale = nn.Parameter(torch.ones(self.head_size))
+            self.qk_scale = nn.Parameter(torch.ones(1))
 
         # if pos_embedding == PosEmbeddingType.ROPE:
         self.rope = RotaryPositionalEncoding(self.head_size, max_sequence_length)
@@ -291,14 +291,14 @@ class MultiHeadSelfAttention(nn.Module):
         # if torch.isnan(k).any() or torch.isinf(k).any():
         #     print("[DEBUG] K has NaN/Inf after RoPE!")
 
-        # if self.qk_norm:
-        #     q = F.normalize(q, dim=-1)
-        #     k = F.normalize(k, dim=-1)
-        #     attention_scores = q @ k.transpose(-2, -1)
-        #     # attention_scores *= self.qk_scale.view(-1, 1, 1, 1)
-        #     attention_scores *= self.qk_scale
-        # else:
-        attention_scores = (q @ k.transpose(-2, -1)) * self.scale  # b, num_heads, seq_length, seq_length
+        if self.qk_norm:
+            q = F.normalize(q, dim=-1)
+            k = F.normalize(k, dim=-1)
+            attention_scores = q @ k.transpose(-2, -1)
+            # attention_scores *= self.qk_scale.view(-1, 1, 1, 1)
+            attention_scores *= self.qk_scale
+        else:
+            attention_scores = (q @ k.transpose(-2, -1)) * self.scale  # b, num_heads, seq_length, seq_length
 
         mask = self.causal_mask[:seq_length, :seq_length]
         if padding_mask is not None:
