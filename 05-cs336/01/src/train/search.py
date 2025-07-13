@@ -1,5 +1,4 @@
-from ray import train, tune
-from ray.tune.schedulers import ASHAScheduler
+from ray import tune
 import sys
 import os
 import subprocess
@@ -7,16 +6,7 @@ import torch
 import wandb
 import uuid
 
-# Architecture search space based on your configs
-# max_time_minutes = 15
-# config = {
-#     "embedding_dim": tune.grid_search([768, 1024, 1280]),
-#     "num_layers": tune.grid_search([6, 8, 12, 16, 20, 24]),
-#     "num_heads": tune.grid_search([8, 12, 16, 20]),
-#     "tokens": 2e8,
-# }
-
-max_time_minutes = 25
+max_time_minutes = 91  # 1min torch.compile
 config = {
     "embedding_dim": tune.grid_search([1280]),
     "num_layers": tune.grid_search([6]),
@@ -26,13 +16,12 @@ config = {
     # "lr": tune.grid_search([3e-4, 5e-4, 6e-4, 7e-4, 9e-4, 1e-3, 3e-3, 4e-3]),
     # "warmup_steps": tune.grid_search([300, 800, 1200]),
     # this lr's exploded nan's, (prob attention softmax) testing qk-norm
-    # "lr": tune.grid_search([9e-4, 1e-3, 3e-3, 4e-3]), 
+    # "lr": tune.grid_search([9e-4, 1e-3, 3e-3, 4e-3]),
     # "warmup_steps": tune.grid_search([1200]),
-    # "qk_norm": tune.grid_search([1]),
-    "tokens": 5e8,  # (closer to the max amount it should be able to execute)
+    "tokens": 1.82e9,  # (closer to the max amount it should be able to execute)
     "lr": tune.grid_search([7e-4, 4e-3]),
-    "warmup_steps": tune.grid_search([1200]),
-    
+    "warmup_steps": tune.grid_search([2500]), # 5% 
+    "qk_norm": tune.grid_search([0, 1]),
 }
 # lr, 1e-4, 6e-4 9e-4 1e-3 3e-3 4e-3 6e-3
 
@@ -56,6 +45,8 @@ config = {
 # Run multiple full trains 90 minutes on 2.6B tokens. (almost max 13x model size instead of 20x scaling laws)
 # different warmup steps
 
+valid = {(7e-4, 0), (4e-3, 1)}
+
 
 def train_transformer_architecture(config):
     embedding_dim = config["embedding_dim"]
@@ -70,9 +61,9 @@ def train_transformer_architecture(config):
         tune.report({"valid_loss": float("inf"), "status": "head_dim < 64"})
         return
 
-    # if (embedding_dim, config["num_layers"], num_heads) not in valid_only:
-    #     tune.report({"valid_loss": float("inf"), "status": "invalid_arch"})
-    #     return
+    if (config["lr"], config["qk_norm"]) not in valid:
+        tune.report({"valid_loss": float("inf"), "status": "invalid_arch"})
+        return
 
     # wandb_id = f"arch_search_{embedding_dim}_{config['num_layers']}_{num_heads}_{uuid.uuid4().hex[:8]}"
     # wandb_id = f"lr_search_{config['lr']}_{config['warmup_steps']}_{uuid.uuid4().hex[:8]}"
@@ -134,7 +125,7 @@ def train_transformer_architecture(config):
         "--use-mixed-precision",
         "--use-torch-compile",
     ]
-    
+
     if config.get("qk_norm"):
         cmd.append("--qk-norm")
 
