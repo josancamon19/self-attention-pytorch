@@ -8,9 +8,9 @@ import uuid
 
 max_time_minutes = 91  # 1min torch.compile
 config = {
-    "embedding_dim": tune.grid_search([1280]),
-    "num_layers": tune.grid_search([6]),
-    "num_heads": tune.grid_search([8]),
+    # "embedding_dim": tune.grid_search([1280]),
+    # "num_layers": tune.grid_search([6]),
+    # "num_heads": tune.grid_search([8]),
     # "batch_size": tune.grid_search([16, 32, 48, 64, 96, 128, 192]),
     "batch_size": tune.grid_search([64]),  # maybe 48
     # "lr": tune.grid_search([3e-4, 5e-4, 6e-4, 7e-4, 9e-4, 1e-3, 3e-3, 4e-3]),
@@ -39,13 +39,29 @@ config = {
     # "qk_norm": tune.grid_search([1]),
     # "warmup_steps": tune.grid_search([1200]),
     # "tokens": 5e8,
-    # -- Trying relu^2
-    "lr": tune.grid_search([7e-4, 4e-3]),
+    # -- Trying relu^2 (too slow)
+    # "lr": tune.grid_search([7e-4, 4e-3]),
+    # "qk_norm": tune.grid_search([0, 1]),
+    # "warmup_steps": tune.grid_search([1200]),
+    # "ffn_type": tune.grid_search(["relu2"]),
+    # "tokens": 5e8,
+    # --- old arch modded gpt
+    "embedding_dim": tune.grid_search([768]),
+    # tradeoff relu squared is if embedding dim is smaller, the change in params is not that significant, 91 to 138M, instead of 199 to 340M
+    "num_layers": tune.grid_search([6]),
+    "num_heads": tune.grid_search([12]),
+    "ffn_type": tune.grid_search(["swiglu", "relu2"]),
+    "lr": tune.grid_search([4e-3, 1e-2]),
     "qk_norm": tune.grid_search([0, 1]),
+    "tokens": tune.grid_search([8e8, 6.2e8]),  # Full trainrelu2 2.3e9, 2.9e9 (would repeat a few tokens, huh)
     "warmup_steps": tune.grid_search([1200]),
-    "ffn_type": tune.grid_search(["relu2"]),
-    "tokens": 5e8,
+    # run small batches first,
+    # 8e8 for swiglu, 6.2e8 for relu2
+    # try a variation with qknorm
 }
+valid = {(4e-3, 0), (1e-2, 1)}
+valid2 = {("swiglu", 8e8), ("relu2", 6.2e8)}
+
 # lr, 1e-4, 6e-4 9e-4 1e-3 3e-3 4e-3 6e-3
 
 # Best architectures (batch size 64, 300 warmup, tokens 5e8)
@@ -69,9 +85,6 @@ config = {
 # 7e-4 is at edge stability without qk norm
 
 
-valid = {(7e-4, 0), (4e-3, 1)}
-
-
 def train_transformer_architecture(config):
     embedding_dim = config["embedding_dim"]
     num_heads = config["num_heads"]
@@ -88,9 +101,13 @@ def train_transformer_architecture(config):
     if (config["lr"], config["qk_norm"]) not in valid:
         tune.report({"valid_loss": float("inf"), "status": "invalid_arch"})
         return
+    if (config["ffn_type"], config["tokens"]) not in valid2:
+        tune.report({"valid_loss": float("inf"), "status": "invalid_ffn_tokens"})
+        return
 
     ffn_type = config.get("ffn_type", "swiglu")
-    wandb_id = f"search_{config['lr']}_{config['warmup_steps']}_{config['qk_norm']}_{ffn_type}_{uuid.uuid4().hex[:8]}"
+    architecture = f"arch_{embedding_dim}_{config['num_layers']}_{num_heads}"
+    wandb_id = f"search_{architecture}_{config['lr']}_{config['warmup_steps']}_{config['qk_norm']}_{ffn_type}_{uuid.uuid4().hex[:8]}"
     gpu_id = config.get("gpu_id", 0)
 
     current_dir = os.path.dirname(os.path.abspath(__file__))  # Gets src/train/
