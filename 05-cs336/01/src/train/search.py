@@ -5,6 +5,7 @@ import os
 import subprocess
 import torch
 import wandb
+import uuid
 
 # Architecture search space based on your configs
 # max_time_minutes = 15
@@ -15,24 +16,32 @@ import wandb
 #     "tokens": 2e8,
 # }
 
-max_time_minutes = 20
+max_time_minutes = 25
 config = {
-    "embedding_dim": tune.grid_search([768, 1024, 1280]),
-    "num_layers": tune.grid_search([6, 8]),
-    "num_heads": tune.grid_search([8, 10, 10, 12, 16]),
-    "tokens": 1e9,
-}   
-
-valid_only = {
-    (1280, 6, 8),
-    (1024, 8, 8),
-    (1024, 6, 8),
-    (1024, 6, 10),
-    (1280, 6, 16),
-    (1280, 6, 10),
-    (768, 6, 12),
-    (768, 6, 6),
+    "embedding_dim": tune.grid_search([1280]),
+    "num_layers": tune.grid_search([6]),
+    "num_heads": tune.grid_search([8]),
+    # "batch_size": tune.grid_search([16, 32, 48, 64, 96, 128, 192]),
+    "batch_size": tune.grid_search([64]),  # maybe 48
+    "lr": tune.grid_search([5e-4, 6e-4, 7e-4, 9e-4, 1e-3, 3e-3, 4e-3]),  # 3e-4 is the default used before
+    "tokens": 5e8,  # (closer to the max amount it should be able to execute)
 }
+# lr, 1e-4, 6e-4 9e-4 1e-3 3e-3 4e-3 6e-3
+
+# Best architectures (batch size 64, 300 warmup, tokens 5e8)
+# final 1280, 6, 8
+# maybe 1280, 6, 10
+
+# Best batch sizes (default was 64)
+# 64, 48
+
+# Best lr's
+#
+
+# Maybe try higher ones, with qk norm
+
+# Run multiple full trains 90 minutes on 2.6B tokens. (almost max 13x model size instead of 20x scaling laws)
+# different warmup steps
 
 
 def train_transformer_architecture(config):
@@ -43,15 +52,17 @@ def train_transformer_architecture(config):
     if embedding_dim % num_heads != 0:
         tune.report({"valid_loss": float("inf"), "status": "embedding_dim % num_heads != 0"})
         return
+
     if head_dim < 64:
         tune.report({"valid_loss": float("inf"), "status": "head_dim < 64"})
         return
-    if (embedding_dim, config["num_layers"], num_heads) not in valid_only:
-        tune.report({"valid_loss": float("inf"), "status": "invalid_arch"})
-        return
 
-    # TODO: using _2, to avoid updating an existing name
-    wandb_id = f"arch_search_{embedding_dim}_{config['num_layers']}_{num_heads}_2"
+    # if (embedding_dim, config["num_layers"], num_heads) not in valid_only:
+    #     tune.report({"valid_loss": float("inf"), "status": "invalid_arch"})
+    #     return
+
+    # wandb_id = f"arch_search_{embedding_dim}_{config['num_layers']}_{num_heads}_{uuid.uuid4().hex[:8]}"
+    wandb_id = f"lr_search_{config['lr']}_{uuid.uuid4().hex[:8]}"
     # Get assigned GPU ID from Ray
     # gpu_id = train.get_context().get_trial_resources().get("gpu", [0])[0] if torch.cuda.is_available() else 0
     # apparently ray always makes each gpu visible for each process as 0
@@ -96,18 +107,17 @@ def train_transformer_architecture(config):
         "--tokenizer-merges-path",
         f"{project_root}/.tokenizer/owt_train-merges.json",
         "--lr-warmup-steps",
-        # "300",  # 5% of abotu 6000 steps
-        "1500",  # 5% of about 30000 steps
+        "300",  # 5% of abotu 6000 steps
         "--lr-max",
-        "3e-4",  # unfair to start with 4e-3 that was found for 6 layers, 12 heads standard (too high for most).
+        str(config["lr"]),  # started with 3e-4
         "--lr-schedule",
         "cosine",
         "--adam-weight-decay",
         "0.1",
         "--batch-size",
-        "64",
+        str(config["batch_size"]),
         "--use-mixed-precision",
-        # "--use-torch-compile",
+        "--use-torch-compile",
     ]
 
     try:
