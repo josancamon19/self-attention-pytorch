@@ -6,84 +6,22 @@ import torch
 import wandb
 import uuid
 
-max_time_minutes = 91  # 1min torch.compile
+max_time_minutes = 95  # 1min torch.compile, 4 min validation calls, at train speed is 90 minutes on time.
 config = {
-    # "embedding_dim": tune.grid_search([1280]),
-    # "num_layers": tune.grid_search([6]),
-    # "num_heads": tune.grid_search([8]),
-    # "batch_size": tune.grid_search([16, 32, 48, 64, 96, 128, 192]),
-    "batch_size": tune.grid_search([64]),  # maybe 48
-    # "lr": tune.grid_search([3e-4, 5e-4, 6e-4, 7e-4, 9e-4, 1e-3, 3e-3, 4e-3]),
-    # "warmup_steps": tune.grid_search([300, 800, 1200]),
-    # "tokens": 5e8,
-    # this lr's exploded nan's, (prob attention softmax) testing qk-norm
-    # "lr": tune.grid_search([9e-4, 1e-3, 3e-3, 4e-3]),
-    # "warmup_steps": tune.grid_search([1200]),
-    # Official Run ----
-    # "tokens": 1.82e9,  # (closer to the max amount it should be able to execute)
-    # "lr": tune.grid_search([7e-4, 4e-3, 6e-3]),
-    # "warmup_steps": tune.grid_search([2500]), # 5%
-    # "qk_norm": tune.grid_search([0, 1]),
-    # Testing High high lr's
-    # "lr": tune.grid_search([7e-3, 8e-3, 9e-3, 01e-2]), # they still perform well, can try higher .-.
-    # "qk_norm": tune.grid_search([1]),
-    # "warmup_steps": tune.grid_search([1200]),
-    # "tokens": 5e8,
-    # --- results not what expected
-    # "tokens": 1.82e9,
-    # "lr": tune.grid_search([7e-4, 4e-3]),
-    # "warmup_steps": tune.grid_search([1200]), # lowered to ~2%  # literally the same curve, slightly faster, 7e-4 exploded, 4e-3 same
-    # "qk_norm": tune.grid_search([0, 1]),
-    # -- HIGHER
-    # "lr": tune.grid_search([3e-2, 4e-2, 5e-2, 6e-2]), (Beyond this nah, sticking at 4e-3 as max)
-    # "qk_norm": tune.grid_search([1]),
-    # "warmup_steps": tune.grid_search([1200]),
-    # "tokens": 5e8,
-    # -- Trying relu^2 (too slow)
-    # "lr": tune.grid_search([7e-4, 4e-3]),
-    # "qk_norm": tune.grid_search([0, 1]),
-    # "warmup_steps": tune.grid_search([1200]),
-    # "ffn_type": tune.grid_search(["relu2"]),
-    # "tokens": 5e8,
-    # --- old arch modded gpt
+    "batch_size": tune.grid_search([64]),
     "embedding_dim": tune.grid_search([768]),
-    # tradeoff relu squared is if embedding dim is smaller, the change in params is not that significant, 91 to 138M, instead of 199 to 340M
     "num_layers": tune.grid_search([6]),
     "num_heads": tune.grid_search([12]),
     "ffn_type": tune.grid_search(["swiglu", "relu2"]),
-    "lr": tune.grid_search([4e-3, 1e-2]),
-    "qk_norm": tune.grid_search([0, 1]),
-    "tokens": tune.grid_search([8e8, 6.2e8]),  # Full trainrelu2 2.3e9, 2.9e9 (would repeat a few tokens, huh)
-    "warmup_steps": tune.grid_search([1200]),
-    # run small batches first,
-    # 8e8 for swiglu, 6.2e8 for relu2
-    # try a variation with qknorm
+    "lr": tune.grid_search([4e-3]),
+    "qk_norm": tune.grid_search([0]),
+    # -- at it/s, right on < 90 minutes.
+    "tokens": tune.grid_search([2.28e9, 2.93e9]), 
+    "warmup_steps": tune.grid_search([1000]),
 }
-valid = {(4e-3, 0), (1e-2, 1)}
-valid2 = {("swiglu", 8e8), ("relu2", 6.2e8)}
 
-# lr, 1e-4, 6e-4 9e-4 1e-3 3e-3 4e-3 6e-3
-
-# Best architectures (batch size 64, 300 warmup, tokens 5e8)
-# final 1280, 6, 8
-# maybe 1280, 6, 10
-
-# Best batch sizes (default was 64)
-# 64, 48
-
-# Best lr's
-# 7e-4 (best with 300, 800, 1200) warmup steps
-# 9e-4 800 slightly better, but chance, very unstable
-
-# 4e-3, 1200, qk-norm, outperformed everyone. (feels too risky tho) (train loss is higher than other winning) ~ which could mean qk regularization working
-# 3e-3, 800, qk-norm also performed better
-
-
-# Run multiple full trains 90 minutes on 2.6B tokens. (almost max 13x model size instead of 20x scaling laws)
-# different warmup steps
-
-# 7e-4 is at edge stability without qk norm
-
+valid2 = {("swiglu", 2.93e9), ("relu2", 2.28e9)}
+# python src/train/transformer.py --num-layers 6 --num-heads 12 --embedding-dim 768 --batch-size 64 --lr-max 4e-3 --lr-warmup-steps 4000 --tokens 2.3e9 --ffn-type relu2 -tc
 
 def train_transformer_architecture(config):
     embedding_dim = config["embedding_dim"]
@@ -98,9 +36,6 @@ def train_transformer_architecture(config):
         tune.report({"valid_loss": float("inf"), "status": "head_dim < 64"})
         return
 
-    if (config["lr"], config["qk_norm"]) not in valid:
-        tune.report({"valid_loss": float("inf"), "status": "invalid_arch"})
-        return
     if (config["ffn_type"], config["tokens"]) not in valid2:
         tune.report({"valid_loss": float("inf"), "status": "invalid_ffn_tokens"})
         return
