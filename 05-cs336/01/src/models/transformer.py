@@ -30,6 +30,12 @@ class NormType(Enum):
     NONE = "none"
 
 
+class RMSNormGainType(Enum):
+    SCALAR = "scalar"
+    ELEMENTWISE = "elementwise"
+    NONE = "none"
+
+
 class NormPosition(Enum):
     PRE = "pre"
     POST = "post"
@@ -127,21 +133,13 @@ class RotaryPositionalEncoding(nn.Module):
         self.register_buffer("rope_cache", rope_cache)
 
     def forward(self, x, token_positions=None):
-        # print("RoPE.forward x.shape", x.shape, self.rope_cache.shape)
         original_shape = x.shape
         seq_length, d_k = original_shape[-2:]
         x = x.view(-1, seq_length, d_k)
-        # print("x.shape", x.shape)
         batch_size = x.shape[0]
 
-        # if token_positions.dim() == 1:
-        #     token_positions = token_positions.unsqueeze(0).expand(batch_size, -1)
-
-        # token_positions_flat = token_positions.view(-1, seq_length)
         rope_selected = self.rope_cache[:seq_length]
         x_pairs = x.view(batch_size, seq_length, -1, 2)
-        # print("x_pairs.shape", x_pairs.shape)
-        # print("rope_selected.shape", rope_selected.shape)
 
         # some black magic where complex numbers i,j parts can be computed like this
         # TODO: this part below is definitely not clear
@@ -174,26 +172,37 @@ class RotaryPositionalEncoding(nn.Module):
         return result.view(original_shape)
 
 
+def rms_norm(x, eps: float = 1e-5):
+    rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + eps)
+    return torch.divide(x, rms)
+
+
 class RMSNorm(nn.Module):
-    def __init__(self, embedding_dim: int, eps: float = 1e-5):
-        # TODO: understand reasoning, not only implement
+    def __init__(
+        self,
+        embedding_dim: int,
+        eps: float = 1e-5,
+        gain_type: RMSNormGainType = RMSNormGainType.ELEMENTWISE,
+    ):
         super().__init__()
         self.embedding_dim = embedding_dim
         self.eps = eps
-        self.gain = Parameter(torch.ones(embedding_dim))
+        self.gain_type = gain_type
+
+        if gain_type == RMSNormGainType.SCALAR:
+            self.gain = Parameter(torch.ones(1))
+        elif gain_type == RMSNormGainType.ELEMENTWISE:
+            self.gain = Parameter(torch.ones(embedding_dim))
 
     def forward(self, x):
-        # TODO: gpt recommends formula is not clear, review
-        # --- identify variance/means comp and name properly
         x_dtype = x.dtype
         x = x.to(torch.float32)
+        normalized = rms_norm(x, self.eps)
 
-        # variance = (x * x).mean(dim=-1, keepdim=True)
-        # result = x * torch.rsqrt(variance + self.eps) * self.gain
-        tsum = torch.sum(x * x, dim=-1)
-        div_term = torch.sqrt((1 / self.embedding_dim) * tsum + self.eps).unsqueeze(-1)
-        result = torch.divide(x, div_term) * self.gain
-        return result.to(x_dtype)
+        if self.gain is not None:
+            normalized = normalized * self.gain
+
+        return normalized.to(x_dtype)
 
 
 class PosWiseFFN(nn.Module):
@@ -225,6 +234,7 @@ class PosWiseFFN(nn.Module):
 
     @staticmethod
     def relu2(x):
+        F.rms_norm
         return torch.clamp(x, min=0) ** 2
 
     def forward(self, x):
@@ -273,14 +283,8 @@ class MultiHeadSelfAttention(nn.Module):
         return tensor.view(batch, seq_length, self.num_heads, self.head_size).transpose(2, 1)
 
     def forward(self, x, padding_mask):
-        # print(x)
         batch, seq_length = x.shape[0], x.shape[1]  # , embedding_dim
-        # Marcel: matmul's are linear, very strict properties
-        # -- you can combine any matmuls into a single operations.
         qkv = self.QKV(x)
-        # if torch.isnan(qkv).any() or torch.isinf(qkv).any():
-        #     print(f"[DEBUG] QKV has NaN/Inf! Input x range: [{x.min():.4f}, {x.max():.4f}]")
-
         q, k, v = qkv.chunk(3, dim=-1)
 
         q = self._reshape_to_heads(batch, seq_length, q).contiguous()
@@ -290,12 +294,6 @@ class MultiHeadSelfAttention(nn.Module):
         # if self.rope:  # test logic
         q = self.rope(q)
         k = self.rope(k)
-
-        # Debug: Check after RoPE
-        # if torch.isnan(q).any() or torch.isinf(q).any():
-        #     print("[DEBUG] Q has NaN/Inf after RoPE!")
-        # if torch.isnan(k).any() or torch.isinf(k).any():
-        #     print("[DEBUG] K has NaN/Inf after RoPE!")
 
         if self.qk_norm:
             q = F.normalize(q, dim=-1)
@@ -312,16 +310,6 @@ class MultiHeadSelfAttention(nn.Module):
 
         attention_scores = torch.masked_fill(attention_scores, mask == 0, -float("inf"))
 
-        # Debug: Check attention scores before softmax
-        # if torch.isnan(attention_scores).any():
-        #     print("[DEBUG] Attention scores have NaN before softmax!")
-        # if torch.isinf(attention_scores).any() and not torch.all(
-        #     attention_scores[torch.isinf(attention_scores)] == -float("inf")
-        # ):
-        #     print(
-        #         f"[DEBUG] Attention scores have +Inf before softmax! Range: [{attention_scores.min():.4f}, {attention_scores.max():.4f}]"
-        #     )
-
         attention_weights = softmax(attention_scores, dim=-1)
         # if torch.isnan(attention_weights).any() or torch.isinf(attention_weights).any():
         #     print("[DEBUG] Attention weights have NaN/Inf after softmax!")
@@ -330,13 +318,12 @@ class MultiHeadSelfAttention(nn.Module):
         x = x.transpose(1, 2)
         x = x.contiguous().view(batch, seq_length, -1)
         wo = self.W_O(x)
-        # print("MultiHeadSelfAttention.forward wo.shape:", wo.shape)
         return wo
 
 
-def get_norm_class(norm_type: NormType, dim: int):
+def get_norm_class(norm_type: NormType, dim: int, rms_gain_type=RMSNormGainType.ELEMENTWISE):
     if norm_type == NormType.RMS:
-        return RMSNorm(dim)
+        return RMSNorm(dim, gain_type=rms_gain_type)
     elif norm_type == NormType.LAYER:
         return nn.LayerNorm(dim)
     elif norm_type == NormType.NONE:

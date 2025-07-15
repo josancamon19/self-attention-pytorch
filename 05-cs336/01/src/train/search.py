@@ -12,16 +12,26 @@ config = {
     "embedding_dim": tune.grid_search([768]),
     "num_layers": tune.grid_search([6]),
     "num_heads": tune.grid_search([12]),
-    "ffn_type": tune.grid_search(["swiglu", "relu2"]),
-    "lr": tune.grid_search([4e-3]),
-    "qk_norm": tune.grid_search([0]),
+    "ffn_type": tune.grid_search(["relu2"]),  # "swiglu",
+    "lr": tune.grid_search([4e-3, 7e-3, 9e-3, 1e-2, 3e-2, 6e-2]),
+    "qk_norm": tune.grid_search([1]),
     # -- at it/s, right on < 90 minutes.
-    "tokens": tune.grid_search([2.28e9, 2.93e9]), 
-    "warmup_steps": tune.grid_search([1000]),
+    "tokens": tune.grid_search([3e8]),
+    "warmup_steps": tune.grid_search([300]),
 }
 
-valid2 = {("swiglu", 2.93e9), ("relu2", 2.28e9)}
+
+# TODO: RMSNorm using elementwise instead of scalar
+# TODO: qk norm rms instead of .normalize, qk norm using elementwise vs scalar
+# TODO: if any of this explode, log, linear output softmax, try z-loss, logit cap
+# TODO: Mup initializations trick
+# TODO: Scheduler variations
+# TODO: cosine lr schedule longer than # steps given (multipler 1.1 1.2)
+# TODO: Adam with different lr's per layer (heads vs embeddings vs else)
+# TODO: Muon and WSD optimizers
+# TODO: rope no complex
 # python src/train/transformer.py --num-layers 6 --num-heads 12 --embedding-dim 768 --batch-size 64 --lr-max 4e-3 --lr-warmup-steps 4000 --tokens 2.3e9 --ffn-type relu2 -tc
+
 
 def train_transformer_architecture(config):
     embedding_dim = config["embedding_dim"]
@@ -34,10 +44,6 @@ def train_transformer_architecture(config):
 
     if head_dim < 64:
         tune.report({"valid_loss": float("inf"), "status": "head_dim < 64"})
-        return
-
-    if (config["ffn_type"], config["tokens"]) not in valid2:
-        tune.report({"valid_loss": float("inf"), "status": "invalid_ffn_tokens"})
         return
 
     ffn_type = config.get("ffn_type", "swiglu")
