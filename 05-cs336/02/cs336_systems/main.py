@@ -20,6 +20,9 @@ from enum import Enum
 
 vocab_size = 10000
 batch_size = 4
+seq_length = 512
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 model_configs = [
     {"name": "small", "d_model": 768, "d_ff": 3072, "num_layers": 12, "num_heads": 12},
@@ -39,11 +42,11 @@ def get_model(seq_length, d_model, num_layers, num_heads, dff, rope_theta=10000)
         num_heads,
         dff,
         rope_theta,
-    )
+    ).to(device)
 
 
 def get_random_batch(seq_length: int, padding_size: int = None):
-    input_ids = torch.randint(0, vocab_size, (batch_size, seq_length))
+    input_ids = torch.randint(0, vocab_size, (batch_size, seq_length)).to(device)
     if not padding_size:
         return input_ids
 
@@ -52,8 +55,9 @@ def get_random_batch(seq_length: int, padding_size: int = None):
 
 
 def run_warmup(model: torch.nn.Module, n_steps: int = 100):
+    print("run_warmup", n_steps)
     for _ in range(n_steps):
-        model(get_random_batch(512))
+        model(get_random_batch(seq_length))
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
@@ -71,7 +75,7 @@ def measure(
 ) -> float:
     start = timeit.default_timer()
     for _ in range(n_steps):
-        output = model(get_random_batch(), None)
+        output = model(get_random_batch(seq_length), None)
         if type == MeasurementType.BACKWARD:
             output.sum().backward()
         if torch.cuda.is_available():
@@ -84,7 +88,7 @@ def measure(
 if __name__ == "__main__":
     for config in model_configs:
         model = get_model(
-            seq_length=512,
+            seq_length=seq_length,
             d_model=config["d_model"],
             num_layers=config["num_layers"],
             num_heads=config["num_heads"],
