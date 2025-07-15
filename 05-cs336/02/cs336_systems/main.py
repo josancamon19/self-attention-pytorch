@@ -2,6 +2,7 @@ import timeit
 from cs336_basics.model import BasicsTransformerLM
 import torch
 from enum import Enum
+import torch.cuda.nvtx as nvtx
 
 # Notes
 
@@ -45,7 +46,7 @@ def get_model(seq_length, d_model, num_layers, num_heads, dff, rope_theta=10000)
     ).to(device)
 
 
-def get_random_batch(seq_length: int, padding_size: int = None):
+def get_random_batch(seq_length: int, padding_size: int = 0):
     input_ids = torch.randint(0, vocab_size, (batch_size, seq_length)).to(device)
     if not padding_size:
         return input_ids
@@ -54,10 +55,11 @@ def get_random_batch(seq_length: int, padding_size: int = None):
     # padding_mask = torch.zeros_like(input_ids)
 
 
-def run_warmup(model: torch.nn.Module, n_steps: int = 100):
-    print("run_warmup", n_steps)
+@nvtx.range("warmup steps")
+def run_warmup(model: torch.nn.Module, n_steps: int = 10):
     for _ in range(n_steps):
-        model(get_random_batch(seq_length))
+        output = model(get_random_batch(seq_length))
+        output.sum().backward()
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
@@ -68,33 +70,85 @@ class MeasurementType(Enum):
     BACKWARD = "backward"  # backward includes both
 
 
+def profile_with_torch_profiler(fn):
+    with torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]
+        if torch.cuda.is_available()
+        else [torch.profiler.ProfilerActivity.CPU],
+        record_shapes=True,
+        profile_memory=True,
+        with_stack=False,
+    ) as prof:
+        fn()
+    print(
+        prof.key_averages().table(
+            sort_by="self_cuda_time_total" if torch.cuda.is_available() else "self_cpu_time_total", row_limit=10
+        )
+    )
+
+
+@nvtx.range("measurement")
 def measure(
     model: torch.nn.Module,
     n_steps: int,
     type: MeasurementType = MeasurementType.BACKWARD,
-) -> float:
-    start = timeit.default_timer()
+) -> tuple[float, float]:
+    times = []
     for _ in range(n_steps):
-        output = model(get_random_batch(seq_length), None)
+        start = timeit.default_timer()
+        output = model(get_random_batch(seq_length))
         if type == MeasurementType.BACKWARD:
-            output.sum().backward()
+            with nvtx.range("BasicTransformerLM.backward"):
+                output.sum().backward()
+
         if torch.cuda.is_available():
             torch.cuda.synchronize()
-    total = timeit.default_timer() - start
-    print("[measure] n_steps:", n_steps, type)
-    return total
+        times.append(timeit.default_timer() - start)
+
+    avg = sum(times) / len(times)
+    std = (sum((t - avg) ** 2 for t in times) / len(times)) ** 0.5
+    return avg, std
+
+
+def precision_checks():
+    s = torch.tensor(0, dtype=torch.float32)
+    for i in range(1000):
+        s += torch.tensor(0.01, dtype=torch.float32)
+    print(s)
+    s = torch.tensor(0, dtype=torch.float16)
+    for i in range(1000):
+        s += torch.tensor(0.01, dtype=torch.float16)
+    print(s)
+    s = torch.tensor(0, dtype=torch.float32)
+    for i in range(1000):
+        s += torch.tensor(0.01, dtype=torch.float16)
+    print(s)
+    s = torch.tensor(0, dtype=torch.float32)
+    for i in range(1000):
+        s += torch.tensor(0.01, dtype=torch.bfloat16)
+    print(s)
+    
+    s = torch.tensor(0, dtype=torch.float32)
+    for i in range(1000):
+        x = torch.tensor(0.01, dtype=torch.float16)
+        s += x.type(torch.float32)
+    print(s)
 
 
 if __name__ == "__main__":
-    for config in model_configs:
-        model = get_model(
-            seq_length=seq_length,
-            d_model=config["d_model"],
-            num_layers=config["num_layers"],
-            num_heads=config["num_heads"],
-            dff=config["d_ff"],
-            rope_theta=config.get("rope_theta", 10000),
-        )
-        run_warmup(model)
-        total_time = measure(model, n_steps=5)
-        print(f"Config: {config}, Time: {total_time:.4f} seconds")
+    # TODO: different sequence lengths
+    # TODO: different datatypes
+    precision_checks()
+    # for config in model_configs:
+    #     model = get_model(
+    #         seq_length=seq_length,
+    #         d_model=config["d_model"],
+    #         num_layers=config["num_layers"],
+    #         num_heads=config["num_heads"],
+    #         dff=config["d_ff"],
+    #         rope_theta=config.get("rope_theta", 10000),
+    #     )
+    #     run_warmup(model, n_steps=5)
+    #     avg, std = measure(model, n_steps=10)
+    #     print(f"Config: {config}, Avg Time: {avg:.4f} ± {std:.4f} seconds")
+    #     break
