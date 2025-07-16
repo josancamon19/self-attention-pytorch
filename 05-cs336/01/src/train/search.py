@@ -1,4 +1,5 @@
 from ray import tune
+import ray
 import sys
 import os
 import subprocess
@@ -13,23 +14,42 @@ config = {
     "num_layers": tune.grid_search([6]),
     "num_heads": tune.grid_search([12]),
     "ffn_type": tune.grid_search(["relu2"]),  # "swiglu",
-    "lr": tune.grid_search([4e-3, 7e-3, 9e-3, 1e-2, 3e-2, 6e-2]),
+    "lr": tune.grid_search([1e-2]),
     "qk_norm": tune.grid_search([1]),
-    # -- at it/s, right on < 90 minutes.
-    "tokens": tune.grid_search([3e8]),
+    "qk_norm_type": tune.grid_search(["rms"]),  # l2 (default), rms
+    "tokens": tune.grid_search([2e8]),
     "warmup_steps": tune.grid_search([300]),
 }
 
+ray.init(
+    runtime_env={
+        "excludes": [
+            ".tokenizer/TinyStoriesV2-GPT4-train-encoded.npy",
+            ".tokenizer/TinyStoriesV2-GPT4-valid-encoded.npy",
+            ".tokenizer/owt_valid-encoded.npy",
+            ".tokenizer/owt_train-encoded.npy",  # Add this too if it exists
+        ]
+    }
+)
 
-# TODO: RMSNorm using elementwise instead of scalar
-# TODO: qk norm rms instead of .normalize, qk norm using elementwise vs scalar
+# Experiments
+# - High learning rates = 3e-3 worst than 1e-3 (best), 6e-2 exploded (TODO: check where is exploding)
+# - RMSNorm using elementwise instead of scalar = ok, better
+# - For QK Norm, can try rms vs l2 normalization = holy shit clear win.
+# - adding a bunch of logs
+# - - we'll see if 6e-3 is exploding, yea it is, check where/why
+
+
 # TODO: if any of this explode, log, linear output softmax, try z-loss, logit cap
+# TODO: rope no complex + .compile error
+# TODO: flash attn any improvement?
+
 # TODO: Mup initializations trick
-# TODO: Scheduler variations
-# TODO: cosine lr schedule longer than # steps given (multipler 1.1 1.2)
-# TODO: Adam with different lr's per layer (heads vs embeddings vs else)
+# TODO: Scheduler variations, Hexagon kinda, cosine lr schedule longer than
+# TODO: Adam with different lr's per layer (heads vs embeddings vs else) https://arxiv.org/pdf/2502.19002 https://arxiv.org/pdf/2406.16793
+
 # TODO: Muon and WSD optimizers
-# TODO: rope no complex
+
 # python src/train/transformer.py --num-layers 6 --num-heads 12 --embedding-dim 768 --batch-size 64 --lr-max 4e-3 --lr-warmup-steps 4000 --tokens 2.3e9 --ffn-type relu2 -tc
 
 
@@ -48,7 +68,7 @@ def train_transformer_architecture(config):
 
     ffn_type = config.get("ffn_type", "swiglu")
     architecture = f"arch_{embedding_dim}_{config['num_layers']}_{num_heads}"
-    wandb_id = f"search_{architecture}_{config['lr']}_{config['warmup_steps']}_{config['qk_norm']}_{ffn_type}_{uuid.uuid4().hex[:8]}"
+    wandb_id = f"search_{architecture}_{config['lr']}_{config['warmup_steps']}_{config['qk_norm']}_{config['qk_norm_type']}_{ffn_type}_{uuid.uuid4().hex[:8]}"
     gpu_id = config.get("gpu_id", 0)
 
     current_dir = os.path.dirname(os.path.abspath(__file__))  # Gets src/train/
@@ -104,10 +124,14 @@ def train_transformer_architecture(config):
         "--use-torch-compile",
         "--ffn-type",
         ffn_type,
+        "--lr-annealing-multiplier",
+        str(1.0),
     ]
 
     if config.get("qk_norm"):
         cmd.append("--qk-norm")
+        cmd.append("--qk-norm-type")
+        cmd.append(str(config["qk_norm_type"]))
 
     try:
         result = subprocess.run(

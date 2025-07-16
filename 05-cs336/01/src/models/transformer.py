@@ -32,8 +32,13 @@ class NormType(Enum):
 
 class RMSNormGainType(Enum):
     SCALAR = "scalar"
-    ELEMENTWISE = "elementwise"
+    ELEMENTWISE = "elementwise"  # ~ only using elementwise
     NONE = "none"
+
+
+class QKNormType(Enum):
+    l2 = "l2"
+    rms = "rms"
 
 
 class NormPosition(Enum):
@@ -256,12 +261,14 @@ class MultiHeadSelfAttention(nn.Module):
         max_sequence_length: int,
         pos_embedding: PosEmbeddingType = PosEmbeddingType.ROPE,
         qk_norm: bool = False,
+        qk_norm_type: QKNormType = QKNormType.l2,
     ):
         super().__init__()
         self.num_heads = num_heads
         self.head_size = embedding_dim // num_heads
         self.embedding_dim = embedding_dim
         self.qk_norm = qk_norm
+        self.qk_norm_type = qk_norm_type
 
         self.QKV = Linear(embedding_dim, 3 * self.head_size * self.num_heads)
 
@@ -296,8 +303,12 @@ class MultiHeadSelfAttention(nn.Module):
         k = self.rope(k)
 
         if self.qk_norm:
-            q = F.normalize(q, dim=-1)
-            k = F.normalize(k, dim=-1)
+            if self.qk_norm_type == QKNormType.l2:
+                q = F.normalize(q, dim=-1)
+                k = F.normalize(k, dim=-1)
+            else:  # rms
+                q = rms_norm(q)
+                k = rms_norm(k)
             attention_scores = q @ k.transpose(-2, -1)
             # attention_scores *= self.qk_scale.view(-1, 1, 1, 1)
             attention_scores *= self.qk_scale
@@ -341,6 +352,7 @@ class TransformerBlock(nn.Module):
         norm_position: NormPosition = NormPosition.PRE,
         ffn_type: FFNType = FFNType.SWIGLU,
         qk_norm: bool = False,
+        qk_norm_type: QKNormType = QKNormType.l2,
     ):
         super().__init__()
 
@@ -352,6 +364,7 @@ class TransformerBlock(nn.Module):
             max_sequence_length,
             pos_embedding,
             qk_norm,
+            qk_norm_type,
         )
         self.pos_wise_norm = get_norm_class(norm_type, embedding_dim)
         self.pos_wise = PosWiseFFN(embedding_dim, ffn_type)
@@ -381,6 +394,7 @@ class Transformer(nn.Module):
         ffn_type: FFNType = FFNType.SWIGLU,
         weight_tying: bool = False,
         qk_norm: bool = False,
+        qk_norm_type: QKNormType = QKNormType.l2,
     ):
         super().__init__()
         self.pos_embedding = pos_embedding
@@ -403,6 +417,7 @@ class Transformer(nn.Module):
                 norm_position,
                 ffn_type,
                 qk_norm,
+                qk_norm_type,
             )
             for _ in range(num_layers)
         )
@@ -431,6 +446,7 @@ class Transformer(nn.Module):
             norm_position=NormPosition(args.norm_position.lower()),
             ffn_type=FFNType(args.ffn_type.lower()),
             qk_norm=args.qk_norm,
+            qk_norm_type=args.qk_norm_type,
         )
         total_params = sum(p.numel() for p in model.parameters())
         print(f"[Transformer.from_args]: {total_params} parameters")

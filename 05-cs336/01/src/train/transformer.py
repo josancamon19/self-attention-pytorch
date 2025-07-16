@@ -113,6 +113,7 @@ def get_args():
     parser.add_argument("--lr-min", type=float, default=default_lr_min)
     parser.add_argument("--lr-max", type=float, default=default_lr_max)
     parser.add_argument("--lr-warmup-steps", type=int, default=default_lr_warmup)
+    parser.add_argument("--lr-annealing-multiplier", type=float, default=1.0)
     parser.add_argument(
         "--lr-schedule",
         type=str,
@@ -133,7 +134,7 @@ def get_args():
     parser.add_argument("--ffn-type", type=str, default="swiglu")  # swiglu, silu
     parser.add_argument("--weight-tying", action="store_true", default=False)
     parser.add_argument("--qk-norm", action="store_true", default=False)
-
+    parser.add_argument("--qk-norm-type", type=str, default="l2")  # l2, rms
     # Further
     parser.add_argument("-mp", "--use-mixed-precision", action="store_true", default=True)
     parser.add_argument("-tc", "--use-torch-compile", action="store_true", default=False)
@@ -275,6 +276,11 @@ def train():
     AdamCLS = CustomAdamW if args.use_custom_adam else AdamW
     grad_clipping_fn = clip_gradients if args.use_custom_gradient_clipping else torch.nn.utils.clip_grad_norm_
 
+    # param_groups = [
+    #     {'params': model.embeddings.parameters(), 'lr': args.lr_max * 0.8},  # Slightly lower
+    #     {'params': model.output.parameters(), 'lr': args.lr_max * 1.2}, # Slightly higher  
+    #     {'params': model.transformer_layers.parameters(), 'lr': args.lr_max}
+    # ]
     optim = AdamCLS(
         model.parameters(),
         lr=args.lr_min,
@@ -285,9 +291,9 @@ def train():
     if args.checkpoint:
         load_checkpoint(model, optim, args.checkpoint)
 
-    # gradient_norms = deque(maxlen=20)
-    # loss_history = deque(maxlen=100)
-    # initial_loss = None
+    gradient_norms = deque(maxlen=20)
+    loss_history = deque(maxlen=100)
+    initial_loss = None
 
     # inputs, labels = single_data_loading(train_data, args.batch_size, train_steps, args.seq_length, device)
 
@@ -298,6 +304,7 @@ def train():
     # Wall clock timer setup
     start_time = time.time()
     max_wall_seconds = args.max_wall_time * 60 if args.max_wall_time else None
+    annealing_steps = int(train_steps * args.lr_annealing_multiplier)
 
     for step in tqdm(range(1, train_steps + 1), total=train_steps, desc="training-steps"):
         batch = data_loading(train_data, args.batch_size, args.seq_length, device)
@@ -307,8 +314,8 @@ def train():
         train_loss += loss.item()
         loss.backward()
 
-        # if step == 1:
-        #     initial_loss = loss.item()
+        if step == 1:
+            initial_loss = loss.item()
 
         grad_norm = grad_clipping_fn(model.parameters(), max_norm=1.0)
 
@@ -323,10 +330,10 @@ def train():
 
         #     raise Exception("grad_norm has nan's")
 
-        # gradient_norms.append(grad_norm.item())
-        # loss_history.append(loss.item())
+        gradient_norms.append(grad_norm.item())
+        loss_history.append(loss.item())
 
-        lr = lr_schedule_fn(args.lr_min, args.lr_max, args.lr_warmup_steps, train_steps, step)
+        lr = lr_schedule_fn(args.lr_min, args.lr_max, args.lr_warmup_steps, annealing_steps, step)
         for param_group in optim.param_groups:
             param_group["lr"] = lr
 
@@ -336,23 +343,23 @@ def train():
             current_time = time.time()
             elapsed_time = current_time - start_time
 
-            # recent_grad_norm = np.mean(gradient_norms[-20:])
-            # loss_moving_avg = np.mean(loss_history)
-            # loss_std = np.std(loss_history)
-            # param_norm = torch.linalg.vector_norm(
-            #     torch.stack([torch.linalg.vector_norm(p) for p in model.parameters()])
-            # )
+            recent_grad_norm = np.mean(list(gradient_norms)[-20:])
+            loss_moving_avg = np.mean(loss_history)
+            loss_std = np.std(loss_history)
+            param_norm = torch.linalg.vector_norm(
+                torch.stack([torch.linalg.vector_norm(p) for p in model.parameters()])
+            )
 
             run.log(
                 {
                     "train_loss": train_loss / step,
                     "lr": lr,
                     "speed": step / elapsed_time,
-                    # "stability/grad_norm": recent_grad_norm,
-                    # "stability/loss_moving_avg": loss_moving_avg,
-                    # "stability/loss_std": loss_std,
-                    # "stability/loss_variance": loss_std**2,
-                    # "stability/param_norm": param_norm.item(),
+                    "stability/grad_norm": recent_grad_norm,
+                    "stability/loss_moving_avg": loss_moving_avg,
+                    "stability/loss_std": loss_std,
+                    "stability/loss_variance": loss_std**2,
+                    "stability/param_norm": param_norm.item(),
                 },
                 step=step,
             )
@@ -368,8 +375,8 @@ def train():
                 best_valid_loss = execute_validation_loss(
                     model, optim, args, device, valid_data, run, best_valid_loss, 20, step, False, False
                 )
-                # diagnostic_metrics = get_simple_diagnostic_metrics(model, loss, step, initial_loss)
-                # run.log(diagnostic_metrics, step=step)
+                diagnostic_metrics = get_simple_diagnostic_metrics(model, loss, step, initial_loss)
+                run.log(diagnostic_metrics, step=step)
 
     print(f"Final training loss: {train_loss / train_steps:.6f}")
     execute_validation_loss(model, optim, args, device, valid_data, run, best_valid_loss, valid_steps, step)

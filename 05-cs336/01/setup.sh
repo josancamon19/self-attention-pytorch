@@ -1,12 +1,10 @@
 cd /workspace
 git clone https://github.com/josancamon19/transformers
 cd /workspace/transformers/05-cs336/01/
-python -m venv .venv
-source .venv/bin/activate
-python -m ensurepip --upgrade
-ln -s pip3 .venv/bin/pip
-which pip; which python
 pip install uv
+apt update && apt install -y cmake
+uv venv
+source .venv/bin/activate
 uv sync
 sh lfs.sh
 sh ../../github.sh
