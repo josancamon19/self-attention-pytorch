@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["cs336_systems", "tests"]
+include = ["src", "tests"]
 
 [tool.uv]
 package = true

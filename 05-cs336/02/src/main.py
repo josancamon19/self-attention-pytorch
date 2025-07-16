@@ -1,4 +1,6 @@
 import timeit
+
+from sympy import SeqAdd
 from cs336_basics.model import BasicsTransformerLM
 import torch
 from enum import Enum
@@ -21,7 +23,6 @@ import torch.cuda.nvtx as nvtx
 
 vocab_size = 10000
 batch_size = 4
-seq_length = 512
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -32,6 +33,9 @@ model_configs = [
     {"name": "xl", "d_model": 1600, "d_ff": 6400, "num_layers": 48, "num_heads": 25},
     {"name": "2.7B", "d_model": 2560, "d_ff": 10240, "num_layers": 32, "num_heads": 32},
 ]
+
+target_seq_lengths = [128, 256, 512, 1024]
+dtypes = [torch.float32, torch.float16, torch.bfloat16]
 
 
 def get_model(seq_length, d_model, num_layers, num_heads, dff, rope_theta=10000):
@@ -51,15 +55,12 @@ def get_random_batch(seq_length: int, padding_size: int = 0):
     if not padding_size:
         return input_ids
 
-    # assert padding_size >= seq_length
-    # padding_mask = torch.zeros_like(input_ids)
-
 
 @nvtx.range("warmup steps")
-def run_warmup(model: torch.nn.Module, n_steps: int = 10):
+def run_warmup(model: torch.nn.Module, n_steps: int = 10, seq_length: int = 512):
     for _ in range(n_steps):
         output = model(get_random_batch(seq_length))
-        output.sum().backward()
+        output[0, 0, 0].backward()
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
@@ -68,6 +69,7 @@ def run_warmup(model: torch.nn.Module, n_steps: int = 10):
 class MeasurementType(Enum):
     FORWARD = "forward"
     BACKWARD = "backward"  # backward includes both
+    FULL = "full"  # + loss + optimizer
 
 
 def profile_with_torch_profiler(fn):
@@ -92,14 +94,24 @@ def measure(
     model: torch.nn.Module,
     n_steps: int,
     type: MeasurementType = MeasurementType.BACKWARD,
+    seq_length: int = 512,
+    use_autocast: bool = False,
+    target_dtype: torch.dtype = torch.float32,
 ) -> tuple[float, float]:
     times = []
+    optimizer = torch.optim.AdamW(model.parameters())
+
     for _ in range(n_steps):
         start = timeit.default_timer()
-        output = model(get_random_batch(seq_length))
-        if type == MeasurementType.BACKWARD:
+        with torch.autocast(device_type="cuda", dtype=target_dtype, enabled=use_autocast):
+            output = model(get_random_batch(seq_length))
             with nvtx.range("BasicTransformerLM.backward"):
-                output.sum().backward()
+                if type == MeasurementType.BACKWARD or type == MeasurementType.FULL:
+                    output[0, 0, 0].backward()
+
+        if type == MeasurementType.FULL:
+            with nvtx.range("optimizer.step"):
+                optimizer.step()
 
         if torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -127,7 +139,7 @@ def precision_checks():
     for i in range(1000):
         s += torch.tensor(0.01, dtype=torch.bfloat16)
     print(s)
-    
+
     s = torch.tensor(0, dtype=torch.float32)
     for i in range(1000):
         x = torch.tensor(0.01, dtype=torch.float16)
@@ -135,20 +147,47 @@ def precision_checks():
     print(s)
 
 
+class LogType(Enum):
+    SEQ_LENGTH = "seq_length"
+    DTYPE = "dtype"
+
+
+def log(type: LogType):
+    dtype: torch.dtype = torch.float32
+    seq_length: int = 512
+
+    torch.cuda.memory._record_memory_history(max_entries=1000000)
+    for value in target_seq_lengths if type == LogType.SEQ_LENGTH else dtypes:
+        if type == LogType.SEQ_LENGTH:
+            seq_length = value
+        else:
+            dtype = value
+
+        for config in model_configs:
+            model = get_model(
+                seq_length=seq_length,
+                d_model=config["d_model"],
+                num_layers=config["num_layers"],
+                num_heads=config["num_heads"],
+                dff=config["d_ff"],
+                rope_theta=config.get("rope_theta", 10000),
+            )
+            run_warmup(model, n_steps=5, seq_length=seq_length)
+            avg, std = measure(
+                model,
+                n_steps=10,
+                seq_length=seq_length,
+                use_autocast=type == LogType.DTYPE,
+                target_dtype=dtype,
+            )
+            print(f"Config: {config}, Avg Time: {avg:.4f} ± {std:.4f} seconds")
+
+    torch.cuda.memory._dump_snapshot("memory_snapshot.pickle")
+    torch.cuda.memory._record_memory_history(enabled=None)
+
+
 if __name__ == "__main__":
-    # TODO: different sequence lengths
+    # log_baselines()
+    # precision_checks()
+    log(LogType.DTYPE)
     # TODO: different datatypes
-    precision_checks()
-    # for config in model_configs:
-    #     model = get_model(
-    #         seq_length=seq_length,
-    #         d_model=config["d_model"],
-    #         num_layers=config["num_layers"],
-    #         num_heads=config["num_heads"],
-    #         dff=config["d_ff"],
-    #         rope_theta=config.get("rope_theta", 10000),
-    #     )
-    #     run_warmup(model, n_steps=5)
-    #     avg, std = measure(model, n_steps=10)
-    #     print(f"Config: {config}, Avg Time: {avg:.4f} ± {std:.4f} seconds")
-    #     break
