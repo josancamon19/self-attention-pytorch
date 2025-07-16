@@ -17,8 +17,9 @@ config = {
     "lr": tune.grid_search([1e-2]),
     "qk_norm": tune.grid_search([1]),
     "qk_norm_type": tune.grid_search(["rms"]),  # l2 (default), rms
-    "tokens": tune.grid_search([2e8]),
+    "tokens": tune.grid_search([2.2e9]),
     "warmup_steps": tune.grid_search([300]),
+    # "lr_annealing_multiplier": tune.grid_search([1.0, 1.1, 1.2, 1.3])
 }
 
 ray.init(
@@ -38,10 +39,10 @@ ray.init(
 # - For QK Norm, can try rms vs l2 normalization = holy shit clear win.
 # - adding a bunch of logs
 # - - we'll see if 6e-3 is exploding, yea it is, check where/why
+# - rope no complex + .compile error
 
 
 # TODO: if any of this explode, log, linear output softmax, try z-loss, logit cap
-# TODO: rope no complex + .compile error
 # TODO: flash attn any improvement?
 
 # TODO: Mup initializations trick

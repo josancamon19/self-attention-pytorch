@@ -148,29 +148,29 @@ class RotaryPositionalEncoding(nn.Module):
 
         # some black magic where complex numbers i,j parts can be computed like this
         # TODO: this part below is definitely not clear
-        if x_pairs.dtype == torch.bfloat16:
-            original_dtype = x_pairs.dtype
-            x_complex = torch.view_as_complex(x_pairs.float())
-            rope_complex = torch.view_as_complex(rope_selected.float())
-            rotated_complex = x_complex * rope_complex
-            rotated_real = torch.view_as_real(rotated_complex).to(original_dtype)
-        else:
-            # Direct path for FP32
-            x_complex = torch.view_as_complex(x_pairs)
-            rope_complex = torch.view_as_complex(rope_selected)
-            rotated_complex = x_complex * rope_complex
-            rotated_real = torch.view_as_real(rotated_complex)
+        # if x_pairs.dtype == torch.bfloat16:
+        #     original_dtype = x_pairs.dtype
+        #     x_complex = torch.view_as_complex(x_pairs.float())
+        #     rope_complex = torch.view_as_complex(rope_selected.float())
+        #     rotated_complex = x_complex * rope_complex
+        #     rotated_real = torch.view_as_real(rotated_complex).to(original_dtype)
+        # else:
+        #     # Direct path for FP32
+        #     x_complex = torch.view_as_complex(x_pairs)
+        #     rope_complex = torch.view_as_complex(rope_selected)
+        #     rotated_complex = x_complex * rope_complex
+        #     rotated_real = torch.view_as_real(rotated_complex)
 
         # ===== No Complex Num =====
-        # cos_vals = rope_selected[..., 0]  # shape: [seq_length, d_k//2]
-        # sin_vals = rope_selected[..., 1]  # shape: [seq_length, d_k//2]
+        cos_vals = rope_selected[..., 0]  # shape: [seq_length, d_k//2]
+        sin_vals = rope_selected[..., 1]  # shape: [seq_length, d_k//2]
 
-        # x0 = x_pairs[..., 0]  # even indices: [batch, seq_length, d_k//2]
-        # x1 = x_pairs[..., 1]  # odd indices:  [batch, seq_length, d_k//2]
-        # # Apply rotation: [x0', x1'] = [x0*cos - x1*sin, x0*sin + x1*cos]
-        # rotated_x0 = x0 * cos_vals - x1 * sin_vals
-        # rotated_x1 = x0 * sin_vals + x1 * cos_vals
-        # rotated_real = torch.stack([rotated_x0, rotated_x1], dim=-1)
+        x0 = x_pairs[..., 0]  # even indices: [batch, seq_length, d_k//2]
+        x1 = x_pairs[..., 1]  # odd indices:  [batch, seq_length, d_k//2]
+        # Apply rotation: [x0', x1'] = [x0*cos - x1*sin, x0*sin + x1*cos]
+        rotated_x0 = x0 * cos_vals - x1 * sin_vals
+        rotated_x1 = x0 * sin_vals + x1 * cos_vals
+        rotated_real = torch.stack([rotated_x0, rotated_x1], dim=-1)
         # ===== No Complex Num =====
 
         result = rotated_real.view(-1, seq_length, d_k)
