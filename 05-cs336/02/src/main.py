@@ -1,7 +1,8 @@
+import math
 import timeit
 
 from sympy import SeqAdd
-from cs336_basics.model import BasicsTransformerLM
+from cs336_basics.model import BasicsTransformerLM, Embedding
 import torch
 from enum import Enum
 import torch.cuda.nvtx as nvtx
@@ -50,7 +51,7 @@ def get_model(seq_length, d_model, num_layers, num_heads, dff, rope_theta=10000)
     ).to(device)
 
 
-def get_random_batch(seq_length: int, padding_size: int = 0):
+def get_random_batch(seq_length: int, padding_size: int = 0, batch_size: int = 4):
     input_ids = torch.randint(0, vocab_size, (batch_size, seq_length)).to(device)
     if not padding_size:
         return input_ids
@@ -186,8 +187,66 @@ def log(type: LogType):
     torch.cuda.memory._record_memory_history(enabled=None)
 
 
+class SingleHeadAttention(torch.nn.Module):
+    def __init__(self, embedding_dim, head_dim):
+        super().__init__()
+        self.QKV = torch.nn.Parameter(torch.ones((embedding_dim, head_dim * 3), device=device))
+        self.scale = 1 / math.sqrt(head_dim)
+
+    @nvtx.range("SHA.forward")
+    def forward(self, x):
+        with nvtx.range("x @ QKV"):
+            qkv = x @ self.QKV
+        q, k, v = qkv.chunk(3, dim=-1)
+        with nvtx.range("q @ k.T / sqrt(d_k)"):
+            attention_scores = q @ k.transpose(-2, -1) * self.scale
+        with nvtx.range("softmax"):
+            attention_weights = torch.softmax(attention_scores, dim=-1)
+        with nvtx.range("attn_weights @ v"):
+            output = attention_weights @ v
+        return output
+
+
+def attention(use_compile: bool = False):
+    batch_size = 8
+    seq_length = 512
+    embedding_dim = 768
+    head_dim = [16, 32, 64, 128]
+    # torch.cuda.memory._record_memory_history(max_entries=1000000)
+    x = get_random_batch(seq_length, batch_size=batch_size)
+    embedding = Embedding(vocab_size, embedding_dim).to(device)
+    x_emb = embedding(x).detach()  # remove from computation graph
+    passes = 100
+
+    for dim in head_dim:
+        attn = SingleHeadAttention(embedding_dim, dim)
+        if use_compile:
+            # TODO: I don't see a difference in the pattern, where is it?
+            attn = torch.compile(attn)
+
+        # warmup
+        for _ in range(5):
+            output = attn(x_emb)
+            output[0, 0, 0].backward()
+            attn.zero_grad()
+
+        torch.cuda.synchronize()
+
+        # measure
+        start = timeit.default_timer()
+        for _ in range(passes):
+            output = attn(x_emb)
+            with nvtx.range("backward"):
+                output[0, 0, 0].backward()
+            attn.zero_grad()
+            torch.cuda.synchronize()
+
+        print(f"Head dim: {dim}, Time taken: {timeit.default_timer() - start:.4f} seconds")
+        break
+
+
 if __name__ == "__main__":
     # log_baselines()
     # precision_checks()
-    log(LogType.DTYPE)
-    # TODO: different datatypes
+    # log(LogType.DTYPE)
+    attention(False)

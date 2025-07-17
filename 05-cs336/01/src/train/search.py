@@ -14,11 +14,11 @@ config = {
     "num_layers": tune.grid_search([6]),
     "num_heads": tune.grid_search([12]),
     "ffn_type": tune.grid_search(["relu2"]),  # "swiglu",
-    "lr": tune.grid_search([1e-2]),
+    "lr": tune.grid_search([1e-2]), # 1e-2
     "qk_norm": tune.grid_search([1]),
     "qk_norm_type": tune.grid_search(["rms"]),  # l2 (default), rms
-    "tokens": tune.grid_search([2.2e9]),
-    "warmup_steps": tune.grid_search([300]),
+    "tokens": tune.grid_search([2.2e9]), # 2.2e9
+    "warmup_steps": tune.grid_search([5000]), # 300, 1200, 
     # "lr_annealing_multiplier": tune.grid_search([1.0, 1.1, 1.2, 1.3])
 }
 
@@ -40,9 +40,12 @@ ray.init(
 # - adding a bunch of logs
 # - - we'll see if 6e-3 is exploding, yea it is, check where/why
 # - rope no complex + .compile error
-
-
+# - full run explodes with warmup 300, 1200
+# - - clearly get's unstable, lots' of spikes, trying 3000 warmup steps.
+# - - still explodes
 # TODO: if any of this explode, log, linear output softmax, try z-loss, logit cap
+
+
 # TODO: flash attn any improvement?
 
 # TODO: Mup initializations trick
