@@ -3,6 +3,7 @@ import timeit
 
 from sympy import SeqAdd
 from cs336_basics.model import BasicsTransformerLM, Embedding
+from cs336_basics.nn_utils import cross_entropy
 import torch
 from enum import Enum
 import torch.cuda.nvtx as nvtx
@@ -59,9 +60,12 @@ def get_random_batch(seq_length: int, padding_size: int = 0, batch_size: int = 4
 
 @nvtx.range("warmup steps")
 def run_warmup(model: torch.nn.Module, n_steps: int = 10, seq_length: int = 512):
+    input_ids = get_random_batch(seq_length)
     for _ in range(n_steps):
-        output = model(get_random_batch(seq_length))
-        output[0, 0, 0].backward()
+        output = model(input_ids)
+        loss = cross_entropy(output, torch.ones(output.shape[:-1], dtype=torch.int64, device=device))
+        loss.backward()
+        # loss computation, this is only backward for that idx, not the whole graph
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
@@ -102,21 +106,23 @@ def measure(
     times = []
     optimizer = torch.optim.AdamW(model.parameters())
 
-    for _ in range(n_steps):
-        start = timeit.default_timer()
-        with torch.autocast(device_type="cuda", dtype=target_dtype, enabled=use_autocast):
+    with torch.autocast(device_type="cuda", dtype=target_dtype, enabled=use_autocast):
+        for _ in range(n_steps):
+            start = timeit.default_timer()
             output = model(get_random_batch(seq_length))
             with nvtx.range("BasicTransformerLM.backward"):
                 if type == MeasurementType.BACKWARD or type == MeasurementType.FULL:
-                    output[0, 0, 0].backward()
+                    loss = cross_entropy(output, torch.ones(output.shape[:-1], dtype=torch.int64, device=device))
+                    del output
+                    loss.backward()
 
-        if type == MeasurementType.FULL:
-            with nvtx.range("optimizer.step"):
-                optimizer.step()
+            if type == MeasurementType.FULL:
+                with nvtx.range("optimizer.step"):
+                    optimizer.step()
 
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-        times.append(timeit.default_timer() - start)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            times.append(timeit.default_timer() - start)
 
     avg = sum(times) / len(times)
     std = (sum((t - avg) ** 2 for t in times) / len(times)) ** 0.5
@@ -165,6 +171,7 @@ def log(type: LogType):
             dtype = value
 
         for config in model_configs:
+            torch.cuda.synchronize()
             model = get_model(
                 seq_length=seq_length,
                 d_model=config["d_model"],
@@ -182,6 +189,8 @@ def log(type: LogType):
                 target_dtype=dtype,
             )
             print(f"Config: {config}, Avg Time: {avg:.4f} ± {std:.4f} seconds")
+            # break
+        break
 
     torch.cuda.memory._dump_snapshot("memory_snapshot.pickle")
     torch.cuda.memory._record_memory_history(enabled=None)
@@ -214,20 +223,21 @@ def attention(use_compile: bool = False):
     head_dim = [16, 32, 64, 128]
     # torch.cuda.memory._record_memory_history(max_entries=1000000)
     x = get_random_batch(seq_length, batch_size=batch_size)
-    embedding = Embedding(vocab_size, embedding_dim).to(device)
-    x_emb = embedding(x).detach()  # remove from computation graph
+    # embedding = Embedding(vocab_size, embedding_dim).to(device)
+    # x_emb = embedding(x).detach()  # remove from computation graph
+    x_emb = torch.randn((*x.shape, embedding_dim), requires_grad=True, device=device)
     passes = 100
 
     for dim in head_dim:
         attn = SingleHeadAttention(embedding_dim, dim)
         if use_compile:
-            # TODO: I don't see a difference in the pattern, where is it?
             attn = torch.compile(attn)
 
         # warmup
         for _ in range(5):
             output = attn(x_emb)
-            output[0, 0, 0].backward()
+            loss = cross_entropy(output, torch.ones(output.shape[:-1], dtype=torch.int64, device=device))
+            loss.backward()
             attn.zero_grad()
 
         torch.cuda.synchronize()
@@ -237,7 +247,9 @@ def attention(use_compile: bool = False):
         for _ in range(passes):
             output = attn(x_emb)
             with nvtx.range("backward"):
-                output[0, 0, 0].backward()
+                loss = cross_entropy(output, torch.ones(output.shape[:-1], dtype=torch.int64, device=device))
+                loss.backward()
+            
             attn.zero_grad()
             torch.cuda.synchronize()
 
@@ -248,5 +260,5 @@ def attention(use_compile: bool = False):
 if __name__ == "__main__":
     # log_baselines()
     # precision_checks()
-    # log(LogType.DTYPE)
-    attention(False)
+    # log(LogType.SEQ_LENGTH)
+    attention(True)
