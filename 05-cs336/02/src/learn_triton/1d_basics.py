@@ -2,11 +2,9 @@ import torch
 
 import triton
 import triton.language as tl
-# import os
 
-DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-# os.environ["TORCH_INTERPRETER"] = "1"
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# os.environ["TORCH_INTERPRET"] = "1" cpu, not macos lol
 
 
 @triton.jit
@@ -28,8 +26,8 @@ def add_kernel(
 
 
 def add(x: torch.Tensor, y: torch.Tensor):
-    output = torch.empty_like(x, device=DEVICE)
-    assert x.device == DEVICE and y.device == DEVICE and output.device == DEVICE
+    output = torch.empty_like(x, device=device)
+    assert x.device == device and y.device == device and output.device == device
     n_elements = output.numel()
     grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)  # noqa: E731
     add_kernel[grid](x, y, output, n_elements, BLOCK_SIZE=1024)
@@ -39,8 +37,8 @@ def add(x: torch.Tensor, y: torch.Tensor):
 def test_kernel():
     torch.manual_seed(0)
     size = 768324
-    x = torch.rand(size, device=DEVICE)
-    y = torch.rand(size, device=DEVICE)
+    x = torch.rand(size, device=device)
+    y = torch.rand(size, device=device)
     output_torch = x + y
     output_triton = add(x, y)
     print(output_torch)
@@ -63,8 +61,8 @@ def test_kernel():
     )
 )
 def benchmark(size, provider):
-    x = torch.rand(size, device=DEVICE, dtype=torch.float32)
-    y = torch.rand(size, device=DEVICE, dtype=torch.float32)
+    x = torch.rand(size, device=device, dtype=torch.float32)
+    y = torch.rand(size, device=device, dtype=torch.float32)
     quantiles = [0.5, 0.2, 0.8]
     if provider == "torch":
         ms, min_ms, max_ms = triton.testing.do_bench(lambda: x + y, quantiles=quantiles)
