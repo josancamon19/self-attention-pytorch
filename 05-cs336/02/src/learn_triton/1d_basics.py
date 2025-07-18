@@ -74,6 +74,30 @@ def benchmark(size, provider):
     return gbps(ms), gbps(max_ms), gbps(min_ms)
 
 
+@triton.jit
+def subtract_kernel(x_ptr, y_ptr, out_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(axis=0)
+    start = pid * BLOCK_SIZE
+    offsets = start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < n_elements
+
+    x = tl.load(x_ptr, offsets, mask=mask)
+    y = tl.load(y_ptr, offsets, mask=mask)
+
+    tl.store(out_ptr, y - x, mask=mask)
+
+
+def sub(x: torch.Tensor, y: torch.Tensor):
+    assert x.device == y.device
+    assert x.shape == y.shape
+    # TODO: how's torch broadcasting happening then?
+    output = torch.empty_like(x)
+    n_elements = output.numel()
+    grid = (triton.cdiv(n_elements / 1024),)
+    subtract_kernel[grid](x, y, output, n_elements)
+    return output  # TODO: the kernel was launched async, why do we have a value of this
+
+
 if __name__ == "__main__":
     test_kernel()
     # benchmark.run(print_data=True, show_plots=True)
