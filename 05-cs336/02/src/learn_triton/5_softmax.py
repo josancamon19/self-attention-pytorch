@@ -40,9 +40,22 @@ torch.manual_seed(42)
 
 
 @triton.jit
+def softmax_max_kernel(
+    x_ptr,
+    max_term_ptr,
+    num_elements,
+    BLOCK_SIZE: tl.constexpr,
+):
+    offset = tl.program_id(axis=0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    max_block = tl.max(tl.load(x_ptr + offset, mask=offset < num_elements, other=float("-inf")))
+    tl.atomic_max(max_term_ptr, max_block)
+
+
+@triton.jit
 def softmax_kernel(
     x_ptr,
     out_ptr,
+    max_term_ptr,
     div_term_ptr,
     num_elements,
     BLOCK_SIZE: tl.constexpr,
@@ -51,7 +64,7 @@ def softmax_kernel(
     mask = offset < num_elements
 
     x_block = tl.load(x_ptr + offset, mask=mask)
-    numerator = tl.exp(x_block)
+    numerator = tl.exp(x_block - tl.load(max_term_ptr))
     tl.store(out_ptr + offset, numerator, mask=mask)
     tl.atomic_add(div_term_ptr, tl.sum(numerator))
 
@@ -73,14 +86,17 @@ def softmax_normalize_kernel(
 
 
 def softmax(x: torch.Tensor):
-    # let's assume it's 1D for now
     N = x.shape[0]
     BLOCK_SIZE = 32
     grid = (triton.cdiv(N, BLOCK_SIZE),)
     output = torch.empty_like(x, device=x.device, dtype=x.dtype)
     div_term = torch.zeros(1, device=x.device, dtype=x.dtype)
-    softmax_kernel[grid](x, output, div_term, x.numel(), BLOCK_SIZE=BLOCK_SIZE)
+    max_term = torch.full((1,), float("-inf"), device=x.device, dtype=x.dtype)
+
+    softmax_max_kernel[grid](x, max_term, x.numel(), BLOCK_SIZE=BLOCK_SIZE)
+    softmax_kernel[grid](x, output, max_term, div_term, x.numel(), BLOCK_SIZE=BLOCK_SIZE)
     softmax_normalize_kernel[grid](output, div_term, x.numel(), BLOCK_SIZE=BLOCK_SIZE)
+
     return output
 
 
