@@ -6,6 +6,7 @@ import pdb
 import os
 
 os.environ["TRITON_INTERPRET"] = "1"
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 @triton.jit
@@ -54,7 +55,7 @@ def add_2d_kernel(
 
 
 def add_2d(a: torch.Tensor, b: torch.Tensor):
-    assert a.shape == b.shape
+    # assert a.shape == b.shape # broadcasting
     M, N = a.shape
     grid = lambda META: (triton.cdiv(M, META["BLOCK_M"]), triton.cdiv(N, META["BLOCK_N"]))  # noqa: E731
 
@@ -70,8 +71,8 @@ def add_2d(a: torch.Tensor, b: torch.Tensor):
         N,
         a.stride(0),
         a.stride(1),
-        b.stride(0),
-        b.stride(1),
+        0 if b.shape[0] == 1 else b.stride(0),  # broadcast dim 0
+        0 if b.shape[1] == 1 else b.stride(1),  # broadcast dim 1
         out.stride(0),
         out.stride(1),
         BLOCK_M=32,  # how to determine? start with 128, fit in shared memory, multiple of warp size
@@ -83,6 +84,9 @@ def add_2d(a: torch.Tensor, b: torch.Tensor):
 if __name__ == "__main__":
     # a = torch.tensor([[1.0, 2.0], [3.0, 4.0]], device="cuda")
     # b = torch.tensor([[5.0, 6.0], [7.0, 8.0]], device="cuda")
+    torch.manual_seed(42)
     a = torch.rand(128, 256, device="cuda")
-    b = torch.rand(128, 256, device="cuda")
-    add_2d(a, b)
+    b = torch.ones((256, 1), device="cuda")
+    # b = torch.rand(128, 256, device="cuda")
+    output = add_2d(a, b)
+    print(output)
