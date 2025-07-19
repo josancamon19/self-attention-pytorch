@@ -49,9 +49,10 @@ def matmul_kernel(
         B_ptrs = B_ptr + (b_row_idx * bk_stride) + (b_col_idx * bn_stride)
         B_mask = (b_row_idx < K) & (b_col_idx < N)
         B_block = tl.load(B_ptrs, mask=B_mask)
-
-        # pdb.set_trace()
+        
         accum += tl.dot(A_block.to(tl.float16), B_block.to(tl.float16))
+        # tl.device_print("accum", accum)
+        # pdb.set_trace()
 
     out_ptrs = out_ptr + (m_offset[:, None] * om_stride) + (n_offset[None, :] * on_stride)
     out_mask = (m_offset[:, None] < M) & (n_offset[None, :] < N)
