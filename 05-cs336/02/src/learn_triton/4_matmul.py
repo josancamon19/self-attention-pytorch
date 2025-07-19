@@ -3,11 +3,48 @@ import torch
 
 import triton
 import triton.language as tl
+import os
 
-# import os
+os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
+# os.environ["TRITON_COMPILE_LOG"] = "1"
+# os.environ["TRITON_LOG_DIR"] = "./triton_logs"
 # os.environ["TRITON_INTERPRET"] = "1"
 
 
+def get_cuda_autotune_config():
+    def config_item(m, n, k, g, ns, nw):
+        return triton.Config(
+            {"BLOCK_SIZE_M": m, "BLOCK_SIZE_N": n, "BLOCK_SIZE_K": k},  # , "GROUP_SIZE_M": g
+            num_stages=ns,
+            num_warps=nw,
+        )
+
+    # configs = []
+    # for m in [32, 64, 128, 256]:
+    #     for n in [32, 64, 128, 256]:
+    #         for k in [32, 64, 128, 256]:
+    #             for ns in [3, 4, 5, 6]:
+    #                 for nw in [2, 4, 8]:  # must be power of 2
+    #                     configs.append(config_item(m, n, k, 0, ns, nw))
+    # print(len(configs))
+    # return configs
+
+    return [
+        config_item(128, 256, 64, 8, 3, 8),
+        config_item(64, 256, 32, 8, 4, 4),
+        config_item(128, 128, 32, 8, 4, 4),
+        config_item(128, 64, 32, 8, 4, 4),
+        config_item(64, 128, 32, 8, 4, 4),
+        config_item(128, 32, 32, 8, 4, 4),
+        config_item(64, 32, 32, 8, 5, 2),
+        config_item(32, 64, 32, 8, 5, 2),
+    ]
+
+
+@triton.autotune(
+    configs=get_cuda_autotune_config(),
+    key=["M", "K", "N"],  # change every time K changes
+)
 @triton.jit
 def matmul_kernel(
     A_ptr,
@@ -61,18 +98,11 @@ def matmul_kernel(
 
 def matmul(A: torch.Tensor, B: torch.Tensor):
     (M, K, N) = *A.shape, B.shape[1]
-    print(A.shape, B.shape)
     result = torch.empty((M, N), device=A.device, dtype=A.dtype)
-    BLOCK_SIZE_M = 32
-    BLOCK_SIZE_N = 32
-    BLOCK_SIZE_K = 32
+    # BLOCK_SIZE_M = BLOCK_SIZE_N = BLOCK_SIZE_K = 32
 
-    # smaller debugging values
-    # BLOCK_SIZE_M = 8
-    # BLOCK_SIZE_N = 4
-    # BLOCK_SIZE_K = 2
-
-    grid = (triton.cdiv(M, BLOCK_SIZE_M), triton.cdiv(N, BLOCK_SIZE_N))
+    # grid = (triton.cdiv(M, BLOCK_SIZE_M), triton.cdiv(N, BLOCK_SIZE_N)) # dynamic instead using autotune
+    grid = lambda meta: (triton.cdiv(M, meta["BLOCK_SIZE_M"]), triton.cdiv(N, meta["BLOCK_SIZE_N"]))  # noqa: E731
 
     matmul_kernel[grid](
         A,
@@ -87,9 +117,7 @@ def matmul(A: torch.Tensor, B: torch.Tensor):
         B.stride(1),
         result.stride(0),
         result.stride(1),
-        BLOCK_SIZE_M,
-        BLOCK_SIZE_K,
-        BLOCK_SIZE_N,
+        # BLOCK_SIZE_M, BLOCK_SIZE_K, BLOCK_SIZE_N, # dynamic instead using autotune
     )
     return result
 
