@@ -49,7 +49,7 @@ def matmul_kernel(
         B_ptrs = B_ptr + (b_row_idx * bk_stride) + (b_col_idx * bn_stride)
         B_mask = (b_row_idx < K) & (b_col_idx < N)
         B_block = tl.load(B_ptrs, mask=B_mask)
-        
+
         accum += tl.dot(A_block.to(tl.float16), B_block.to(tl.float16))
         # tl.device_print("accum", accum)
         # pdb.set_trace()
@@ -94,11 +94,38 @@ def matmul(A: torch.Tensor, B: torch.Tensor):
     return result
 
 
+@triton.testing.perf_report(
+    triton.testing.Benchmark(
+        x_names=["M", "N", "K"],
+        x_vals=[128 * i for i in range(2, 33)],
+        line_arg="source",
+        line_vals=["triton", "torch"],
+        line_names=["Triton", "Torch"],
+        styles=[("green", "-"), ("blue", "-")],
+        ylabel="TFLOPS",
+        plot_name="matmul-performance",
+        args={"test": [1, 2]},
+    )
+)
+def benchmark(M, N, K, source, test):
+    a = torch.randn((M, K), device="cuda", dtype=torch.float16)
+    b = torch.randn((K, N), device="cuda", dtype=torch.float16)
+    quantiles = [0.5, 0.2, 0.8]
+    if source == "torch":
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: a @ b, quantiles=quantiles)
+    else:  # triton
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: matmul(a, b), quantiles=quantiles)
+    perf = lambda ms: 2 * M * N * K * 1e-12 / (ms * 1e-3)  # noqa
+    return perf(ms), perf(max_ms), perf(min_ms)
+
+
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    M, K, N = 12, 4, 8
-    A = torch.rand((M, K), device=device, dtype=torch.float32)  # 12, 4
-    B = torch.rand((K, N), device=device, dtype=torch.float32)  # 4, 8
-    output = matmul(A, B)
-    print(output.shape)
-    print(output == A @ B)
+    # M, K, N = 128, 512, 1024
+    # A = torch.rand((M, K), device=device, dtype=torch.float16)  # 12, 4
+    # B = torch.rand((K, N), device=device, dtype=torch.float16)  # 4, 8
+    # output = matmul(A, B)
+    # print(output.shape)
+    # print(output == A @ B)
+
+    benchmark.run(show_plots=True, print_data=True, save_path="./")
