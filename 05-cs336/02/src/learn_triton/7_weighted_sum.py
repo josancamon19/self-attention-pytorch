@@ -43,13 +43,13 @@ def weighted_sum_kernel(
     x_block = tl.load(x_ptrs, mask=mask)
     w_block = tl.load(weight_ptr + offset_n, mask=mask_n)
     tl.atomic_add(output_ptr + offset_m, tl.sum(x_block * w_block, axis=1))
-    # pdb.set_trace()
 
 
 def weighted_sum(x, weight):
-    # output_dims = x.shape[:-1]
+    output_dims = x.shape[:-1]
     x = x.reshape(-1, x.shape[-1])
-    m, n = x.shape  # mxn
+    m, n = x.shape  # m x n
+
     assert len(weight.shape) == 1 and weight.shape[0] == n
     assert x.is_cuda and weight.is_cuda, "Expected CUDA tensors"
     assert x.is_contiguous(), "Our pointer arithmetic will assume contiguous x"
@@ -72,12 +72,12 @@ def weighted_sum(x, weight):
         BLOCK_SIZE_M,
         BLOCK_SIZE_N,
     )
-    return output
+    return output.view(output_dims)
 
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    x = torch.randint(0, 10, (1000, 14000), device=device, dtype=torch.float32)
+    x = torch.randint(0, 10, (100, 1000, 14000), device=device, dtype=torch.float32)
     weight = torch.rand((14000,), device=device, dtype=torch.float32)
     output = weighted_sum(x, weight)
     torch_output = torch.sum(x * weight, axis=-1)
