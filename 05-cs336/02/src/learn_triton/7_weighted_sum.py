@@ -5,7 +5,11 @@ import os
 # import pdb
 
 # os.environ["TRITON_INTERPRET"] = "1"
-# os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
+os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
+os.environ["TORCH_COMPILE_DEBUG"] = "1"
+torch._logging.set_logs(output_code=True, kernel_code=True, schedule=True, fusion=True)
+# TODO: debug this more
+
 torch.manual_seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -55,7 +59,7 @@ def weighted_sum_kernel(
     tl.atomic_add(output_ptr + offset_m, tl.sum(x_block * w_block, axis=1), mask=mask_m)
 
 
-def weighted_sum(x, weight):
+def weighted_sum(x, weight, ctx=None):
     output_dims = x.shape[:-1]
     x = x.reshape(-1, x.shape[-1])
     m, n = x.shape  # m x n
@@ -64,27 +68,22 @@ def weighted_sum(x, weight):
     assert x.is_cuda and weight.is_cuda, "Expected CUDA tensors"
     assert x.is_contiguous(), "Our pointer arithmetic will assume contiguous x"
 
+    if ctx:
+        ctx.save_for_backward(x, weight)
+
     output = torch.zeros(m, device=x.device, dtype=x.dtype)
 
     stride_m, stride_n = x.stride(0), x.stride(1)
     grid = lambda meta: (triton.cdiv(m, meta["BLOCK_SIZE_M"]), triton.cdiv(n, meta["BLOCK_SIZE_N"]))  # noqa: E731
 
-    weighted_sum_kernel[grid](
-        x,
-        stride_m,
-        stride_n,
-        weight,
-        output,
-        m,
-        n,
-    )
+    weighted_sum_kernel[grid](x, stride_m, stride_n, weight, output, m, n)
     return output.view(output_dims)
 
 
 @triton.testing.perf_report(
     triton.testing.Benchmark(
         x_names=["m", "n"],
-        x_vals=[128 * i for i in range(2, 33)],
+        x_vals=[128 * i for i in range(2, 48)],
         line_arg="source",
         line_vals=["triton", "torch", "compile"],
         line_names=["Triton", "Torch", "Compile"],
@@ -111,11 +110,12 @@ def benchmark(m, n, source):
 
 
 def unit_test():
+    compiled_fn = torch.compile(lambda x, w: torch.sum(x * w, axis=-1))
     for i in range(12):
         x = torch.randint(0, 10, (100 * (i + 1), 2**i), device=device, dtype=torch.float32)
         weight = torch.rand((2**i,), device=device, dtype=torch.float32)
         output = weighted_sum(x, weight)
-        torch_output = torch.sum(x * weight, axis=-1)
+        torch_output = compiled_fn(x, weight)
         same = torch.allclose(output, torch_output)
         print("output ≈ torch_output", same)
         if not same:
