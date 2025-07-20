@@ -16,9 +16,19 @@ def weighted_sum_kernel(
     BLOCK_SIZE: tl.constexpr,
 ):
     i = tl.program_id(axis=0)
+
+    x_block_ptr = tl.make_block_ptr(
+        x_ptr,
+        shape=(num_elements,),
+        strides=(1,),
+        offsets=(i * BLOCK_SIZE),
+        block_shape=(BLOCK_SIZE,),
+        order=(0,),
+    )
+    x_block = tl.load(x_block_ptr, boundary_check=(0,))
+
     offset = i * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     mask = offset < num_elements
-    x_block = tl.load(x_ptr + offset, mask=mask)
     w_block = tl.load(weight_ptr + offset, mask=mask)
     tl.atomic_add(output_ptr, tl.sum(x_block * w_block))
 
