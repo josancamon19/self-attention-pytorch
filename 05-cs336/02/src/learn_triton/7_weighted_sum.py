@@ -6,46 +6,81 @@ import triton.language as tl
 
 # os.environ["TRITON_INTERPRET"] = "1"
 
+# x_block_ptr = tl.make_block_ptr(
+#     x_ptr,
+#     shape=(num_elements,),
+#     strides=(1,),
+#     offsets=(i * BLOCK_SIZE),
+#     block_shape=(BLOCK_SIZE,),
+#     order=(0,),
+# )
+# x_block = tl.load(x_block_ptr, boundary_check=(0,))
+
 
 @triton.jit
 def weighted_sum_kernel(
     x_ptr,
+    stride_m,
+    stride_n,
     weight_ptr,
     output_ptr,
-    num_elements,
-    BLOCK_SIZE: tl.constexpr,
+    m,
+    n,
+    BLOCK_SIZE_M: tl.constexpr,
+    BLOCK_SIZE_N: tl.constexpr,
 ):
     i = tl.program_id(axis=0)
+    j = tl.program_id(axis=1)
 
-    x_block_ptr = tl.make_block_ptr(
-        x_ptr,
-        shape=(num_elements,),
-        strides=(1,),
-        offsets=(i * BLOCK_SIZE),
-        block_shape=(BLOCK_SIZE,),
-        order=(0,),
-    )
-    x_block = tl.load(x_block_ptr, boundary_check=(0,))
+    offset_m = i * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
+    offset_n = j * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
 
-    offset = i * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    mask = offset < num_elements
-    w_block = tl.load(weight_ptr + offset, mask=mask)
-    tl.atomic_add(output_ptr, tl.sum(x_block * w_block))
+    mask_m = offset_m < m
+    mask_n = offset_n < n
+    mask = mask_m[:, None] & mask_n[None, :]
+
+    x_ptrs = x_ptr + offset_m[:, None] * stride_m + offset_n[None, :] * stride_n
+    x_block = tl.load(x_ptrs, mask=mask)
+    w_block = tl.load(weight_ptr + offset_n, mask=mask_n)
+    tl.atomic_add(output_ptr + offset_m, tl.sum(x_block * w_block, axis=1))
+    # pdb.set_trace()
 
 
 def weighted_sum(x, weight):
-    BLOCK_SIZE = 32
-    N = x.numel()
-    grid = (triton.cdiv(N, BLOCK_SIZE),)
-    output = torch.zeros(1, device=x.device, dtype=x.dtype)
-    weighted_sum_kernel[grid](x, weight, output, N, BLOCK_SIZE)
+    # output_dims = x.shape[:-1]
+    x = x.reshape(-1, x.shape[-1])
+    m, n = x.shape  # mxn
+    assert len(weight.shape) == 1 and weight.shape[0] == n
+    assert x.is_cuda and weight.is_cuda, "Expected CUDA tensors"
+    assert x.is_contiguous(), "Our pointer arithmetic will assume contiguous x"
+
+    output = torch.zeros(m, device=x.device, dtype=x.dtype)
+    BLOCK_SIZE_M = 8
+    BLOCK_SIZE_N = 8
+
+    stride_m, stride_n = x.stride(0), x.stride(1)
+    grid = (triton.cdiv(m, BLOCK_SIZE_M), triton.cdiv(n, BLOCK_SIZE_N))
+
+    weighted_sum_kernel[grid](
+        x,
+        stride_m,
+        stride_n,
+        weight,
+        output,
+        m,
+        n,
+        BLOCK_SIZE_M,
+        BLOCK_SIZE_N,
+    )
     return output
 
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    x = torch.ones((8,), device=device, dtype=torch.float32)
-    weight = torch.rand((8,), device=device, dtype=torch.float32)
+    x = torch.randint(0, 10, (1000, 14000), device=device, dtype=torch.float32)
+    weight = torch.rand((14000,), device=device, dtype=torch.float32)
     output = weighted_sum(x, weight)
-    print("output", output)
-    print("output", torch.sum(x * weight))
+    torch_output = torch.sum(x * weight, axis=-1)
+    print("output ≈ torch_output", torch.allclose(output, torch_output))
+    # print("output", output)
+    # print("output", torch_output)
