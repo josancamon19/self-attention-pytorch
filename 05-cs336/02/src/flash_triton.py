@@ -1,9 +1,11 @@
+import math
+import pdb
 import torch
 
 import triton
 import triton.language as tl
 
-from src.flash_torch import dummy_attention
+from src.flash_torch import dummy_attention, FlashForward as FlashPytorch
 # import os
 # import pdb
 
@@ -103,7 +105,7 @@ class FlashForward(torch.autograd.Function):
         k_tile_size: int = 64,
         debug: bool = False,
     ):
-        has_batch_size = q.shape == 4
+        has_batch_size = len(q.shape) == 4
         if has_batch_size:
             batch_size, num_heads, seq_length, d = q.shape
         else:
@@ -111,10 +113,6 @@ class FlashForward(torch.autograd.Function):
             batch_size = 1
 
         batch_heads = batch_size * num_heads
-
-        reshape = lambda m: m.reshape((batch_heads, seq_length, d))  # noqa: E731
-        q, k, v = reshape(q), reshape(k), reshape(v)
-        # print(q[0, :q_tile_size, :])
 
         l = torch.zeros(
             (batch_heads, seq_length),
@@ -127,6 +125,8 @@ class FlashForward(torch.autograd.Function):
             dtype=q.dtype,
         )
 
+        reshape = lambda m: m.reshape((batch_heads, seq_length, d))  # noqa: E731
+
         grid = (triton.cdiv(seq_length, q_tile_size), batch_heads)
         if debug:
             print("grid:", grid)
@@ -137,9 +137,9 @@ class FlashForward(torch.autograd.Function):
             print(f"o shape: {o.shape}")
 
         flash[grid](
-            q,
-            k,
-            v,
+            reshape(q),
+            reshape(k),
+            reshape(v),
             l,
             o,
             seq_length=seq_length,
@@ -151,18 +151,21 @@ class FlashForward(torch.autograd.Function):
         if not has_batch_size:
             o = o.squeeze(0)
             l = l.squeeze(0)
-            output = o.reshape(num_heads, seq_length, d)
+            o = o.reshape(num_heads, seq_length, d)
         else:
-            output = o.reshape(batch_size, num_heads, seq_length, d)
+            o = o.reshape(batch_size, num_heads, seq_length, d)
+            l = l.reshape(batch_size, num_heads, seq_length)
 
         if debug:
-            print(f"output shape: {output.shape}")
-        ctx.save_for_backward(l)
-        return output
+            print(f"output shape: {o.shape}")
+        ctx.save_for_backward(q, k, v, o, l)
+        ctx.is_causal = is_causal
+        return o
 
     @staticmethod
     def backward(ctx, grad_out):
-        raise NotImplementedError()
+        print("ctx.saved_tensors", len(ctx.saved_tensors))
+        return FlashPytorch.backward(ctx, grad_out)
 
 
 def get_q_k_v():
@@ -180,8 +183,6 @@ def get_q_k_v():
 if __name__ == "__main__":
     flashattn = FlashForward.apply
     q, k, v = get_q_k_v()
-    output = flashattn(q, k, v, False, 16, 16)
-    dummy = dummy_attention(q, k, v)
-    print("output", output)
-    print("output", dummy)
-    print("torch.allclose(output, dummy)", torch.allclose(output, dummy, rtol=0.0001))
+    output = flashattn(q, k, v, True)
+    loss = output.sum()
+    loss.backward()

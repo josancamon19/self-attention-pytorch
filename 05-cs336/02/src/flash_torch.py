@@ -109,13 +109,33 @@ class FlashForward(torch.autograd.Function):
         if not has_batch_size:
             O = O.squeeze(0)
             L = L.squeeze(0)
-            
-        ctx.save_for_backward(L)
+
+        ctx.save_for_backward(q, k, v, O, L)
+        ctx.is_causal = is_causal
+        # ctx.save_for_backward(L)
         return O
 
     @staticmethod
     def backward(ctx, grad_out):
-        raise NotImplementedError()
+        q, k, v, o, l = ctx.saved_tensors
+        D = torch.sum(o * grad_out, dim=-1)
+        scale = 1.0 / math.sqrt(k.shape[-1])
+
+        s = q @ k.transpose(-2, -1) * scale
+
+        if ctx.is_causal:
+            causal_mask = torch.tril(torch.ones_like(s, dtype=torch.bool))
+            s = s.masked_fill(~causal_mask, float("-inf"))
+
+        p = torch.exp(s - l.unsqueeze(-1))
+        grad_v = p.transpose(-2, -1) @ grad_out
+        grad_p = grad_out @ v.transpose(-2, -1)
+        grad_s = p * (grad_p - D.unsqueeze(-1))
+        # pdb.set_trace()
+        grad_q = grad_s @ k * scale
+        grad_k = grad_s.transpose(-2, -1) @ q * scale
+
+        return grad_q, grad_k, grad_v, None, None, None, None
 
 
 def get_q_k_v():
