@@ -230,6 +230,10 @@ class FlashAttention(torch.autograd.Function):
 
 
 def get_q_k_v():
+    # n_heads = 12
+    # d_head = 64
+    # seq_length = 4096
+    
     n_heads = 16
     d_head = 64
     seq_length = 16384
@@ -260,14 +264,12 @@ def flash_benchmarking():
             loss.backward()
         return wrap
 
-    # results = triton.testing.do_bench(benchmark(flash_torch), rep=1000, warmup=100)
-    # print("flash_pytorch:", results)
     results = triton.testing.do_bench(benchmark(flash), rep=10000, warmup=1000)
     print("flash_triton:", results)
-    # results = triton.testing.do_bench(benchmark(dummy_attention), rep=1000, warmup=100)
-    # print("dummy:", results)
-    # results = triton.testing.do_bench(benchmark(dummy_compiled_fn), rep=1000, warmup=100)
-    # print("dummy_compiled:", results)
+    results = triton.testing.do_bench(benchmark(dummy_attention), rep=10000, warmup=100)
+    print("dummy:", results)
+    results = triton.testing.do_bench(benchmark(dummy_compiled_fn), rep=10000, warmup=100)
+    print("dummy_compiled:", results)
 
 
 if __name__ == "__main__":
