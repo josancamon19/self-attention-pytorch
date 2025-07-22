@@ -22,6 +22,7 @@ def flash(
     o_ptr,
     seq_length: tl.constexpr,
     head_dim: tl.constexpr,
+    is_causal: tl.constexpr,
     BLOCK_SIZE_Q: tl.constexpr,
     BLOCK_SIZE_K: tl.constexpr,
 ):
@@ -58,6 +59,12 @@ def flash(
         # tl.device_print("v_tile", v_tile)
 
         attn_scores = tl.dot(q_tile.to(tl.float16), tl.trans(k_tile).to(tl.float16)) * scale
+
+        if is_causal:
+            q_indices = qm_offset  # [BLOCK_SIZE_Q, 1]
+            k_indices = j * BLOCK_SIZE_K + tl.arange(0, BLOCK_SIZE_K)[None, :]  # [1, BLOCK_SIZE_K]
+            causal_mask = q_indices >= k_indices  # True where attention is allowed
+            attn_scores = tl.where(causal_mask, attn_scores, float("-inf"))
         # tl.device_print("attn_scores", attn_scores)
 
         rowmax = tl.max(attn_scores, axis=1)
@@ -92,10 +99,17 @@ class FlashForward(torch.autograd.Function):
         k: torch.Tensor,
         v: torch.Tensor,
         is_causal: bool = False,
-        q_tile_size: int = 16,
-        k_tile_size: int = 16,
+        q_tile_size: int = 64,
+        k_tile_size: int = 64,
+        debug: bool = False,
     ):
-        batch_size, num_heads, seq_length, d = q.shape
+        has_batch_size = q.shape == 4
+        if has_batch_size:
+            batch_size, num_heads, seq_length, d = q.shape
+        else:
+            num_heads, seq_length, d = q.shape
+            batch_size = 1
+
         batch_heads = batch_size * num_heads
 
         reshape = lambda m: m.reshape((batch_heads, seq_length, d))  # noqa: E731
@@ -114,12 +128,14 @@ class FlashForward(torch.autograd.Function):
         )
 
         grid = (triton.cdiv(seq_length, q_tile_size), batch_heads)
-        print("grid:", grid)
-        print(f"q shape: {q.shape}")
-        print(f"k shape: {k.shape}")
-        print(f"v shape: {v.shape}")
-        print(f"l shape: {l.shape}")
-        print(f"o shape: {o.shape}")
+        if debug:
+            print("grid:", grid)
+            print(f"q shape: {q.shape}")
+            print(f"k shape: {k.shape}")
+            print(f"v shape: {v.shape}")
+            print(f"l shape: {l.shape}")
+            print(f"o shape: {o.shape}")
+
         flash[grid](
             q,
             k,
@@ -128,12 +144,20 @@ class FlashForward(torch.autograd.Function):
             o,
             seq_length=seq_length,
             head_dim=d,
+            is_causal=is_causal,
             BLOCK_SIZE_Q=q_tile_size,
             BLOCK_SIZE_K=k_tile_size,
         )
+        if not has_batch_size:
+            o = o.squeeze(0)
+            l = l.squeeze(0)
+            output = o.reshape(num_heads, seq_length, d)
+        else:
+            output = o.reshape(batch_size, num_heads, seq_length, d)
+
+        if debug:
+            print(f"output shape: {output.shape}")
         ctx.save_for_backward(l)
-        output = o.reshape(batch_size, num_heads, seq_length, d)
-        print(f"output shape: {output.shape}")
         return output
 
     @staticmethod
