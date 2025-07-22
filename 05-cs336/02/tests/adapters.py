@@ -5,7 +5,7 @@ from typing import Type
 import torch
 
 from src.flash_torch import FlashForward
-from src.flash_triton import FlashForward as FlashForwardTriton
+from src.flash_triton import FlashAttention as FlashForwardTriton
 
 
 def get_flashattention_autograd_function_pytorch() -> Type:
