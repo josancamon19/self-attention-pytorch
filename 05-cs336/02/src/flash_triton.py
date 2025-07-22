@@ -4,7 +4,7 @@ import torch
 import triton
 import triton.language as tl
 
-from src.flash_torch import dummy_attention
+from src.flash_torch import dummy_attention, FlashForward as FlashPytorch
 import os
 
 # os.environ["TRITON_INTERPRET"] = "1"
@@ -93,8 +93,8 @@ def flash(
             # tl.device_print("k_tile", k_tile)  # shape?
             # tl.device_print("v_tile", v_tile)
 
-            # attn_scores = tl.dot(q_tile.to(tl.float16), tl.trans(k_tile).to(tl.float16)) * scale
-            attn_scores = tl.dot(q_tile, tl.trans(k_tile)) * scale
+            attn_scores = tl.dot(q_tile.to(tl.float16), tl.trans(k_tile).to(tl.float16)) * scale
+            # attn_scores = tl.dot(q_tile, tl.trans(k_tile)) * scale
 
             if is_causal:
                 q_indices = qm_offset  # [BLOCK_SIZE_Q, 1]
@@ -108,8 +108,8 @@ def flash(
             mi = tl.maximum(mi, rowmax)
             pj = tl.exp(attn_scores - mi[:, None])
             li = tl.exp(prev_mi - mi) * li + tl.sum(pj, axis=-1)
-            # oi = tl.exp(prev_mi - mi)[:, None] * oi + tl.dot(pj.to(tl.float16), v_tile.to(tl.float16))
-            oi = tl.exp(prev_mi - mi)[:, None] * oi + tl.dot(pj.to(v_tile.dtype), v_tile)
+            oi = tl.exp(prev_mi - mi)[:, None] * oi + tl.dot(pj.to(tl.float16), v_tile.to(tl.float16))
+            # oi = tl.exp(prev_mi - mi)[:, None] * oi + tl.dot(pj.to(v_tile.dtype), v_tile)
 
     # tl.device_print("oi_before_div", oi)
     oi = oi / li[:, None]
@@ -224,16 +224,19 @@ class FlashAttention(torch.autograd.Function):
 
 
 def get_q_k_v():
-    n_heads = 16
+    # embedding_dim = 1024, ~ /16 = 64
+    n_heads = 12
     d_head = 64
-    seq_length = 16384
+    # seq_length = 16384
+    seq_length = 512
     q, k, v = torch.randn(
         3,
         n_heads,
         seq_length,
         d_head,
         device="cuda",
-        dtype=torch.bfloat16,
+        # dtype=torch.bfloat16,
+        dtype=torch.float16,
         requires_grad=True,
     )
     return q, k, v
@@ -242,19 +245,29 @@ def get_q_k_v():
 def flash_benchmarking():
     q, k, v = get_q_k_v()
     flash = torch.compile(FlashAttention.apply)
+    flash_torch = torch.compile(FlashPytorch.apply)
 
-    def flash_forward_backward():
+    def flahs_triton():
         o = flash(q, k, v, True)
         loss = o.sum()
         loss.backward()
 
-    def dummy_forward_backward():
+    def flash_pytorch():
+        o = flash_torch(q, k, v, True)
+        loss = o.sum()
+        loss.backward()
+
+    def dummy():
         o = dummy_attention(q, k, v, True)
         loss = o.sum()
         loss.backward()
 
-    results = triton.testing.do_bench(flash_forward_backward, rep=10000, warmup=1000)
-    print(results)
+    results = triton.testing.do_bench(flahs_triton, rep=10000, warmup=1000)
+    print("flash_triton:", results)
+    results = triton.testing.do_bench(flash_pytorch, rep=10000, warmup=1000)
+    print("flash_pytorch:", results)
+    results = triton.testing.do_bench(dummy, rep=10000, warmup=1000)
+    print("dummy:", results)
 
 
 if __name__ == "__main__":
