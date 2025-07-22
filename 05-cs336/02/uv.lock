@@ -198,39 +198,6 @@ requires-dist = [
 ]
 
 [[package]]
-name = "cs336-systems"
-version = "1.0.4"
-source = { editable = "." }
-dependencies = [
-    { name = "cs336-basics" },
-    { name = "humanfriendly" },
-    { name = "matplotlib" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "pytest" },
-    { name = "regex" },
-    { name = "torch", version = "2.2.2", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
-    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
-    { name = "tqdm" },
-    { name = "wandb" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cs336-basics", editable = "cs336-basics" },
-    { name = "humanfriendly" },
-    { name = "matplotlib" },
-    { name = "numpy" },
-    { name = "pandas", specifier = ">=2" },
-    { name = "pytest", specifier = ">=8" },
-    { name = "regex", specifier = ">=2024.11.6" },
-    { name = "torch", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'", specifier = "~=2.6.0" },
-    { name = "torch", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'", specifier = "~=2.2.2" },
-    { name = "tqdm", specifier = ">=4.67.1" },
-    { name = "wandb", specifier = ">=0.19.7" },
-]
-
-[[package]]
 name = "cycler"
 version = "0.12.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1230,6 +1197,39 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/44/cd/a040c4b3119bbe532e5b0732286f805445375489fceaec1f48306068ee3b/smmap-5.0.2.tar.gz", hash = "sha256:26ea65a03958fa0c8a1c7e8c7a58fdc77221b8910f6be2131affade476898ad5", size = 22329, upload-time = "2025-01-02T07:14:40.909Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/04/be/d09147ad1ec7934636ad912901c5fd7667e1c858e19d355237db0d0cd5e4/smmap-5.0.2-py3-none-any.whl", hash = "sha256:b30115f0def7d7531d22a0fb6502488d879e75b260a9db4d0819cfb25403af5e", size = 24303, upload-time = "2025-01-02T07:14:38.724Z" },
+]
+
+[[package]]
+name = "src"
+version = "1.0.4"
+source = { editable = "." }
+dependencies = [
+    { name = "cs336-basics" },
+    { name = "humanfriendly" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pytest" },
+    { name = "regex" },
+    { name = "torch", version = "2.2.2", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "tqdm" },
+    { name = "wandb" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cs336-basics", editable = "cs336-basics" },
+    { name = "humanfriendly" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "pandas", specifier = ">=2" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "regex", specifier = ">=2024.11.6" },
+    { name = "torch", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'", specifier = "~=2.6.0" },
+    { name = "torch", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'", specifier = "~=2.2.2" },
+    { name = "tqdm", specifier = ">=4.67.1" },
+    { name = "wandb", specifier = ">=0.19.7" },
 ]
 
 [[package]]
