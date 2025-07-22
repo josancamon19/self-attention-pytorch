@@ -61,9 +61,7 @@ def flash(
     bh = tl.program_id(1)  # batch * head
 
     q_start = q * BLOCK_SIZE_Q
-    if is_causal and q_start >= seq_length:
-        return
-    
+
     qm_offset = q_start + tl.arange(0, BLOCK_SIZE_Q)[:, None]
     qn_offset = tl.arange(0, head_dim)[None, :]
 
@@ -79,36 +77,39 @@ def flash(
     scale = 1.0 / tl.sqrt(float(head_dim))
 
     for j in range(0, tl.cdiv(seq_length, BLOCK_SIZE_K)):
-        kvm_offset = j * BLOCK_SIZE_K + tl.arange(0, BLOCK_SIZE_K)[:, None]
-        kvn_offset = tl.arange(0, head_dim)[None, :]
+        k_start = j * BLOCK_SIZE_K
+        should_process = not (is_causal and q_start > k_start + BLOCK_SIZE_K - 1)
+        if should_process:
+            kvm_offset = k_start + tl.arange(0, BLOCK_SIZE_K)[:, None]
+            kvn_offset = tl.arange(0, head_dim)[None, :]
 
-        k_ptrs = k_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
-        v_ptrs = v_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
+            k_ptrs = k_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
+            v_ptrs = v_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
 
-        kv_mask = (kvm_offset < seq_length) & (kvn_offset < head_dim)
-        k_tile = tl.load(k_ptrs, mask=kv_mask, other=0.0)
-        v_tile = tl.load(v_ptrs, mask=kv_mask, other=0.0)
+            kv_mask = (kvm_offset < seq_length) & (kvn_offset < head_dim)
+            k_tile = tl.load(k_ptrs, mask=kv_mask, other=0.0)
+            v_tile = tl.load(v_ptrs, mask=kv_mask, other=0.0)
 
-        # tl.device_print("k_tile", k_tile)  # shape?
-        # tl.device_print("v_tile", v_tile)
+            # tl.device_print("k_tile", k_tile)  # shape?
+            # tl.device_print("v_tile", v_tile)
 
-        # attn_scores = tl.dot(q_tile.to(tl.float16), tl.trans(k_tile).to(tl.float16)) * scale
-        attn_scores = tl.dot(q_tile, tl.trans(k_tile)) * scale
+            # attn_scores = tl.dot(q_tile.to(tl.float16), tl.trans(k_tile).to(tl.float16)) * scale
+            attn_scores = tl.dot(q_tile, tl.trans(k_tile)) * scale
 
-        if is_causal:
-            q_indices = qm_offset  # [BLOCK_SIZE_Q, 1]
-            k_indices = j * BLOCK_SIZE_K + tl.arange(0, BLOCK_SIZE_K)[None, :]  # [1, BLOCK_SIZE_K]
-            causal_mask = q_indices >= k_indices  # True where attention is allowed
-            attn_scores = tl.where(causal_mask, attn_scores, float("-inf"))
-        # tl.device_print("attn_scores", attn_scores)
+            if is_causal:
+                q_indices = qm_offset  # [BLOCK_SIZE_Q, 1]
+                k_indices = k_start + tl.arange(0, BLOCK_SIZE_K)[None, :]  # [1, BLOCK_SIZE_K]
+                causal_mask = q_indices >= k_indices  # True where attention is allowed
+                attn_scores = tl.where(causal_mask, attn_scores, float("-inf"))
+            # tl.device_print("attn_scores", attn_scores)
 
-        rowmax = tl.max(attn_scores, axis=1)
-        prev_mi = mi
-        mi = tl.maximum(mi, rowmax)
-        pj = tl.exp(attn_scores - mi[:, None])
-        li = tl.exp(prev_mi - mi) * li + tl.sum(pj, axis=-1)
-        # oi = tl.exp(prev_mi - mi)[:, None] * oi + tl.dot(pj.to(tl.float16), v_tile.to(tl.float16))
-        oi = tl.exp(prev_mi - mi)[:, None] * oi + tl.dot(pj.to(v_tile.dtype), v_tile)
+            rowmax = tl.max(attn_scores, axis=1)
+            prev_mi = mi
+            mi = tl.maximum(mi, rowmax)
+            pj = tl.exp(attn_scores - mi[:, None])
+            li = tl.exp(prev_mi - mi) * li + tl.sum(pj, axis=-1)
+            # oi = tl.exp(prev_mi - mi)[:, None] * oi + tl.dot(pj.to(tl.float16), v_tile.to(tl.float16))
+            oi = tl.exp(prev_mi - mi)[:, None] * oi + tl.dot(pj.to(v_tile.dtype), v_tile)
 
     # tl.device_print("oi_before_div", oi)
     oi = oi / li[:, None]
