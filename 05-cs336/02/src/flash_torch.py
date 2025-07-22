@@ -19,13 +19,19 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # - see each one of them in nsight sys
 
 
-def dummy_attention(q, k, v):
-    start = timeit.default_timer()
+def dummy_attention(q, k, v, is_causal=False):
+    # start = timeit.default_timer()
     scale = 1.0 / math.sqrt(k.shape[-1])
-    attn_scores = torch.softmax(q @ k.transpose(-2, -1) * scale, dim=-1)
-    output = attn_scores @ v
-    torch.cuda.synchronize()
-    print(f"dummy_attention took {timeit.default_timer() - start} seconds")
+    attn_scores = q @ k.transpose(-2, -1) * scale
+
+    if is_causal:
+        mask = torch.tril(torch.ones_like(attn_scores, dtype=torch.bool))
+        attn_scores = attn_scores.masked_fill(~mask, float("-inf"))
+
+    attn_weights = torch.softmax(attn_scores, dim=-1)
+    output = attn_weights @ v
+    # torch.cuda.synchronize()
+    # print(f"dummy_attention took {timeit.default_timer() - start} seconds")
     return output
 
 
