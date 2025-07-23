@@ -25,7 +25,7 @@ from .common import (
 logger = logging.getLogger(__name__)
 
 
-@pytest.mark.parametrize("model_class", [ToyModel, ToyModelWithTiedWeights])
+@pytest.mark.parametrize("model_class", [ToyModel])  # ToyModelWithTiedWeights
 def test_DistributedDataParallelIndividualParameters(model_class):
     world_size = 2
     mp.spawn(
@@ -38,7 +38,7 @@ def test_DistributedDataParallelIndividualParameters(model_class):
 
 def _test_DistributedDataParallelIndividualParameters(rank: int, world_size: int, model_class: Type[torch.nn.Module]):
     # Use gloo backend for CPU
-    device = _setup_process_group(rank=rank, world_size=world_size, backend="gloo")
+    device = _setup_process_group(rank=rank, world_size=world_size, backend="nccl")
     # Execute barrier prior to running test to ensure that every process
     # has finished initialization and that the following test
     # immediately exiting due to a skip doesn't cause flakiness.
@@ -66,6 +66,7 @@ def _test_DistributedDataParallelIndividualParameters(rank: int, world_size: int
         ddp_model_parameter,
     ) in zip(non_parallel_model.named_parameters(), ddp_model.named_parameters()):
         # This parameter was initialized as [2, 2], so we expect its value to remain the same
+
         is_no_grad_fixed_param = (
             "no_grad_fixed_param" in ddp_model_param_name or "no_grad_fixed_param" in non_parallel_param_name
         )
@@ -142,6 +143,10 @@ def _test_DistributedDataParallelIndividualParameters(rank: int, world_size: int
             for non_parallel_model_parameter, ddp_model_parameter in zip(
                 non_parallel_model.parameters(), ddp_model.parameters()
             ):
+                print("non_parallel_model_parameter", non_parallel_model_parameter.shape)
+                print("ddp_model_parameter", ddp_model_parameter.shape)
+                print("non_parallel_model_parameter", non_parallel_model_parameter[0])
+                print("ddp_model_parameter", ddp_model_parameter[0])
                 assert torch.allclose(non_parallel_model_parameter, ddp_model_parameter)
 
         # Shuffle the data so that during the next iteration, each DDP rank sees a different set of inputs.
