@@ -36,7 +36,7 @@ class Linear(nn.Module):
             nn.init.trunc_normal_(torch.empty(d_out, d_in), std=std, a=-3 * std, b=3 * std), requires_grad=True
         )
 
-    @nvtx.range("Linear.forward")
+    # @nvtx.range("Linear.forward")
     def forward(self, x: Float[Tensor, " ... d_in"]) -> Float[Tensor, " ... d_out"]:
         return einsum(x, self.weight, "... d_in, d_out d_in -> ... d_out")
 
@@ -52,7 +52,7 @@ class Embedding(nn.Module):
             nn.init.trunc_normal_(torch.empty(vocab_size, d_model), std=std, a=-3 * std, b=3 * std), requires_grad=True
         )
 
-    @nvtx.range("Embedding.forward")
+    # @nvtx.range("Embedding.forward")
     def forward(self, token_ids: Int[Tensor, " ..."]) -> Float[Tensor, " ... d_model"]:
         return self.weight[token_ids, :]
 
@@ -85,7 +85,7 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(hidden_size, device=device))
         self.eps = eps
 
-    @nvtx.range("RMS.forward")
+    # @nvtx.range("RMS.forward")
     def forward(self, x):
         """
         Args:
@@ -131,7 +131,7 @@ class RotaryEmbedding(nn.Module):
         cos, sin = torch.cos(freqs), torch.sin(freqs)
         return torch.stack((cos, sin))
 
-    @nvtx.range("RoPE")
+    # @nvtx.range("RoPE")
     def forward(self, x: Float[Tensor, " ... seq d"], pos_ids: Int[Tensor, " ... seq"]) -> Float[Tensor, " ... seq d"]:
         x1, x2 = rearrange(x, "... (half_d xy) -> xy ... half_d", xy=2)
 
@@ -225,7 +225,7 @@ class BasicsTransformerLM(nn.Module):
 
         return n_params
 
-    @nvtx.range("BasicTransformerLM.forward")
+    # @nvtx.range("BasicTransformerLM.forward")
     def forward(self, x: Int[Tensor, " ... sequence_length"]) -> Float[Tensor, " ... sequence_length vocab_size"]:
         """
         Args:
@@ -245,9 +245,9 @@ class BasicsTransformerLM(nn.Module):
             x = layer(x)
 
         # (batch size, sequence_length, d_model)
-        nvtx.mark(f"BasicsTransformerLM.x dtype: {x.dtype}")
+        # nvtx.mark(f"BasicsTransformerLM.x dtype: {x.dtype}")
         x = self.ln_final(x)
-        nvtx.mark(f"BasicsTransformerLM.ln_x dtype: {x.dtype}")
+        # nvtx.mark(f"BasicsTransformerLM.ln_x dtype: {x.dtype}")
 
         # (batch size, sequence_length, vocab_size)
         return self.lm_head(x)
@@ -365,7 +365,7 @@ class TransformerBlock(nn.Module):
         self.ln1 = RMSNorm(d_model)
         self.ln2 = RMSNorm(d_model)
 
-    @nvtx.range("TFBlock.forward")
+    # @nvtx.range("TFBlock.forward")
     def forward(self, x: torch.Tensor):
         """
         Args:
@@ -394,12 +394,12 @@ class SwiGLU(nn.Module):
         self.w2 = Linear(d_ff, d_model)
         self.w3 = Linear(d_model, d_ff)
 
-    @nvtx.range("SwiGLU.forward")
+    # @nvtx.range("SwiGLU.forward")
     def forward(self, x):
         return self.w2(silu(self.w1(x)) * self.w3(x))
 
 
-@nvtx.range("scaled_dot_product_attention")
+# @nvtx.range("scaled_dot_product_attention")
 def scaled_dot_product_attention(
     Q: Float[Tensor, " ... queries d_k"],
     K: Float[Tensor, " ... keys    d_k"],
@@ -407,19 +407,19 @@ def scaled_dot_product_attention(
     mask: Bool[Tensor, " ... queries keys"] | None = None,
 ) -> Float[Tensor, " ... queries d_v"]:
     d_k = K.shape[-1]
-    with nvtx.range("computing attention scores"):
-        attention_scores = einsum(Q, K, "... query d_k, ... key d_k -> ... query key") / math.sqrt(d_k)
-        nvtx.mark(f"attention_scores dtype: {attention_scores.dtype}")
+    # with nvtx.range("computing attention scores"):
+    attention_scores = einsum(Q, K, "... query d_k, ... key d_k -> ... query key") / math.sqrt(d_k)
+    # nvtx.mark(f"attention_scores dtype: {attention_scores.dtype}")
 
     if mask is not None:
         attention_scores = torch.where(mask, attention_scores, float("-inf"))
 
-    with nvtx.range("computing attention softmax"):
-        attention_weights = softmax(attention_scores, dim=-1)  # Softmax over the key dimension
-        nvtx.mark(f"attention_weights dtype: {attention_scores.dtype}")
+    # with nvtx.range("computing attention softmax"):
+    attention_weights = softmax(attention_scores, dim=-1)  # Softmax over the key dimension
+    # nvtx.mark(f"attention_weights dtype: {attention_scores.dtype}")
 
-    with nvtx.range("computing attention_weights @ V"):
-        output = einsum(attention_weights, V, "... query key, ... key d_v ->  ... query d_v")
+    # with nvtx.range("computing attention_weights @ V"):
+    output = einsum(attention_weights, V, "... query key, ... key d_v ->  ... query d_v")
     return output
 
 
