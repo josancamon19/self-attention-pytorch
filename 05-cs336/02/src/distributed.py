@@ -180,6 +180,12 @@ def model_fn():
 # TODO: check sync timing computation correctness when overlapping
 # TODO: fix gloo division when overlapping.
 # TODO: test in actual GPU's
+# TODO: more accurate profiling
+# TODO: check overall correctness
+# TOOD: profile with nsight systems
+# TODO: benchmark this in XL dimensions, 2 GPU's
+
+# TODO: 2.3.3 ddp overlapping bucketed
 
 
 if __name__ == "__main__":
