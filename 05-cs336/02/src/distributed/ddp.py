@@ -10,15 +10,19 @@ import torch.cuda.nvtx as nvtx
 
 
 class OptimizationType(enum.Enum):
-    NONE = "none"
-    FLATTEN = "flatten"
-    OVERLAPPING = "overlapping"
-    OVERLAPPING_BUCKETED = "bucketed"
+    NONE = "none" # compute backward + comm each param grad independently
+    FLATTEN = "flatten" # compute backward + make 1 single send of params
+    OVERLAPPING = "overlapping" # include a hook when a param grad is ready, and communicate in parallel while others compute
+    OVERLAPPING_BUCKETED = "bucketed" # similar to OVERLAPPING, but doing it in groups of params, ~ not clear to me why it'd be better, but there it is.
 
 
-def get_model(seq_length: int = 512):
+batch_size = 16
+seq_length = 512
+
+
+def get_model():
     # XL dimensions
-    vocab_size, seq_length, d_model, num_layers, num_heads, dff, rope_t = 10000, 512, 1600, 48, 25, 6400, 10000
+    vocab_size, d_model, num_layers, num_heads, dff, rope_t = 10000, 1600, 48, 25, 6400, 10000
     return BasicsTransformerLM(vocab_size, seq_length, d_model, num_layers, num_heads, dff, rope_t)
 
 
@@ -65,11 +69,10 @@ def train_ddp(
         curr_bucket = []
         curr_size_bytes = 0
         bucket_size_bytes = bucket_size_mb * 1024 * 1024
-        params = list(reversed(model.parameters()))
+        params = reversed(list(model.parameters()))
         for param in params:
-            param_size = param.numel() * param.element_size()  # Not hard-coded 4
+            param_size = param.numel() * param.element_size() # * 4, cause grads are fp32 always (?)
 
-            # Check if adding this param would exceed limit
             if curr_bucket and curr_size_bytes + param_size > bucket_size_bytes:
                 buckets.append(curr_bucket)
                 curr_bucket = [param]
@@ -80,6 +83,10 @@ def train_ddp(
 
         if curr_bucket:
             buckets.append(curr_bucket)
+        
+        if rank == 0:
+            print(f"{optimization_type} len(buckets):",len(buckets))
+            # print("- buckets[len]", [len(b) for b in buckets])
 
     param_to_bucket = {}
     for bucket_idx, bucket in enumerate(buckets):
@@ -88,7 +95,7 @@ def train_ddp(
 
     # ==== setup overlapping comm hooks ====
     hook_handles = []
-
+    hook_buckets_data = [] # (bucket_grads, flatten)
     buckets_items_ready = {i: 0 for i in range(len(buckets))}
 
     def hook(p: torch.nn.Parameter):
@@ -104,7 +111,7 @@ def train_ddp(
                     bucket_grads = [p.grad for p in buckets[bucket_idx]]
                     flatten = torch._utils._flatten_dense_tensors(bucket_grads)
                     hook_handles.append(dist.all_reduce(flatten, op=dist.ReduceOp.AVG, async_op=True))
-                    # TODO: store bucket_grads as well so you can reassign later
+                    hook_buckets_data.append((bucket_grads, flatten, bucket_idx))
 
     if optimization_type in [OptimizationType.OVERLAPPING, OptimizationType.OVERLAPPING_BUCKETED]:
         [p.register_post_accumulate_grad_hook(hook) for p in model.parameters()]
@@ -133,9 +140,16 @@ def train_ddp(
         hook_handles.clear()
 
     elif optimization_type == OptimizationType.OVERLAPPING_BUCKETED:
-        [handle.wait() for handle in hook_handles]
+        for i, handle in enumerate(hook_handles):
+            handle.wait()
+            
+            bucket_grads, flatten, bucket_idx = hook_buckets_data[i]
+            unflattened_grads = torch._utils._unflatten_dense_tensors(flatten, bucket_grads)
+            for param, new_grad in zip(buckets[bucket_idx], unflattened_grads):
+                param.grad = new_grad
+            
         hook_handles.clear()
-        # TODO: take bucketed results, and reassign
+        hook_buckets_data.clear()
 
     else:
         [
@@ -156,9 +170,6 @@ def train_ddp(
     dist.destroy_process_group()
 
 
-# TODO: profile with nsight systems
-
-
 if __name__ == "__main__":
     gpu_count = torch.cuda.device_count()
     for optimization_type in OptimizationType:
@@ -166,7 +177,7 @@ if __name__ == "__main__":
         with nvtx.range(f"Optimization: {optimization_type.value}"):
             mp.spawn(
                 train_ddp,
-                args=(gpu_count, get_model, (16 // gpu_count, 512), torch.long, optimization_type),
+                args=(gpu_count, get_model, (batch_size // gpu_count, seq_length), torch.long, optimization_type, "nccl", 100),
                 nprocs=gpu_count,
                 join=True,
             )
