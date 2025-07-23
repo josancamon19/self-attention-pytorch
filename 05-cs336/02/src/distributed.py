@@ -76,6 +76,7 @@ def train_ddp(
     _: int,
     input_dimensions: tuple,
     input_dtype: torch.dtype,
+    flatten_comm: bool = False,
     backend: str = "gloo",
 ):
     setup(rank, world_size, backend)
@@ -83,41 +84,47 @@ def train_ddp(
     model.train()
 
     rand_inp = torch.randint(0, 10, input_dimensions, dtype=input_dtype)
-    if rank == 0:
-        print("rand_inp", rand_inp.shape)
-
     start = timeit.default_timer()
 
     output = model(rand_inp)
     loss = output.sum()
     loss.backward()
-    print(f"rank={rank}, loss={loss.item()}")
+    # print(f"rank={rank}, loss={loss.item()}")
 
     start_sync = timeit.default_timer()
-
-    for p in model.parameters():
-        if p.grad is None:
-            continue
-
-        # if rank == 0:
-        #     print(f"rank={rank}, param shape: {p.shape}, grad shape: {p.grad.shape}")
-
+    if flatten_comm:
+        grads = [p.grad for p in model.parameters() if p.grad is not None]
+        flatten = torch._utils._flatten_dense_tensors(grads)
         if backend == "gloo":
-            dist.all_reduce(p.grad, op=dist.ReduceOp.SUM, async_op=False)
-            p.grad /= world_size
+            dist.all_reduce(flatten, op=dist.ReduceOp.SUM, async_op=False)
+            flatten /= world_size
         else:
-            dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, async_op=False)
+            dist.all_reduce(flatten, op=dist.ReduceOp.AVG, async_op=False)
+
+        torch._utils._unflatten_dense_tensors(flatten, grads)
+
+    else:
+        for p in model.parameters():
+            if p.grad is None:
+                continue
+
+            if backend == "gloo":
+                dist.all_reduce(p.grad, op=dist.ReduceOp.SUM, async_op=False)
+                p.grad /= world_size
+            else:
+                dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, async_op=False)
 
     if torch.cuda.is_available() == "cuda":
         torch.cuda.synchronize()
+
     sync_time = timeit.default_timer() - start_sync
     if rank == 0:
         print("syncing gradients took:", sync_time, "seconds")
 
-    # dist.all_reduce(loss, op=dist.ReduceOp.SUM, async_op=False)
-    # loss /= world_size
+    dist.all_reduce(loss, op=dist.ReduceOp.SUM, async_op=False)
+    loss /= world_size
     if rank == 0:
-        # print("avg loss:", loss)
+        print("avg loss:", loss)
         total = timeit.default_timer() - start
         print("total training time:", total, "sync took", sync_time / total * 100, "%")
 
@@ -127,6 +134,19 @@ def train_ddp(
 # model_fn = lambda: ToyModel(16, 4)  # noqa: E731
 def model_fn():
     return BasicsTransformerLM(10000, 256, 512, 6, 8, 704, 10000)
+
+
+# ======= 2.3 Improving Naive DDP ========
+
+# above limitations
+# - separate all reduce for each tensor
+# - backward pass can be computed + sent in parallel, overlapping, we can start comm while it's computing others
+
+# Deliverable: The measured time per training iteration and time spent communicating gradients
+# under distributed data parallel training with a single batched all-reduce call. 1-2 sentences comparing
+# the results when batching vs. individually communicating gradients.
+
+
 
 
 if __name__ == "__main__":
@@ -141,14 +161,7 @@ if __name__ == "__main__":
 
     mp.spawn(
         train_ddp,
-        args=(
-            world_size,
-            model_fn,
-            batch_size,
-            inp_dimensions,
-            torch.long,
-            "gloo",
-        ),
+        args=(world_size, model_fn, batch_size, inp_dimensions, torch.long, True, "gloo"),
         nprocs=world_size,
         join=True,
     )
