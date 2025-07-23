@@ -66,6 +66,18 @@ def flash(
     bh = tl.program_id(1)  # batch * head
 
     q_start = q * BLOCK_SIZE_Q
+    # Marcel
+    # - make_block_ptr, give as many hints to the compiler about structure, shape, accesses, so it optimizes better
+    # - Know roughly how much memory you can fit in, how big can my tile be, how much register memory you have per core.
+    # - master branch triton, has better debugging and some experimental features
+    # - tl.swizzling2d
+    # - no proper strides, and you are not asserting for contiguous
+    # - threads in a block
+    # - - the compiler takes block level ops, a thread is doing register level operation
+    # - H100 optimizations, piece of hardware in the gpu, index math, separate from tensor cores + async
+    # - - index math = offsets, tile indices, where those are in memory, make_block_ptr handles this.
+    # - num_warps: 4, num_ctas: 1, num_stages: 4
+    # - performance nsights compute
 
     qm_offset = q_start + tl.arange(0, BLOCK_SIZE_Q)[:, None]
     qn_offset = tl.arange(0, head_dim)[None, :]
@@ -84,7 +96,9 @@ def flash(
     for j in range(0, tl.cdiv(seq_length, BLOCK_SIZE_K)):
         k_start = j * BLOCK_SIZE_K
         should_process = not (is_causal and q_start > k_start + BLOCK_SIZE_K - 1)
+        # TODO: instead the for loop should be smaller
         if should_process:
+            # this would affect once you launch more than # of SMs so they can move on to other processes
             kvm_offset = k_start + tl.arange(0, BLOCK_SIZE_K)[:, None]
             kvn_offset = tl.arange(0, head_dim)[None, :]
 

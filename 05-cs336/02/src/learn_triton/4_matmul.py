@@ -15,6 +15,9 @@ def get_cuda_autotune_config():
     def config_item(m, n, k, g, ns, nw):
         return triton.Config(
             {"BLOCK_SIZE_M": m, "BLOCK_SIZE_N": n, "BLOCK_SIZE_K": k},  # , "GROUP_SIZE_M": g
+            # Marcel>
+            # group your tiles, for a LRU Cache sort of, thing stayed for a bit in L2, so group your tiles so they execute
+            # more frequently
             num_stages=ns,
             num_warps=nw,
         )
@@ -64,8 +67,8 @@ def matmul_kernel(
     BLOCK_SIZE_K: tl.constexpr,
     BLOCK_SIZE_N: tl.constexpr,
 ):
-    i = tl.program_id(axis=0)
-    j = tl.program_id(axis=1)
+    i = tl.program_id(axis=0) # 2
+    j = tl.program_id(axis=1) # 
 
     m_offset = i * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
     n_offset = j * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
