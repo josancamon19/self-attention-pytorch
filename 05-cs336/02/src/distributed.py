@@ -69,6 +69,15 @@ class ToyModel(torch.nn.Module):
         return self.l2(self.relu(self.l1(x.to(torch.float32))))
 
 
+import enum  # noqa: E402
+
+
+class OptimizationType(enum.Enum):
+    NONE = "none"
+    FLATTEN = "flatten"
+    OVERLAPPING = "overlapping"
+
+
 def train_ddp(
     rank: int,
     world_size: int,
@@ -76,7 +85,7 @@ def train_ddp(
     _: int,
     input_dimensions: tuple,
     input_dtype: torch.dtype,
-    flatten_comm: bool = False,
+    optimization_type: OptimizationType = OptimizationType.NONE,
     backend: str = "gloo",
 ):
     setup(rank, world_size, backend)
@@ -88,11 +97,27 @@ def train_ddp(
 
     output = model(rand_inp)
     loss = output.sum()
+
+    hook_handles = []
+
+    def hook(p: torch.nn.Parameter):
+        if p.grad is None:
+            return
+        if backend == "gloo":
+            # p.grad /= world_size # TODO: extra dumb comp for later
+            hook_handles.append(dist.all_reduce(p.grad, op=dist.ReduceOp.SUM, async_op=True))
+        else:
+            hook_handles.append(dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, async_op=True))
+
+    if optimization_type == OptimizationType.OVERLAPPING:
+        for p in model.parameters():
+            p.register_post_accumulate_grad_hook(hook)
+
     loss.backward()
     # print(f"rank={rank}, loss={loss.item()}")
 
     start_sync = timeit.default_timer()
-    if flatten_comm:
+    if optimization_type == OptimizationType.FLATTEN:
         grads = [p.grad for p in model.parameters() if p.grad is not None]
         flatten = torch._utils._flatten_dense_tensors(grads)
         if backend == "gloo":
@@ -102,6 +127,11 @@ def train_ddp(
             dist.all_reduce(flatten, op=dist.ReduceOp.AVG, async_op=False)
 
         torch._utils._unflatten_dense_tensors(flatten, grads)
+
+    elif optimization_type == OptimizationType.OVERLAPPING:
+        for handle in hook_handles:
+            handle.wait()
+        hook_handles.clear()
 
     else:
         for p in model.parameters():
@@ -146,7 +176,10 @@ def model_fn():
 # under distributed data parallel training with a single batched all-reduce call. 1-2 sentences comparing
 # the results when batching vs. individually communicating gradients.
 
-
+# TODO: make multiple passes to get a better idea
+# TODO: check sync timing computation correctness when overlapping
+# TODO: fix gloo division when overlapping.
+# TODO: test in actual GPU's
 
 
 if __name__ == "__main__":
@@ -161,7 +194,15 @@ if __name__ == "__main__":
 
     mp.spawn(
         train_ddp,
-        args=(world_size, model_fn, batch_size, inp_dimensions, torch.long, True, "gloo"),
+        args=(
+            world_size,
+            model_fn,
+            batch_size,
+            inp_dimensions,
+            torch.long,
+            OptimizationType.OVERLAPPING,
+            "gloo",
+        ),
         nprocs=world_size,
         join=True,
     )
