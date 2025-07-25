@@ -76,7 +76,7 @@ def add_2d(a: torch.Tensor, b: torch.Tensor):
         out.stride(0),
         out.stride(1),
         BLOCK_M=32,  # how to determine? start with 128, fit in shared memory, multiple of warp size
-        BLOCK_N=64,  # TODO: triton.autotune to find block sizes, Marcel mentioned smth related
+        BLOCK_N=64,  # triton.autotune to find block sizes
     )
     return out
 

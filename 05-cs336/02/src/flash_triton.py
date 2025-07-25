@@ -65,18 +65,6 @@ def flash(
     q = tl.program_id(0)  # q_tile
     bh = tl.program_id(1)  # batch * head
 
-    q_start = q * BLOCK_SIZE_Q
-    # Marcel
-    # - make_block_ptr, give as many hints to the compiler about structure, shape, accesses, so it optimizes better
-    # - Know roughly how much memory you can fit in, how big can my tile be, how much register memory you have per core.
-    # - master branch triton, has better debugging and some experimental features
-    # - tl.swizzling2d
-    # - no proper strides, and you are not asserting for contiguous
-    # - threads in a block
-    # - - the compiler takes block level ops, a thread is doing register level operation
-    # - H100 optimizations, piece of hardware in the gpu, index math, separate from tensor cores + async
-    # - - index math = offsets, tile indices, where those are in memory, make_block_ptr handles this.
-    # - num_warps: 4, num_ctas: 1, num_stages: 4
     # - performance nsights compute
 
     qm_offset = q_start + tl.arange(0, BLOCK_SIZE_Q)[:, None]

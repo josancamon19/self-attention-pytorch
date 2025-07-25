@@ -32,6 +32,7 @@ def train_zero1(rank: int, world_size: int):
     # ==== broadcast sync model weights ====
     for param in model.parameters():
         dist.broadcast(param.data, src=0)
+        # TODO: async, handle, then wait.
     
     # ==== warmup ====
     local_batch_size = batch_size // world_size
@@ -51,6 +52,7 @@ def train_zero1(rank: int, world_size: int):
         if p.grad is not None:
             hook_handles.append(dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, async_op=True))
     [p.register_post_accumulate_grad_hook(hook) for p in model.parameters()]
+    # TODO: gpu 0 should receive only the gradients that it will optimize
     
     # ==== create optimizer sharded ====
     params = list(model.parameters())
@@ -75,6 +77,8 @@ def train_zero1(rank: int, world_size: int):
     for i, param in enumerate(params): 
         # suboptimal ofc, can be better (flattened), just world_size comms.
         param_rank = i // params_per_rank
+        # TODO: you do your fwd pass in bf16, and communicate them in bf16,
+        # TODO: but always have a copy in fp32 of your local shard "" in fp32
         dist.broadcast(param.data, src=param_rank)
     
     # ==== final timer logs ====
