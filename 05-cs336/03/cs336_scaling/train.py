@@ -1,0 +1,111 @@
+# issues with Stanford connection and stuff, running the trains on my own
+from model import BasicsTransformerLM
+from torch.optim import AdamW
+import torch
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.nn import CrossEntropyLoss as cross_entropy_loss
+from datasets import load_dataset
+from tokenizers.trainers import BpeTrainer
+from tokenizer import train_tokenizer
+import json
+from tokenizers import Tokenizer
+from tokenizers.models import BPE
+
+vocab_size, seq_length = 32000, 512
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+# Consider the model.py architecture
+# - abs pos instead of RoPE
+# - LNorm instead of RMS (pre)
+# - GeLU instead of SwiGLU, 2 Linear instead of 3, dff = 4d_model as usual
+# - untied input/output embeddings
+# - SlimPajama dataset
+# - BPE 32k items on above dataset
+# - seq_length 512
+# - attn and residual dropout 0.1 ?
+# - AdamW with WD 0.01 and gradient clipping 1.0
+# - cos lr schedule to decay lr 10x, annealing steps = num of training steps,
+# - no lr warmup used.
+
+# TODO: gotta train the tokenizer + parse the data
+
+
+def train(d_model, num_layers, num_heads, batch_size, lr, tokens):  # tokens=d
+    model = BasicsTransformerLM(
+        vocab_size,
+        seq_length,
+        d_model,
+        num_layers,
+        num_heads,
+        d_model * 4,
+        0.1,
+        0.1,
+    ).to(device)
+    model.train()
+
+    optimizer = AdamW(model.parameters(), lr, weight_decay=0.01)
+    steps = tokens // seq_length // batch_size
+    lr_scheduler = CosineAnnealingLR(optimizer, steps, eta_min=lr / 10)
+    # no care of val loss, only objective is train_loss
+
+    for i in range(steps):
+        batch = labels = 1
+        output = model(batch)
+        loss = cross_entropy_loss(output, labels)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        loss.backward()
+
+        optimizer.step()
+        lr_scheduler.step()
+
+
+# ======= Data + Tokenizer =======
+
+dataset_path = "data/slimpajama_sample_100M.txt"
+
+
+def retrieve_dataset():
+    # get dataset
+    dataset = load_dataset("cerebras/SlimPajama-627B", split="train", streaming=True)
+
+    total_tokens = 0
+    target_tokens = 100_000_000
+    with open(dataset_path, "w", encoding="utf-8") as f:
+        for item in dataset:
+            # Each item is a dict with keys: 'text', 'meta'
+            text = item.get("text", "")
+            # Estimate tokens by whitespace split (rough, but ok for sampling)
+            num_tokens = len(text.split())
+            # Write only text, append <|endoftext|> divider
+            f.write(text.strip() + "\n<|endoftext|>\n")
+            total_tokens += num_tokens
+            if total_tokens >= target_tokens:
+                print(f"Saved {total_tokens} tokens to {dataset_path}")
+                break
+
+
+def validate_dataset_size():
+    word_count = 0
+    with open(dataset_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line == "<|endoftext|>":
+                continue
+            words = line.split()
+            word_count += len(words)
+    print(f"Total words: {word_count}")
+
+
+def _train_tokenizer():
+    train_tokenizer(
+        input_text_file=dataset_path,
+        target_vocab_size=32000,
+        save_results=True,
+    )
+
+
+if __name__ == "__main__":
+    # retrieve_dataset()
+    _train_tokenizer()
+    # validate_dataset_size()
