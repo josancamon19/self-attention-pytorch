@@ -115,7 +115,9 @@ def train(config):
 
 # ======= Data + Tokenizer =======
 
-dataset_path = "data/slimpajama_sample_100M.txt"
+target_tokens = 1000_000_000
+# dataset_path = "data/slimpajama_sample_100M.txt"
+dataset_path = "data/slimpajama_sample_1B.txt"
 
 
 def retrieve_dataset():
@@ -123,7 +125,6 @@ def retrieve_dataset():
     dataset = load_dataset("cerebras/SlimPajama-627B", split="train", streaming=True)
 
     total_tokens = 0
-    target_tokens = 100_000_000
     with open(dataset_path, "w", encoding="utf-8") as f:
         for item in dataset:
             # Each item is a dict with keys: 'text', 'meta'
@@ -150,12 +151,6 @@ def validate_dataset_size():
     print(f"Total words: {word_count}")
 
 
-def _train_tokenizer():
-    train_tokenizer(
-        input_text_file=dataset_path, target_vocab_size=32000, save_results=True
-    )
-
-
 # ======= Train distributed =======
 
 
@@ -178,17 +173,6 @@ def run_distributed_training(config_path=".configs/config_1e+13.json"):
     )
     num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     print(f"Detected {num_gpus} GPUs")
-    # max_concurrent_trials = num_gpus if num_gpus > 0 else 1
-
-    # tuner = tune.Tuner(
-    #     tune.with_resources(train, resources={"gpu": 1} if num_gpus > 0 else {}),
-    #     tune_config=tune.TuneConfig(
-    #         metric="final_loss",
-    #         mode="min",
-    #         max_concurrent_trials=max_concurrent_trials,
-    #     ),
-    #     param_space={"grid_search": configs},
-    # )
 
     analysis = tune.run(
         train,
@@ -218,8 +202,8 @@ def run_distributed_training(config_path=".configs/config_1e+13.json"):
 
 
 if __name__ == "__main__":
-    # retrieve_dataset()
-    # _train_tokenizer()
+    retrieve_dataset()
+    train_tokenizer(dataset_path, 32000, ["<|endoftext|>"], True)
     # validate_dataset_size()
     # run_distributed_training(".configs/config_1e+13.json")
     # run_distributed_training(".configs/config_5e+13.json")
@@ -227,5 +211,7 @@ if __name__ == "__main__":
     # run_distributed_training(".configs/config_5e+14.json")
     # run_distributed_training(".configs/config_1e+15.json")
     # after exhaustive search expanded ratio > 40, up to 100 + set lr 1e-3 and batch_size 128 fixed.
-    run_distributed_training(".configs/config_5e+15.json")
-    run_distributed_training(".configs/config_1e+16.json")
+    # need a new tokenizer, 1B tokens to run this experiments up to 1e17 FLOPs
+    # run_distributed_training(".configs/config_5e+15.json")
+    # run_distributed_training(".configs/config_1e+16.json")
+    pass
