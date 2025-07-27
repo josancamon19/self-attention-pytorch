@@ -115,9 +115,9 @@ def train(config):
 
 # ======= Data + Tokenizer =======
 
-target_tokens = 10_000_000_000
+target_tokens = 15_000_000_000
 # dataset_path = "data/slimpajama_sample_100M.txt"
-dataset_path = "data/slimpajama_sample_10B.txt"
+dataset_path = "data/slimpajama_sample_15B.txt"
 
 
 def retrieve_dataset():
