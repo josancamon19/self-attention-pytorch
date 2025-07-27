@@ -11,8 +11,11 @@ import json
 import ray
 from ray import tune
 from ray.tune import CLIReporter
+import random
+import os
 
 vocab_size, seq_length = 32000, 512
+torch.manual_seed(42)
 
 
 # Consider the model.py architecture
@@ -59,15 +62,17 @@ def train(config):
         vocab_size, seq_length, d_model, num_layers, num_heads, d_model * 4, 0.1, 0.1
     )
     model = model.to(device)
+    model = torch.compile(model)
     model.train()
 
-    train_data = np.load("data/slimpajama_sample_100M.npy", mmap_mode="r")
+    dataset_path = config.get("dataset", "data/slimpajama_sample_100M.npy")
+    train_data = np.load(dataset_path, mmap_mode="r")
     steps = int(tokens / seq_length / batch_size)
-
-    run_id = f"N{(param_count / 1e6):.1f}_D{(tokens / 1e6):.1f}_C{flops:.1e}_d{d_model}_l{num_layers}_h{num_heads}_b{batch_size}_lr{lr}"
+    rand_i = random.randint(0, 10000)
+    run_id = f"N{(param_count / 1e6):.1f}_D{(tokens / 1e6):.1f}_C{flops}_d{d_model}_l{num_layers}_h{num_heads}_b{batch_size}_lr{lr}_r_ignore{rand_i}"
     run = wandb.init(id=run_id, project="assignment-03-scaling-laws", reinit=True)
 
-    optimizer = AdamW(model.parameters(), lr, weight_decay=0.01)
+    optimizer = AdamW(model.parameters(), lr, weight_decay=0.01)  # betas=[0.9, 0.95]
     lr_scheduler = CosineAnnealingLR(optimizer, steps, eta_min=lr / 10)
 
     train_loss = 0
@@ -75,29 +80,36 @@ def train(config):
         batch = data_loading(train_data, batch_size, seq_length, device)
         optimizer.zero_grad()
 
-        output = model(batch)
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=True):
             input_ids, labels = batch
-            output = model(input_ids, None)
+            output = model(input_ids)
             output_flatten = output.view(-1, output.shape[-1])
             labels = labels.contiguous().view(-1)
             loss = torch.nn.functional.cross_entropy(output_flatten, labels)
 
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         train_loss += loss.item()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
         optimizer.step()
         lr_scheduler.step()
+
         if i % 50 == 0:
-            avg_loss = train_loss / (i + 1) if i > 0 else train_loss
-            run.log({"train_loss": avg_loss, "lr": lr}, step=i)
-            tune.report(train_loss=avg_loss, lr=lr)
+            avg_loss = train_loss / (i + 1)
+            run.log({"train_loss": avg_loss}, step=i)
+            tune.report({"train_loss": avg_loss})
 
     final_loss = train_loss / steps
     print(f"Training completed. Final loss: {final_loss:.6f}")
-    wandb.finish()
-    tune.report(final_loss=final_loss)
+
+    tune.report({"train_loss": avg_loss, "final_loss": final_loss})
+
+    try:
+        run.log({"train_loss": final_loss, "final_loss": final_loss}, step=steps)
+        wandb.finish()
+    except Exception:
+        pass  # wandb Broken Pipeline
+
     return final_loss
 
 
@@ -140,9 +152,7 @@ def validate_dataset_size():
 
 def _train_tokenizer():
     train_tokenizer(
-        input_text_file=dataset_path,
-        target_vocab_size=32000,
-        save_results=True,
+        input_text_file=dataset_path, target_vocab_size=32000, save_results=True
     )
 
 
@@ -154,15 +164,36 @@ def run_distributed_training(config_path=".configs/config_1e+13.json"):
         configs = json.load(f)["configs"]
         print(f"Loaded {len(configs)} configurations")
 
-    ray.init(ignore_reinit_error=True)
+    ray.init(
+        ignore_reinit_error=True,
+        runtime_env={"excludes": ["data/slimpajama_sample_100M.npy"]},
+    )
+    for config in configs:
+        config["dataset"] = (
+            "/workspace/transformers/05-cs336/03/data/slimpajama_sample_100M.npy"
+        )
+
     reporter = CLIReporter(
         metric_columns=["final_loss", "train_loss", "lr"], max_report_frequency=10
     )
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    print(f"Detected {num_gpus} GPUs")
+    # max_concurrent_trials = num_gpus if num_gpus > 0 else 1
+
+    # tuner = tune.Tuner(
+    #     tune.with_resources(train, resources={"gpu": 1} if num_gpus > 0 else {}),
+    #     tune_config=tune.TuneConfig(
+    #         metric="final_loss",
+    #         mode="min",
+    #         max_concurrent_trials=max_concurrent_trials,
+    #     ),
+    #     param_space={"grid_search": configs},
+    # )
 
     analysis = tune.run(
         train,
         config={"grid_search": configs},
-        resources_per_trial={"cpu": 1, "gpu": 1 if torch.cuda.is_available() else 0},
+        resources_per_trial={"gpu": 1} if num_gpus > 0 else {},
         num_samples=1,
         progress_reporter=reporter,
         verbose=1,
@@ -190,4 +221,8 @@ if __name__ == "__main__":
     # retrieve_dataset()
     # _train_tokenizer()
     # validate_dataset_size()
-    results = run_distributed_training()
+    # run_distributed_training(".configs/config_1e+13.json")
+    run_distributed_training(".configs/config_5e+13.json")
+    run_distributed_training(".configs/config_1e+14.json")
+    run_distributed_training(".configs/config_5e+14.json")
+    run_distributed_training(".configs/config_1e+15.json")
