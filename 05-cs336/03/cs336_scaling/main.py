@@ -12,19 +12,6 @@
 # - Given the budget, what params/loss your scaling laws predict.
 # - what hyper-parameters would you use given your predicted optimal params?
 
-# Consider the model.py architecture
-# - abs pos instead of RoPE
-# - LNorm instead of RMS (pre)
-# - GeLU instead of SwiGLU, 2 Linear instead of 3, dff = 4d_model as usual
-# - untied input/output embeddings
-# - SlimPajama dataset
-# - BPE 32k items on above dataset
-# - seq_length 512
-# - attn and residual dropout 0.1 ?
-# - AdamW with 0.01 and gradient clipping 1.0
-# - cos lr schedule to decay lr 10x, annealing steps = num of training steps,
-# - no lr warmup used.
-
 # ----
 
 
@@ -215,7 +202,7 @@ def sanity_check():
     )
 
 
-def all_configs_given_c():
+def generate_configs_given_C():
     args = get_parser_args()
     valid_configs = []
     valid_d_model = [128, 256, 512, 768, 1024]
@@ -289,4 +276,4 @@ def all_configs_given_c():
 if __name__ == "__main__":
     # main()
     # sanity_check()
-    all_configs_given_c()
+    generate_configs_given_C()

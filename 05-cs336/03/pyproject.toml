@@ -5,10 +5,16 @@ description = "CS 336 Assignment 3: Scaling Laws"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "datasets>=4.0.0",
+    "line-profiler>=5.0.0",
     "matplotlib>=3.10.3",
+    "regex>=2024.11.6",
     "requests>=2.32.3",
     "scipy>=1.16.0",
+    "tokenizers>=0.21.2",
     "torch>=2.7.0",
+    "tqdm>=4.67.1",
+    "zstandard>=0.23.0",
 ]
 
 [tool.uv]

@@ -67,10 +67,34 @@ def main():
     D_opt = b * (args.flops**β)
     L_opt = c * (args.flops**γ)
 
+    # Analyze tokens:params ratio
+    ratio_exponent = β - α
+    base_ratio = b / a
+    current_ratio = D_opt / N_opt
+    
     print(f"Optimal config for {args.flops:.2e} FLOPs:")
     print(f"  Params: {N_opt:.2e}")
     print(f"  Tokens: {D_opt:.2e}")
     print(f"  Loss:   {L_opt:.4f}")
+    print(f"  Ratio:  {current_ratio:.1f} tokens/param")
+    
+    print(f"\nScaling laws:")
+    print(f"  N_opt = {a:.2e} × C^{α:.3f}")
+    print(f"  D_opt = {b:.2e} × C^{β:.3f}")
+    print(f"  L_opt = {c:.2e} × C^{γ:.3f}")
+    print(f"  α + β = {α + β:.3f} (should ≈ 1.0)")
+    
+    print(f"\nTokens:Params ratio analysis:")
+    print(f"  D/N = {base_ratio:.1f} × C^{ratio_exponent:.3f}")
+    if abs(ratio_exponent) < 0.05:
+        print(f"  → Constant ratio ≈ {base_ratio:.1f} (like Chinchilla's ~20)")
+    elif ratio_exponent > 0:
+        print(f"  → Increasing ratio with compute")
+    else:
+        print(f"  → Decreasing ratio with compute")
+    
+    print(f"  Chinchilla reference: ~20 tokens/param")
+    print(f"  Your data suggests: ~{base_ratio:.1f} tokens/param")
 
 
 if __name__ == "__main__":
