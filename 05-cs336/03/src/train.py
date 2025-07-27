@@ -134,6 +134,8 @@ def retrieve_dataset():
             # Write only text, append <|endoftext|> divider
             f.write(text.strip() + "\n<|endoftext|>\n")
             total_tokens += num_tokens
+            if total_tokens % 100_000_000 < 10000:
+                print(f"{total_tokens} loaded so far")
             if total_tokens >= target_tokens:
                 print(f"Saved {total_tokens} tokens to {dataset_path}")
                 break

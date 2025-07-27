@@ -160,5 +160,5 @@ cython_debug/
 #.idea/
 
 .ruff_cache/
-src/tokenizer.py
+# src/tokenizer.py
 *slimpajama_sample_100M*
