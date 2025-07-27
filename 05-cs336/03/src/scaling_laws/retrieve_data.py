@@ -78,15 +78,29 @@ def retrieve_wandb_data(
 
 def save_data(df: pd.DataFrame, output_path: str = "data/wandb_scaling_data.json"):
     """Save the retrieved data in the same format as exercise_isoflops_curves.json."""
-    # Create list of dicts with only the required fields
+    # For each (N, C) combination, keep only the run with the smallest loss
+    df_min_loss = df.loc[df.groupby(["N", "C"])["final_loss"].idxmin()]
+
+    # Create list of dicts with required fields and config
     data_list = []
-    for _, row in df.iterrows():
-        data_list.append({
-            "parameters": int(row["N"]),
-            "compute_budget": float(row["C"]),  # Ensure it's a float
-            "final_loss": row["final_loss"]
-        })
-    
+    for _, row in df_min_loss.iterrows():
+        data_list.append(
+            {
+                "parameters": int(row["N"]),
+                "compute_budget": float(row["C"]),  # Ensure it's a float
+                "final_loss": row["final_loss"],
+                "config": {
+                    "d_model": int(row["d_model"]),
+                    "num_layers": int(row["num_layers"]),
+                    "num_heads": int(row["num_heads"]),
+                    "batch_size": int(row["batch_size"]),
+                    "lr": float(row["lr"]),
+                    "D": int(row["D"]),  # tokens
+                    "run_id": row["run_id"],
+                },
+            }
+        )
+
     # Custom JSON encoder to handle scientific notation
     class ScientificEncoder(json.JSONEncoder):
         def encode(self, obj):
@@ -98,7 +112,7 @@ def save_data(df: pd.DataFrame, output_path: str = "data/wandb_scaling_data.json
                         # Format as scientific notation
                         formatted = f"{v:.0e}"
                         # Clean up the format to match exercise file (e.g., 6e+18)
-                        formatted = formatted.replace('e+0', 'e+').replace('e-0', 'e-')
+                        formatted = formatted.replace("e+0", "e+").replace("e-0", "e-")
                         items.append(f'    "{k}": {formatted}')
                     else:
                         items.append(f'    "{k}": {json.dumps(v)}')
@@ -107,11 +121,11 @@ def save_data(df: pd.DataFrame, output_path: str = "data/wandb_scaling_data.json
                 # Handle list of dicts
                 return "[\n" + ",\n".join(self.encode(item) for item in obj) + "\n]"
             return super().encode(obj)
-    
+
     # Save as JSON with custom encoder
-    with open(output_path, 'w') as f:
+    with open(output_path, "w") as f:
         f.write(ScientificEncoder().encode(data_list))
-    
+
     print(f"Saved {len(data_list)} runs to {output_path}")
 
 

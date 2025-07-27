@@ -1,0 +1,117 @@
+[
+{
+    "parameters": 400000,
+    "compute_budget": 1e+13,
+    "final_loss": 8.492158137261868,
+    "config": {"d_model": 128, "num_layers": 2, "num_heads": 2, "batch_size": 128, "lr": 0.001, "D": 4200000, "run_id": "N0.4_D4.2_C1.0e+13_d128_l2_h2_b128_lr0.001_r_ignore1062"}
+  },
+{
+    "parameters": 800000,
+    "compute_budget": 5e+13,
+    "final_loss": 7.939431439275327,
+    "config": {"d_model": 128, "num_layers": 4, "num_heads": 2, "batch_size": 128, "lr": 0.001, "D": 10600000, "run_id": "N0.8_D10.6_C5.0e+13_d128_l4_h2_b128_lr0.001_r_ignore7677"}
+  },
+  {
+    "parameters": 1200000,
+    "compute_budget": 5e+13,
+    "final_loss": 8.098189095470392,
+    "config": {"d_model": 128, "num_layers": 6, "num_heads": 2, "batch_size": 128, "lr": 0.001, "D": 7100000, "run_id": "N1.2_D7.1_C5.0e+13_d128_l6_h2_b128_lr0.001_r_ignore5150"}
+  },
+  {
+    "parameters": 1600000,
+    "compute_budget": 5e+13,
+    "final_loss": 8.048244738578797,
+    "config": {"d_model": 256, "num_layers": 2, "num_heads": 2, "batch_size": 128, "lr": 0.001, "D": 5300000, "run_id": "N1.6_D5.3_C5.0e+13_d256_l2_h2_b128_lr0.001_r_ignore9251"}
+  },
+  {
+    "parameters": 800000,
+    "compute_budget": 1e+14,
+    "final_loss": 7.559747845026731,
+    "config": {"d_model": 128, "num_layers": 4, "num_heads": 2, "batch_size": 128, "lr": 0.001, "D": 21200000, "run_id": "N0.8_D21.2_C1.0e+14_d128_l4_h2_b128_lr0.001_r_ignore9006"}
+  },
+  {
+    "parameters": 1200000,
+    "compute_budget": 1e+14,
+    "final_loss": 7.736176071610561,
+    "config": {"d_model": 128, "num_layers": 6, "num_heads": 2, "batch_size": 128, "lr": 0.001, "D": 14100000, "run_id": "N1.2_D14.1_C1.0e+14_d128_l6_h2_b128_lr0.001_r_ignore4681"}
+  },
+  {
+    "parameters": 1600000,
+    "compute_budget": 1e+14,
+    "final_loss": 7.709280781123949,
+    "config": {"d_model": 256, "num_layers": 2, "num_heads": 2, "batch_size": 128, "lr": 0.001, "D": 10600000, "run_id": "N1.6_D10.6_C1.0e+14_d256_l2_h2_b128_lr0.001_r_ignore8402"}
+  },
+  {
+    "parameters": 2000000,
+    "compute_budget": 1e+14,
+    "final_loss": 8.001962606296983,
+    "config": {"d_model": 128, "num_layers": 10, "num_heads": 2, "batch_size": 128, "lr": 0.001, "D": 8500000, "run_id": "N2.0_D8.5_C1.0e+14_d128_l10_h2_b128_lr0.001_r_ignore9913"}
+  },
+  {
+    "parameters": 1600000,
+    "compute_budget": 5e+14,
+    "final_loss": 6.730631409305157,
+    "config": {"d_model": 256, "num_layers": 2, "num_heads": 2, "batch_size": 128, "lr": 0.001, "D": 53000000, "run_id": "N1.6_D53.0_C5.0e+14_d256_l2_h2_b128_lr0.001_r_ignore1255"}
+  },
+{
+    "parameters": 2000000,
+    "compute_budget": 5e+14,
+    "final_loss": 7.065127233233614,
+    "config": {"d_model": 128, "num_layers": 10, "num_heads": 2, "batch_size": 128, "lr": 0.001, "D": 42400000, "run_id": "N2.0_D42.4_C5.0e+14_d128_l10_h2_b128_lr0.001_r_ignore4942"}
+  },
+{
+    "parameters": 2400000,
+    "compute_budget": 5e+14,
+    "final_loss": 7.143351870398539,
+    "config": {"d_model": 128, "num_layers": 12, "num_heads": 2, "batch_size": 128, "lr": 0.001, "D": 35300000, "run_id": "N2.4_D35.3_C5.0e+14_d128_l12_h2_b128_lr0.001_r_ignore604"}
+  },
+  {
+    "parameters": 2800000,
+    "compute_budget": 5e+14,
+    "final_loss": 7.21398417085991,
+    "config": {"d_model": 128, "num_layers": 14, "num_heads": 2, "batch_size": 128, "lr": 0.001, "D": 30300000, "run_id": "N2.8_D30.3_C5.0e+14_d128_l14_h2_b128_lr0.001_r_ignore6888"}
+  },
+  {
+    "parameters": 4700000,
+    "compute_budget": 5e+14,
+    "final_loss": 7.304307560052127,
+    "config": {"d_model": 256, "num_layers": 6, "num_heads": 4, "batch_size": 128, "lr": 0.001, "D": 17700000, "run_id": "N4.7_D17.7_C5.0e+14_d256_l6_h4_b128_lr0.001_r_ignore8315"}
+  },
+  {
+    "parameters": 2400000,
+    "compute_budget": 1e+15,
+    "final_loss": 6.7008776337102045,
+    "config": {"d_model": 128, "num_layers": 12, "num_heads": 2, "batch_size": 128, "lr": 0.001, "D": 70600000, "run_id": "N2.4_D70.6_C1.0e+15_d128_l12_h2_b128_lr0.001_r_ignore3987"}
+  },
+{
+    "parameters": 2800000,
+    "compute_budget": 1e+15,
+    "final_loss": 6.79264562489023,
+    "config": {"d_model": 128, "num_layers": 14, "num_heads": 2, "batch_size": 128, "lr": 0.001, "D": 60600000, "run_id": "N2.8_D60.6_C1.0e+15_d128_l14_h2_b128_lr0.001_r_ignore4771"}
+  },
+{
+    "parameters": 3100000,
+    "compute_budget": 5e+14,
+    "final_loss": 7.0654372071275615,
+    "config": {"d_model": 256, "num_layers": 4, "num_heads": 4, "batch_size": 128, "lr": 0.001, "D": 26500000, "run_id": "N3.1_D26.5_C5.0e+14_d256_l4_h4_b128_lr0.001_r_ignore162"}
+  },
+{
+    "parameters": 3100000,
+    "compute_budget": 1e+15,
+    "final_loss": 6.646209237008992,
+    "config": {"d_model": 256, "num_layers": 4, "num_heads": 2, "batch_size": 128, "lr": 0.001, "D": 53000000, "run_id": "N3.1_D53.0_C1.0e+15_d256_l4_h2_b128_lr0.001_r_ignore279"}
+  },
+
+{
+    "parameters": 4700000,
+    "compute_budget": 1e+15,
+    "final_loss": 6.865520963881539,
+    "config": {"d_model": 256, "num_layers": 6, "num_heads": 2, "batch_size": 128, "lr": 0.001, "D": 35300000, "run_id": "N4.7_D35.3_C1.0e+15_d256_l6_h2_b128_lr0.001_r_ignore8979"}
+  },
+{
+    "parameters": 6300000,
+    "compute_budget": 1e+15,
+    "final_loss": 6.821286044498481,
+    "config": {"d_model": 512, "num_layers": 2, "num_heads": 8, "batch_size": 128, "lr": 0.001, "D": 26500000, "run_id": "N6.3_D26.5_C1.0e+15_d512_l2_h8_b128_lr0.001_r_ignore8201"}
+  }
+]
