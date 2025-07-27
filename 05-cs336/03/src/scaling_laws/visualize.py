@@ -29,10 +29,11 @@ parser.add_argument(
     default="min",
     help="Method to find optimal parameters: min (direct minimum) or quadratic (curve fitting)",
 )
+parser.add_argument("--data", default="data/exercise_isoflops_curves.json")
 args = parser.parse_args()
 
 # Load and group data by compute budget
-with open("data/isoflops_curves.json", "r") as f:
+with open(args.data, "r") as f:
     data = json.load(f)
 
 grouped_by_c = defaultdict(list)
