@@ -86,7 +86,8 @@ def generate_configs_given_C():
             N = estimate_params(d_model, num_layers)
             D = int(C / (6 * N))
             ratio = D / N  # 75% to 97.5%
-            if ratio < 3 or ratio > 40:
+            # if ratio < 3 or ratio > 40:
+            if ratio < 3 or ratio > 100: # increased ratio to 50
                 continue
             print(
                 f"  config d={d_model}, L={num_layers}: N={N / 1e6:.2f}M, D={D / 1e6:.2f}M tokens, ratio (N:D)=1:{ratio:.1f}"
@@ -96,8 +97,10 @@ def generate_configs_given_C():
                 if num_heads == 1:
                     continue
 
-                for lr in [1e-4, 3e-4, 5e-4, 7e-4, 1e-3]:  # range 1e-4, 1e-3
-                    for batch_size in [128, 256]:  # pre determined
+                # for lr in [1e-4, 3e-4, 5e-4, 7e-4, 1e-3]:  # range 1e-4, 1e-3
+                for lr in [1e-3]:  # range 1e-4, 1e-3
+                    # for batch_size in [128, 256]:  # pre determined
+                    for batch_size in [128]:  # pre determined
                         valid_configs.append(
                             {
                                 "N": N,
