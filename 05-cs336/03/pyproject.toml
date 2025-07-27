@@ -8,12 +8,14 @@ dependencies = [
     "datasets>=4.0.0",
     "line-profiler>=5.0.0",
     "matplotlib>=3.10.3",
+    "ray[tune]>=2.48.0",
     "regex>=2024.11.6",
     "requests>=2.32.3",
     "scipy>=1.16.0",
     "tokenizers>=0.21.2",
     "torch>=2.7.0",
     "tqdm>=4.67.1",
+    "wandb>=0.21.0",
     "zstandard>=0.23.0",
 ]
 
