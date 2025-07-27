@@ -5,11 +5,9 @@ import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.nn import CrossEntropyLoss as cross_entropy_loss
 from datasets import load_dataset
-from tokenizers.trainers import BpeTrainer
 from tokenizer import train_tokenizer
-import json
-from tokenizers import Tokenizer
-from tokenizers.models import BPE
+import numpy as np
+import wandb
 
 vocab_size, seq_length = 32000, 512
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -28,10 +26,30 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # - cos lr schedule to decay lr 10x, annealing steps = num of training steps,
 # - no lr warmup used.
 
-# TODO: gotta train the tokenizer + parse the data
+
+def data_loading(
+    x: np.ndarray,
+    batch_size: int,
+    context_length: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    starting_indices = torch.randint(0, len(x) - context_length, (batch_size,))
+    indices = starting_indices.unsqueeze(1) + torch.arange(context_length + 1)
+    batch = torch.from_numpy(x[indices]).to(device, dtype=torch.long)
+    return batch[:, :-1], batch[:, 1:]
 
 
-def train(d_model, num_layers, num_heads, batch_size, lr, tokens):  # tokens=d
+def train(
+    d_model,
+    num_layers,
+    num_heads,
+    batch_size,
+    lr,
+    tokens,  # D
+    # only for logging
+    param_count,  # N
+    flops,
+):
     model = BasicsTransformerLM(
         vocab_size,
         seq_length,
@@ -44,20 +62,37 @@ def train(d_model, num_layers, num_heads, batch_size, lr, tokens):  # tokens=d
     ).to(device)
     model.train()
 
+    train_data = np.load("", mmap_mode="r")
+    steps = int(tokens / seq_length / batch_size)
+
+    run_id = f"N{(param_count / 1e6):.1f}_D{(tokens / 1e6):.1f}_C{flops:.1e}_d{d_model}_l{num_layers}_h{num_heads}_b{batch_size}_lr{lr}"
+    run = wandb.init(id=run_id, project="assignment-03-scaling-laws")
+
     optimizer = AdamW(model.parameters(), lr, weight_decay=0.01)
-    steps = tokens // seq_length // batch_size
     lr_scheduler = CosineAnnealingLR(optimizer, steps, eta_min=lr / 10)
-    # no care of val loss, only objective is train_loss
+    train_loss = 0
 
     for i in range(steps):
-        batch = labels = 1
+        batch = data_loading(train_data, batch_size, seq_length, device)
+        optimizer.zero_grad()
+
         output = model(batch)
-        loss = cross_entropy_loss(output, labels)
+        # [ ]preview doesn't says if it uses fp32 or bf16?
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=False):
+            input_ids, labels = batch
+            output = model(input_ids, None)
+            output_flatten = output.view(-1, output.shape[-1])
+            labels = labels.contiguous().view(-1)
+            loss = torch.nn.functional.cross_entropy(output_flatten, labels)
+
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        train_loss += loss.item()
         loss.backward()
 
         optimizer.step()
         lr_scheduler.step()
+        if i % 50 == 0:
+            run.log({"train_loss": train_loss / i, "lr": lr}, step=i)
 
 
 # ======= Data + Tokenizer =======
