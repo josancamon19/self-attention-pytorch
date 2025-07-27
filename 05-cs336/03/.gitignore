@@ -161,3 +161,4 @@ cython_debug/
 
 .ruff_cache/
 cs336_scaling/tokenizer.py
+*slimpajama_sample_100M*
