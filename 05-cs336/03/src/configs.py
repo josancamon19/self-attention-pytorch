@@ -79,28 +79,29 @@ def sanity_check():
 def generate_configs_given_C():
     args = get_parser_args()
     valid_configs = []
-    valid_d_model = [128, 256, 512, 768, 1024]
+    valid_d_model = [768, 1024]  # 128, 256, 512,
     C = args.train_flops
     for d_model in valid_d_model:  # 6 values
-        for num_layers in range(2, 16 + 1, 2):
+        for num_layers in range(6, 24 + 1, 2):
             N = estimate_params(d_model, num_layers)
             D = int(C / (6 * N))
             ratio = D / N  # 75% to 97.5%
             # if ratio < 3 or ratio > 40:
-            if ratio < 3 or ratio > 100:  # increased ratio to 50
+            if ratio < 10 or ratio > 50:  # increased ratio to 50
                 continue
             print(
                 f"  config d={d_model}, L={num_layers}: N={N / 1e6:.2f}M, D={D / 1e6:.2f}M tokens, ratio (N:D)=1:{ratio:.1f}"
             )
-            for head_size in [64, 128]:  # no model uses smth different
+            # for head_size in [64, 128]:  # no model uses smth different
+            for head_size in [128]:  # no model uses smth different
                 num_heads = d_model // head_size
                 if num_heads == 1:
                     continue
 
-                for lr in [1e-4, 5e-4, 1e-3]:  # range 1e-4, 1e-3
-                    # for lr in [1e-3]:  # range 1e-4, 1e-3
-                    for batch_size in [128, 256]:  # pre determined
-                        # for batch_size in [128]:  # pre determined
+                # for lr in [1e-4, 5e-4, 1e-3]:  # range 1e-4, 1e-3
+                for lr in [1e-3]:  # range 1e-4, 1e-3
+                    # for batch_size in [128, 256]:  # pre determined
+                    for batch_size in [128]:
                         valid_configs.append(
                             {
                                 "N": N,
