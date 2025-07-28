@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "datasets>=4.0.0",
+    "dotenv>=0.9.9",
     "line-profiler>=5.0.0",
     "matplotlib>=3.10.3",
     "ray[tune]>=2.48.0",

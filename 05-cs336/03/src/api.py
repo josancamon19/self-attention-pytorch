@@ -185,3 +185,5 @@ if __name__ == "__main__":
     # process_config_file(".configs/config_3e+14.json")
     # process_config_file(".configs/config_6e+14.json")
     # process_config_file(".configs/config_1e+15.json")
+    # I fucked up, huhhhh, forgot should've not ran this
+    # process_config_file(".configs/config_3e+15.json") 
