@@ -20,7 +20,9 @@ import requests
 import os
 from datetime import datetime
 from configs import get_parser_args, estimate_params
+from dotenv import load_dotenv
 
+load_dotenv()
 # Ensure the configs directory exists
 BASE_URL = "http://hyperturing.stanford.edu:8000"
 api_key = os.getenv("API_KEY", "123")
@@ -28,12 +30,12 @@ api_key = os.getenv("API_KEY", "123")
 
 def get_total_flops():
     response = requests.get(f"{BASE_URL}/total_flops_used", {"api_key": api_key})
-    return response.json()["total_flops_used"]
+    return response.json()
 
 
 def get_previous_runs():
     response = requests.get(f"{BASE_URL}/previous_runs", {"api_key": api_key})
-    return response.json()
+    return response.json()["previous_runs"]
 
 
 def query_loss(d_model, num_layers, num_heads, batch_size, lr, train_flops):
@@ -46,17 +48,18 @@ def query_loss(d_model, num_layers, num_heads, batch_size, lr, train_flops):
         "num_layers": num_layers,
         "num_heads": num_heads,
         "batch_size": batch_size,
-        "lr": lr,
+        "learning_rate": lr,
         "train_flops": train_flops,
         "api_key": api_key,
     }
 
-    response = requests.post(f"{BASE_URL}/loss", json=payload)
+    response = requests.get(f"{BASE_URL}/loss", payload)
     result = response.json()
 
     # Add estimated params and timestamp
     result["estimated_params"] = estimate_params(d_model, num_layers)
     result["timestamp"] = datetime.now().isoformat()
+    del payload["api_key"]
     result["config"] = payload
 
     return result
@@ -89,10 +92,7 @@ def main():
     elif args.action == "previous":
         runs = get_previous_runs()
         print(f"Found {len(runs)} previous runs")
-        for i, run in enumerate(runs[:5]):  # Show first 5
-            print(
-                f"  {i + 1}: loss={run.get('loss', 'N/A'):.4f}, params={run.get('estimated_params', 'N/A')}"
-            )
+        print(runs[0])
 
     elif args.action == "run":
         if not all(
@@ -130,5 +130,58 @@ def main():
         save_run(result)
 
 
+def process_config_file(config_file_path):
+    """Process a config file and call query_loss for each configuration"""
+    # Load the config file
+    with open(config_file_path, "r") as f:
+        data = json.load(f)
+
+    configs = data.get("configs", [])
+    results = []
+
+    print(f"Processing {len(configs)} configurations from {config_file_path}")
+
+    for i, config in enumerate(configs):
+        print(f"\nProcessing config {i + 1}/{len(configs)}...")
+        result = query_loss(
+            d_model=config["d_model"],
+            num_layers=config["num_layers"],
+            num_heads=config["num_heads"],
+            batch_size=config["batch_size"],
+            lr=config["lr"],
+            train_flops=float(config["C"]),
+        )
+
+        result["config_index"] = i
+        result["N"] = config["N"]
+        result["D"] = config["D"]
+        result["ratio_N_D"] = config["ratio(N:D)"]
+
+        results.append(result)
+
+        # Save each run
+        save_run(result)
+        # print(result)
+
+        # Print results
+        print(f"  Loss: {result['loss']:.4f}")
+        print(f"  Total FLOPs used: {result['total_flops_used']:.2e}")
+        print(f"  Estimated params: {result['estimated_params']:.2e}")
+
+    print(f"\nProcessed all {len(configs)} configurations")
+    print(f"Final total FLOPs used: {results[-1]['total_flops_used']:.2e}")
+
+    return results
+
+
 if __name__ == "__main__":
+    # print(get_total_flops())
+    # print(get_previous_runs())
     main()
+    # process_config_file(".configs/config_1e+13.json")
+    # process_config_file(".configs/config_3e+13.json")
+    # process_config_file(".configs/config_6e+13.json")
+    # process_config_file(".configs/config_1e+14.json")
+    # process_config_file(".configs/config_3e+14.json")
+    # process_config_file(".configs/config_6e+14.json")
+    # process_config_file(".configs/config_1e+15.json")
