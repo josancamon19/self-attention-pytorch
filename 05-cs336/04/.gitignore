@@ -174,3 +174,4 @@ sample.warc.wet.gz
 *.txt.gz
 enwiki-20240420-extracted_urls.txt
 .data
+cooking.*
