@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import os
 from typing import Any
-
-from cs336_data.main import (
-    extract_text_from_html_bytes, 
-    langauge_identification,
-    remove_emails,
-    remove_phone_numbers,
-    remove_ip_addresses
-)
-
+from cs336_data.a_html import extract_text_from_html_bytes
+from cs336_data.b_language_id import langauge_identification
+from cs336_data.c_piid import remove_emails, remove_ip_addresses, remove_phone_numbers
+from cs336_data.d_harmful import check_nsfw, check_hatespeech
+from cs336_data.e_gopher_heuristics import gopher_filters
+from cs336_data.g_deduplication import exact_deduplication, minhash_deduplication
 
 
 def run_extract_text_from_html_bytes(html_bytes: bytes) -> str | None:
@@ -34,11 +31,11 @@ def run_mask_ips(text: str) -> tuple[str, int]:
 
 
 def run_classify_nsfw(text: str) -> tuple[Any, float]:
-    raise NotImplementedError
+    return check_nsfw(text)
 
 
 def run_classify_toxic_speech(text: str) -> tuple[Any, float]:
-    raise NotImplementedError
+    return check_hatespeech(text)
 
 
 def run_classify_quality(text: str) -> tuple[Any, float]:
@@ -46,13 +43,11 @@ def run_classify_quality(text: str) -> tuple[Any, float]:
 
 
 def run_gopher_quality_filter(text: str) -> bool:
-    raise NotImplementedError
+    return gopher_filters(text)["pass_filter"]
 
 
-def run_exact_line_deduplication(
-    input_files: list[os.PathLike], output_directory: os.PathLike
-):
-    raise NotImplementedError
+def run_exact_line_deduplication(input_files: list[os.PathLike], output_directory: os.PathLike):
+    return exact_deduplication(input_files, output_directory)
 
 
 def run_minhash_deduplication(
@@ -63,4 +58,11 @@ def run_minhash_deduplication(
     jaccard_threshold: float,
     output_directory: os.PathLike,
 ):
-    raise NotImplementedError
+    return minhash_deduplication(
+        input_files,
+        num_hashes,
+        num_bands,
+        ngrams,
+        jaccard_threshold,
+        output_directory,
+    )
