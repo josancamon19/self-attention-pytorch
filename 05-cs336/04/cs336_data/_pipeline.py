@@ -6,41 +6,49 @@ from cs336_data.e_gopher_heuristics import gopher_filters
 import os
 import gzip
 from fastwarc.warc import ArchiveIterator, WarcRecordType
-from multiprocessing import Pool, cpu_count
+from multiprocessing import cpu_count
 from concurrent.futures import ProcessPoolExecutor
-import queue
+from collections import defaultdict
 
 
 def process_record_batch(
     records_batch,
     process_language: bool,
     process_piid: bool,
-    process_hamrful: bool,
+    process_harmful: bool,
     process_gopher: bool,
 ):
     """Process a batch of records in parallel"""
     results = []
-    for record in records_batch:
-        plain_text = extract_text_from_html_bytes(record)
+    filtered_by = defaultdict(int)
+    for record_data in records_batch:
+        url, html_content = record_data
+        plain_text = extract_text_from_html_bytes(html_content)
+
         if process_gopher and not gopher_filters(plain_text)["pass_filter"]:
+            filtered_by["gopher"] += 1
             continue
         if process_language and not language_identification(plain_text, True, 0.9):
+            filtered_by["language"] += 1
             continue
-        if process_hamrful and is_harmful(plain_text, 0.8):
+        if process_harmful and is_harmful(plain_text, 0.8):
+            filtered_by["harmful"] += 1
             continue
 
         if process_piid:
             plain_text, _ = remove_emails(plain_text)
             plain_text, _ = remove_ip_addresses(plain_text)
             plain_text, _ = remove_phone_numbers(plain_text)
-    return results
+
+        results.append((url, plain_text))
+    return results, filtered_by
 
 
 def pipeline(
     file_path: str = ".data/sample.warc.gz",
     process_language: bool = True,
     process_piid: bool = True,
-    process_hamrful: bool = True,
+    process_harmful: bool = True,
     process_gopher: bool = True,
 ):
     assert ".warc.gz" in file_path
@@ -51,44 +59,49 @@ def pipeline(
     name_without_ext = base_name.replace(".warc.gz", "")
     parsed_text_file = os.path.join(dir_path, f"{name_without_ext}_parsed.txt")
 
-    # decode_and_html_to_text(file_path, parsed_text_file)
-    html_data = []
+    # Collect all records first
+    all_records = []
     with gzip.open(file_path, "rb") as stream:
-        # Keep track of processed records
-        record_count = 0
+        for record in ArchiveIterator(stream):
+            if record.record_type == WarcRecordType.response:
+                url = record.headers.get("WARC-Target-URI", "Unknown URL")
+                html_content = record.reader.read()
+                all_records.append((url, html_content))
 
-        with open(parsed_text_file, "w", encoding="utf-8") as out_f:
-            for record in ArchiveIterator(stream):
-                # Only process respone records (which contain the actual web content)
-                if record.record_type == WarcRecordType.response:
-                    record_count += 1
-                    url = record.headers.get("WARC-Target-URI", "Unknown URL")
-                    html_content = record.reader.read()
-                    html_data.append(html_content)
-                    plain_text = extract_text_from_html_bytes(html_content)
+    print(f"Collected {len(all_records)} records, processing with {cpu_count()} processes")
 
-                    if process_gopher and not gopher_filters(plain_text)["pass_filter"]:
-                        continue
-                    if process_language and not language_identification(plain_text, True, 0.9):
-                        continue
-                    if process_hamrful and is_harmful(plain_text, 0.8):
-                        continue
+    # Split records into batches for multiprocessing
+    batch_size = max(1, len(all_records) // cpu_count())
+    batches = [all_records[i : i + batch_size] for i in range(0, len(all_records), batch_size)]
 
-                    if process_piid:
-                        plain_text, _ = remove_emails(plain_text)
-                        plain_text, _ = remove_ip_addresses(plain_text)
-                        plain_text, _ = remove_phone_numbers(plain_text)
+    # Process batches in parallel
+    all_results = []
+    with ProcessPoolExecutor(max_workers=cpu_count()) as executor:
+        futures = []
+        for batch in batches:
+            future = executor.submit(
+                process_record_batch, batch, process_language, process_piid, process_harmful, process_gopher
+            )
+            futures.append(future)
 
-                    # Write to output file
-                    out_f.write(f"=== Record {record_count} ===\n")
-                    out_f.write(f"URL: {url}\n")
-                    out_f.write(f"Content-Length: {len(plain_text)} characters\n")
-                    out_f.write("-" * 80 + "\n")
-                    out_f.write(plain_text)
-                    out_f.write("\n" + "=" * 80 + "\n\n")
-                    print(f"Processed record {record_count}: {url}")
-    print()
-    print(f"\nProcessed {record_count} response records.")
+        # Collect results
+        for i, future in enumerate(futures):
+            batch_results, filtered_by = future.result()
+            all_results.extend(batch_results)
+            print(f"Batch {i + 1}/{len(batches)} completed: {len(batch_results)} records")
+            print(f"Cleaning stats: {filtered_by}")
+
+    # Write all results to output file
+    with open(parsed_text_file, "w", encoding="utf-8") as out_f:
+        for i, (url, plain_text) in enumerate(all_results, 1):
+            out_f.write(f"=== Record {i} ===\n")
+            out_f.write(f"URL: {url}\n")
+            out_f.write(f"Content-Length: {len(plain_text)} characters\n")
+            out_f.write("-" * 80 + "\n")
+            out_f.write(plain_text)
+            out_f.write("\n" + "=" * 80 + "\n\n")
+
+    print(f"\nProcessed {len(all_results)} response records.")
     print(f"Results saved to: {parsed_text_file}")
 
 

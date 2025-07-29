@@ -1,5 +1,3 @@
-import gzip
-from fastwarc.warc import ArchiveIterator, WarcRecordType
 from resiliparse.extract.html2text import extract_plain_text
 from resiliparse.parse.encoding import detect_encoding
 
