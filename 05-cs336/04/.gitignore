@@ -171,3 +171,6 @@ pii_analysis_sample.txt
 sample_warc_parsed.txt
 sample.warc.gz
 sample.warc.wet.gz
+*.txt.gz
+enwiki-20240420-extracted_urls.txt
+.data

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any
 from cs336_data.a_html import extract_text_from_html_bytes
-from cs336_data.b_language_id import langauge_identification
+from cs336_data.b_language_id import language_identification
 from cs336_data.c_piid import remove_emails, remove_ip_addresses, remove_phone_numbers
 from cs336_data.d_harmful import check_nsfw, check_hatespeech
 from cs336_data.e_gopher_heuristics import gopher_filters
@@ -15,7 +15,7 @@ def run_extract_text_from_html_bytes(html_bytes: bytes) -> str | None:
 
 
 def run_identify_language(text: str) -> tuple[Any, float]:
-    return langauge_identification(text)
+    return language_identification(text)
 
 
 def run_mask_emails(text: str) -> tuple[str, int]:

@@ -4,11 +4,17 @@ import re
 langid_model = fasttext.load_model(".models/lid.176.bin")
 
 
-def langauge_identification(content: str = "Hi, my name is John"):
+def language_identification(
+    content: str = "Hi, my name is John",
+    determine_is_english: bool = False,
+    confidence_threshold: float = 0.9,
+):
     # TODO: why does it ask to not use \n
     prediction = langid_model.predict(re.sub(r"\n", "", content))
     label = prediction[0][0].replace("__label__", "")
     confidence = prediction[1].item()
+    if determine_is_english:
+        return label == "en" and confidence_threshold >= confidence
     return label, confidence
 
 
@@ -38,7 +44,7 @@ def process_lang_id():
                 if current_record and current_text:
                     text_content = "\n".join(current_text).strip()
                     if text_content:  # Only process non-empty content
-                        lang, confidence = langauge_identification(text_content)
+                        lang, confidence = language_identification(text_content)
                         results.append(
                             {
                                 "record": current_record,
@@ -73,7 +79,7 @@ def process_lang_id():
         if current_record and current_text:
             text_content = "\n".join(current_text).strip()
             if text_content:
-                lang, confidence = langauge_identification(text_content)
+                lang, confidence = language_identification(text_content)
                 results.append(
                     {
                         "record": current_record,
