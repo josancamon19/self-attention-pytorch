@@ -36,7 +36,7 @@ subsample_path = f".data/wikipedia_subsampled_{subsample_size}_urls.txt"
 subsample_warc_path = subsample_path.replace("_urls.txt", ".warc.gz")
 classifier_train_path = ".data/classifier.train.txt"
 classifier_valid_path = ".data/classifier.valid.txt"
-apply_gopher_filter = (False, True)  # negatives, positives
+apply_gopher_filter = (True, False)  # positive, negatives
 fasttext_model_path = ".models/quality_classifier.bin"
 
 
@@ -152,12 +152,11 @@ def create_dataset():
     pcount, ppath = warc_extract_pipeline(
         subsample_warc_path,
         process_gopher=apply_gopher_filter[0],
-        subsample_count=int(subsample_size * [0.25, 1][apply_gopher_filter[0]]),
     )
     ncount, npath = warc_extract_pipeline(
         ".data/sample.warc.gz",
-        subsample_count=int(negative_sampling * [0.25, 1][apply_gopher_filter[1]]),
         process_gopher=apply_gopher_filter[1],
+        subsample_count=int(negative_sampling * 0.25),
     )
     print("create_dataset retrieved positives, negatives:", pcount, ncount)
     print(ppath, npath)
@@ -188,7 +187,7 @@ def convert_to_fasttext_format(positive_path, negative_path, split: float = 0.8)
         for record in records:
             text = clean_text_for_fasttext(record)
             if text:
-                all_samples.append(f"__label__high_quality {text}")
+                all_samples.append(f"__label__wiki {text}")
 
     # Process negative examples (low quality)
     with open(negative_path, encoding="utf-8") as f:
@@ -197,7 +196,7 @@ def convert_to_fasttext_format(positive_path, negative_path, split: float = 0.8)
         for record in records:
             text = clean_text_for_fasttext(record)
             if text:
-                all_samples.append(f"__label__low_quality {text}")
+                all_samples.append(f"__label__cc {text}")
 
     # Shuffle all samples
     random.shuffle(all_samples)
@@ -222,7 +221,7 @@ def convert_to_fasttext_format(positive_path, negative_path, split: float = 0.8)
 
 
 def train_quality_classifier():
-    model = fasttext.train_supervised(input=classifier_train_path, epoch=25, lr=0.1, wordNgrams=2, dim=100)
+    model = fasttext.train_supervised(input=classifier_train_path, epoch=50, lr=1.0, wordNgrams=3, dim=100)
     model.save_model(fasttext_model_path)
     print(f"Model saved to: {fasttext_model_path}")
     print(model.test(classifier_valid_path))  # count, precision, f1
@@ -236,35 +235,29 @@ def train_quality_classifier():
     # - (67, 0.582089552238806, 0.582089552238806)
     # 2. not applying gopher to either
     # - (70, 0.5857142857142857, 0.5857142857142857)
-    
+
     # - I think applying gopher to positives make sense
     # -- trying now with 10k samples
+    # - (666, 0.8678678678678678, 0.8678678678678678)
+    # - changed hyperparams and moved it to 0.9
 
 
 def classify_quality(text):
-    # Load model
     model = fasttext.load_model(fasttext_model_path)
-
-    # Clean text same way as training data ~ clean the same way we parsed for training
-    import re
-
     text = text.replace("\n", " ").replace("\r", " ")
     text = re.sub(r"\s+", " ", text).strip()
-
-    # Predict
     labels, probabilities = model.predict(text, k=2)
     print(labels, probabilities)
 
     # Return label and confidence
     top_label = labels[0].replace("__label__", "")
     confidence = probabilities[0]
-
-    return {"label": top_label, "confidence": float(confidence), "is_high_quality": top_label == "high_quality"}
+    return top_label, confidence
 
 
 if __name__ == "__main__":
-    subsample()
-    urls_into_warc()
+    # subsample()
+    # urls_into_warc()
     create_dataset()
     train_quality_classifier()
     # print(classify_quality("asdasdasdasdasdfiuqodnoqiwdj"))

@@ -8,6 +8,7 @@ from cs336_data.c_piid import remove_emails, remove_ip_addresses, remove_phone_n
 from cs336_data.d_harmful import check_nsfw, check_hatespeech
 from cs336_data.e_gopher_heuristics import gopher_filters
 from cs336_data.g_deduplication import exact_deduplication, minhash_deduplication
+from cs336_data.f_quality_classifier import classify_quality
 
 
 def run_extract_text_from_html_bytes(html_bytes: bytes) -> str | None:
@@ -39,7 +40,7 @@ def run_classify_toxic_speech(text: str) -> tuple[Any, float]:
 
 
 def run_classify_quality(text: str) -> tuple[Any, float]:
-    raise NotImplementedError
+    return classify_quality(text)
 
 
 def run_gopher_quality_filter(text: str) -> bool:
