@@ -23,6 +23,8 @@ dependencies = [
     "warcat>=2.2.5",
     "pywb>=2.8.4",
     "aiohttp>=3.12.15",
+    "streamlit>=1.47.1",
+    "watchdog>=6.0.0",
 ]
 
 [tool.setuptools.packages.find]
