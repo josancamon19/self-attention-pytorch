@@ -91,3 +91,94 @@ def gopher_filters(text: str) -> dict:
             results["pass_filter"] = False
 
     return results
+
+sample = """
+  • Shows
+  • CBS NEWS
+  • CBS SPORTS
+  • Live TV
+  • Schedule
+  • TV Provider
+  • Sign In
+  • Try Paramount+
+Back to video
+    • Search shows
+    • Sign Up
+    • Sign In
+    • Shows
+    • CBS NEWS
+    • CBS SPORTS
+    • Live TV
+    • Schedule
+    • TV Provider
+
+404
+
+Sorry to interrupt your programming...
+...but the page you’re looking for doesn’t exist. You’ll be redirected to our latest episodes in 10 seconds, or you can browse your favorite CBS shows now.
+CBS Home
+
+  • Site Navigation
+
+  • Shows
+  • Live TV
+  • Schedule
+  • TV Provider
+  • Paramount+
+  • CBS News
+  • CBS Sports
+  • Shop
+
+  • Privacy & Terms
+
+  • Terms of Use
+  • Privacy Policy
+  • Your Privacy Choices
+  • California Notice
+
+  • Information
+
+  • Help/Contact Us
+  • Show Feedback
+  • Casting
+  • Closed Captioning
+  • Video Description
+  • Ratings Guidelines
+  • About Paramount
+  • Careers
+  • Anti-Bias Statement
+
+    Follow Us
+
+Terms of Use | Privacy Policy
+Do Not Sell My Personal Information |
+© 2025 Paramount. All rights reserved.
+    • Site Navigation
+    • Shows
+    • Live TV
+    • Schedule
+    • TV Provider
+    • Paramount+
+    • CBS News
+    • CBS Sports
+    • Shop
+    • Privacy & Terms
+    • Terms of Use
+    • Privacy Policy
+    • Your Privacy Choices
+    • California Notice
+    • Information
+    • Help/Contact Us
+    • Show Feedback
+    • Casting
+    • Closed Captioning
+    • Video Description
+    • Ratings Guidelines
+    • About Paramount
+    • Careers
+    • Anti-Bias Statement
+"""
+
+if __name__ == "__main__":
+    import json
+    print(json.dumps(gopher_filters(sample), indent=2))

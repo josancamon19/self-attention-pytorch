@@ -9,6 +9,7 @@ from fastwarc.warc import ArchiveIterator, WarcRecordType
 from multiprocessing import cpu_count
 from concurrent.futures import ProcessPoolExecutor
 from collections import defaultdict
+import random
 
 
 def process_record_batch(
@@ -25,9 +26,18 @@ def process_record_batch(
         url, html_content = record_data
         plain_text = extract_text_from_html_bytes(html_content)
 
-        if process_gopher and not gopher_filters(plain_text)["pass_filter"]:
-            filtered_by["gopher"] += 1
-            continue
+        if process_gopher:
+            result = gopher_filters(plain_text)
+            if not result["pass_filter"]:
+                # thought they were filtering too much from my hq wikipedia pages
+                # but actually it does make sense what's filtering
+                # but also, thinking deduplication should happen before this filter
+                # - lots of menu's repeated stuff, that'd clean up further here
+                # - but why's on the assignment as f_quality_classifier?
+                # print(url)
+                # print(sorted([(k, v) for k, v in result["filters"].items() if not v]))
+                filtered_by["gopher"] += 1
+                continue
         if process_language and not language_identification(plain_text, True, 0.9):
             filtered_by["language"] += 1
             continue
@@ -44,20 +54,24 @@ def process_record_batch(
     return results, filtered_by
 
 
-def pipeline(
+def warc_extract_pipeline(
     file_path: str = ".data/sample.warc.gz",
     process_language: bool = True,
     process_piid: bool = True,
     process_harmful: bool = True,
     process_gopher: bool = True,
+    subsample_count: int = None,
+    target_output_path: str | None = None,
 ):
     assert ".warc.gz" in file_path
 
-    dir_path = os.path.dirname(file_path)
-    base_name = os.path.basename(file_path)
-
-    name_without_ext = base_name.replace(".warc.gz", "")
-    parsed_text_file = os.path.join(dir_path, f"{name_without_ext}_parsed.txt")
+    if not target_output_path:
+        dir_path = os.path.dirname(file_path)
+        base_name = os.path.basename(file_path)
+        name_without_ext = base_name.replace(".warc.gz", "")
+        parsed_text_file = os.path.join(dir_path, f"{name_without_ext}_parsed.txt")
+    else:
+        parsed_text_file = target_output_path
 
     # Collect all records first
     all_records = []
@@ -69,6 +83,9 @@ def pipeline(
                 all_records.append((url, html_content))
 
     print(f"Collected {len(all_records)} records, processing with {cpu_count()} processes")
+    if subsample_count:
+        all_records = random.sample(all_records, subsample_count)
+        print(f"Records subsampled down to {len(all_records)} records")
 
     # Split records into batches for multiprocessing
     batch_size = max(1, len(all_records) // cpu_count())
@@ -89,7 +106,7 @@ def pipeline(
             batch_results, filtered_by = future.result()
             all_results.extend(batch_results)
             print(f"Batch {i + 1}/{len(batches)} completed: {len(batch_results)} records")
-            print(f"Cleaning stats: {filtered_by}")
+            # print(f"Cleaning stats: {filtered_by}")
 
     # Write all results to output file
     with open(parsed_text_file, "w", encoding="utf-8") as out_f:
@@ -103,7 +120,8 @@ def pipeline(
 
     print(f"\nProcessed {len(all_results)} response records.")
     print(f"Results saved to: {parsed_text_file}")
+    return len(all_results), parsed_text_file
 
 
 if __name__ == "__main__":
-    pipeline()
+    warc_extract_pipeline()
