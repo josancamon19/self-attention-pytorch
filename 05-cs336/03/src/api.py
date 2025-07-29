@@ -240,9 +240,9 @@ if __name__ == "__main__":
     #   D_opt = 1.43e+00 × C^0.511
     #   L_opt = 2.99e+02 × C^-0.108
     #   α + β = 1.000 (should ≈ 1.0)
-    
+
     # let's check what d_model, num_layers work
-    print(2.27e+08) # target
+    print(2.27e08)  # target
     print(estimate_params(1024, 18))
     print(estimate_params(768, 24))
     # ohhhh didn't test layers > 16, and assignment says up to 24!! ofc, cause at 227M target, 1024,16, is still at 200M
@@ -253,6 +253,3 @@ if __name__ == "__main__":
     # d_model 1024
     # num_layers 18
     # num_heads 8
-    
-    
-    pass
