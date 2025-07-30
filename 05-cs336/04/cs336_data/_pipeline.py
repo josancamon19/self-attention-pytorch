@@ -10,6 +10,13 @@ from multiprocessing import cpu_count
 from concurrent.futures import ProcessPoolExecutor
 from collections import defaultdict
 import random
+from enum import Enum
+
+
+class QualityProcessingType(Enum):
+    GOPHER = "gopher"
+    FASTTEXT = "fasttext"
+    NONE = "none"
 
 
 def process_record_batch(
@@ -17,7 +24,7 @@ def process_record_batch(
     process_language: bool,
     process_piid: bool,
     process_harmful: bool,
-    process_gopher: bool,
+    quality_processing: QualityProcessingType,
 ):
     """Process a batch of records in parallel"""
     results = []
@@ -26,7 +33,7 @@ def process_record_batch(
         url, html_content = record_data
         plain_text = extract_text_from_html_bytes(html_content)
 
-        if process_gopher:
+        if quality_processing == QualityProcessingType.GOPHER:
             result = gopher_filters(plain_text)
             if not result["pass_filter"]:
                 # thought they were filtering too much from my hq wikipedia pages
@@ -38,6 +45,10 @@ def process_record_batch(
                 # print(sorted([(k, v) for k, v in result["filters"].items() if not v]))
                 filtered_by["gopher"] += 1
                 continue
+        elif quality_processing == QualityProcessingType.FASTTEXT:
+            # TODO: implement
+            pass
+
         if process_language and not language_identification(plain_text, True, 0.9):
             filtered_by["language"] += 1
             continue
@@ -59,7 +70,7 @@ def warc_extract_pipeline(
     process_language: bool = True,
     process_piid: bool = True,
     process_harmful: bool = True,
-    process_gopher: bool = True,
+    quality_processing: QualityProcessingType = QualityProcessingType.GOPHER,
     subsample_count: int = None,
     target_output_path: str | None = None,
 ):
@@ -97,7 +108,7 @@ def warc_extract_pipeline(
         futures = []
         for batch in batches:
             future = executor.submit(
-                process_record_batch, batch, process_language, process_piid, process_harmful, process_gopher
+                process_record_batch, batch, process_language, process_piid, process_harmful, quality_processing
             )
             futures.append(future)
 
@@ -124,4 +135,4 @@ def warc_extract_pipeline(
 
 
 if __name__ == "__main__":
-    warc_extract_pipeline()
+    warc_extract_pipeline(file_path=".custom-data/2530-000.warc.gz")

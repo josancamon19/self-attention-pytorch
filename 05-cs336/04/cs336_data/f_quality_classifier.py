@@ -24,7 +24,7 @@
 # Deliverable: A quality classifier for use in the next subproblem.
 # (b) Write a function that labels a page as high or low-quality, and provides a confidence score in the
 # label.
-from cs336_data._pipeline import warc_extract_pipeline
+from cs336_data._pipeline import warc_extract_pipeline, QualityProcessingType
 import random
 import fasttext
 import re
@@ -151,11 +151,11 @@ Content-Length: {len(content_text.encode("utf-8"))}\r
 def create_dataset():
     pcount, ppath = warc_extract_pipeline(
         subsample_warc_path,
-        process_gopher=apply_gopher_filter[0],
+        quality_processing=QualityProcessingType.GOPHER,
     )
     ncount, npath = warc_extract_pipeline(
         ".data/sample.warc.gz",
-        process_gopher=apply_gopher_filter[1],
+        quality_processing=QualityProcessingType.NONE,
         subsample_count=int(negative_sampling * 0.25),
     )
     print("create_dataset retrieved positives, negatives:", pcount, ncount)
@@ -258,6 +258,5 @@ def classify_quality(text):
 if __name__ == "__main__":
     # subsample()
     # urls_into_warc()
-    create_dataset()
+    # create_dataset()
     train_quality_classifier()
-    # print(classify_quality("asdasdasdasdasdfiuqodnoqiwdj"))
