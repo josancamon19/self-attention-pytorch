@@ -1,6 +1,229 @@
 each warc.gz file is about 1GB of data, each one has about 25000 records, which after cleaning, reduce to like 10%
 need 7B tokens, given @train.py, let's focus on that part given a few files, and with default cleaning stuff
 
-
 Exploring Paloma dataset
-separator is <|endoftext|>
+document separator: <|endoftext|>
+
+Total tokens: 9,761,402
+
+============================================================
+PALOMA C4 100 DOMAINS VALIDATION DATA STATISTICS
+============================================================
+
+Basic Statistics:
+  Total characters: 43,843,604
+  Total lines: 185,869
+  Total words: 7,312,378
+  Total sentences: 462,657
+  Avg chars per line: 235.9
+  Avg words per line: 39.3
+  Avg chars per word: 6.0
+
+Document Structure:
+  Document separator token ID: 50256
+  Number of documents: 14,059
+  Avg tokens per document: 694.3
+  Median tokens per document: 499.0
+  Min tokens per document: 1
+  Max tokens per document: 21,199
+
+Language Patterns:
+  Uppercase ratio: 0.035
+  Digit ratio: 0.010
+  Punctuation ratio: 0.023
+
+Domain Analysis:
+  Total URLs found: 1049
+  Unique domains: 592
+  Most common domains:
+    www.w3.org                    : 226 # mostly from email exchanges, or an html doc, that has a bunch
+    svn.apache.org                : 34
+    go.microsoft.com              : 22
+    github.com                    : 19
+    bit.ly                        : 13
+
+Text Quality Indicators:
+  Average word length: 4.99
+  Words > 10 chars: 312,602 (4.3%)
+  Short lines (<20 chars): 472 (0.3%)
+
+============================================================
+SOURCES ANALYSIS
+============================================================
+Total documents to analyze: 14059
+
+news OUTLET ANALYSIS
+============================================================
+
+Top 20 Most Mentioned news Sources:
+Source                    Mentions Docs   Doc %   Char %  
+------------------------------------------------------------
+reuters                   664      463    3.3   % 3.3    %
+bbc                       603      242    1.7   % 2.4    %
+new york times            262      170    1.2   % 2.2    %
+cnn                       142      97     0.7   % 1.0    %
+bloomberg                 131      90     0.6   % 0.9    %
+fox news                  119      70     0.5   % 0.6    %
+associated press          112      99     0.7   % 1.3    %
+the guardian              98       74     0.5   % 1.1    %
+wall street journal       97       79     0.6   % 0.9    %
+washington post           96       81     0.6   % 1.3    %
+al jazeera                95       48     0.3   % 0.7    %
+cnbc                      88       62     0.4   % 0.6    %
+forbes                    88       53     0.4   % 0.7    %
+cbs news                  87       45     0.3   % 0.6    %
+the independent           74       63     0.4   % 0.8    %
+pbs                       72       36     0.3   % 0.7    %
+los angeles times         61       45     0.3   % 0.8    %
+daily mail                57       48     0.3   % 0.5    %
+huffington post           46       36     0.3   % 0.7    %
+msnbc                     35       16     0.1   % 0.2    %
+
+Overall news Content Statistics:
+  Documents with any news source: 1,758 / 14,059 (12.5%)
+  Characters in news-related docs: 6,666,708 / 43,843,604 (15.2%)
+  Unique news sources found: 53
+
+news-related Keywords Found:
+  exclusive           : 329 mentions
+  reporter            : 198 mentions
+  journalist          : 158 mentions
+  press release       : 146 mentions
+  headline            : 108 mentions
+  correspondent       : 104 mentions
+  editorial           : 102 mentions
+  breaking news       : 28 mentions
+  newsroom            : 19 mentions
+
+general OUTLET ANALYSIS
+============================================================
+
+Top 20 Most Mentioned general Sources:
+Source                    Mentions Docs   Doc %   Char %  
+------------------------------------------------------------
+
+Overall general Content Statistics:
+  Documents with any general source: 0 / 14,059 (0.0%)
+  Characters in general-related docs: 0 / 43,843,604 (0.0%)
+  Unique general sources found: 0
+
+general-related Keywords Found:
+   stock              : 1,218 mentions
+  $                   : 327 mentions
+   NFL                : 275 mentions
+   USB                : 247 mentions
+   laptop             : 246 mentions
+   NBA                : 144 mentions
+
+============================================================
+FASTTEXT MODEL CLASSIFICATION ANALYSIS
+============================================================
+Loading FastText models...
+AG News labels: ['__label__4', '__label__2', '__label__3', '__label__1']
+Amazon Review labels: ['__label__2', '__label__1', '__label__5', '__label__3', '__label__4']
+Yahoo Answers labels: ['__label__5', '__label__10', '__label__7', '__label__2', '__label__6', '__label__4', '__label__8', '__label__1', '__label__3', '__label__9']
+
+Classifying 14059 documents...
+
+============================================================
+HIGH-CONFIDENCE CLASSIFICATIONS (score > 0.8)
+============================================================
+
+AG News (High Confidence):
+  High-confidence documents: 5,241 / 14,059 (37.3%)
+    4                   : 2918 ( 55.7%)
+    2                   : 1334 ( 25.5%)
+    1                   :  521 (  9.9%)
+    3                   :  468 (  8.9%)
+
+Amazon Reviews (High Confidence):
+  High-confidence documents: 60 / 14,059 (0.4%)
+    5                   :   46 ( 76.7%)
+    1                   :   14 ( 23.3%)
+
+Yahoo Answers (High Confidence):
+  High-confidence documents: 3,341 / 14,059 (23.8%)
+    10                  :  804 ( 24.1%)
+    6                   :  734 ( 22.0%)
+    5                   :  560 ( 16.8%)
+    7                   :  449 ( 13.4%)
+    8                   :  312 (  9.3%)
+    2                   :  230 (  6.9%)
+    4                   :  128 (  3.8%)
+    3                   :  111 (  3.3%)
+    9                   :    7 (  0.2%)
+    1                   :    6 (  0.2%)
+
+Improved Code Document Detection Results:
+  Documents identified as code: 7 / 14059 (0.0%)
+  Characters in code documents: 43,823 / 43,843,604 (0.1%)
+
+Top 10 Code Documents (by score):
+Doc#  Score  Length   Key Indicators
+------------------------------------------------------------
+11326 0.306  7037     html:118, files:1
+3753  0.294  9164     files:7
+9893  0.286  2382     files:3
+3798  0.276  2344     files:1
+7630  0.238  5081     files:23
+9963  0.213  15956    files:8
+3772  0.209  1859     files:2
+
+Sample from highest scoring code document (score: 0.306):
+------------------------------------------------------------
+ttp://www.w3.org/1999/xhtml">added ProxyUrlModule (Bug #33742), credits to Felix Roethenbacher</td><td xmlns="http://www.w3.org/1999/xhtml">andreas</td><td xmlns="http://www.w3.org/1999/xhtml">add</td><td xmlns="http://www.w3.org/1999/xhtml"> <a href="http://svn.apache.org/viewcvs.cgi?rev=178626&amp;view=rev">Diff</a> </td></tr><tr class="row1"><td xmlns="http://www.w3.org/1999/xhtml">2005-05-26</td><td xmlns="http://www.w3.org/1999/xhtml">2.0</td><td xmlns="http://www.w3.org/1999/xhtml">forward query string during login usecase</td><td xmlns="http://www.w3.org/1999/xhtml">andreas</td><td xmlns="http://www.w3.org/1999/xhtml">update</td><td xmlns="http://www.w3.org/1999/xhtml"> <a href="http://svn.apache.org/viewcvs.cgi?rev=178613&amp;view=rev">Diff</a> </td></tr><tr class="row2"><td xmlns=...
+
+
+============================================================
+ADDITIONAL DATASET INSIGHTS FOR FILTERING STRATEGY
+============================================================
+
+Document Length Distribution:
+  Character lengths - Mean: 3106, Median: 2238
+  Token lengths - Mean: 693, Median: 498
+  Short docs (<500 chars): 13 (0.1%)
+  Long docs (>5000 chars): 1703 (12.1%)
+
+Readability Analysis (Flesch Reading Ease, sample of 100 docs):
+https://simple.wikipedia.org/wiki/Flesch_Reading_Ease
+
+  Mean readability: 63.8
+  Very easy (90-100): 0 (0.0%)
+  Easy (80-90): 4 (4.0%)
+  Standard (70-80): 27 (27.0%)
+  Difficult (<70): 69 (69.0%)
+
+Repetition Analysis:
+  Mean 5-gram repetition ratio: 0.004
+  High repetition docs (>10%): 0 (0.0%)
+
+Text Quality Indicators:
+  Excessive Caps: 250 docs (1.8%)
+  Excessive Numbers: 2 docs (0.0%)
+  Excessive Punct: 0 docs (0.0%)
+  Very Short Sentences: 21 docs (0.1%)
+  No Punctuation: 4 docs (0.0%)
+
+Vocabulary Analysis:
+  Total vocabulary: 374,506 unique words
+  Total words: 7,312,378
+  Type-token ratio: 0.0512
+  Content words (non-stop, >2 chars): 372,317
+  Spam indicator words: 34,416 (0.471% of all words)
+
+
+
+Given this stats
+- No coding needed
+- 40% is news related content, can filter a lot of sources for news articles, and cleanup the templating e.g. menu page (very imp)
+- almost no repetition in the dataset
+- dataset is super clean, no ellipsis, no uppercase, no spam content, no dumb website content
+- barely has URL'S
+- a lot of tech reviews as well.
+- sports outlets, a bit, but nothing super relevant
+
+Things I wanna know
+- how much of this dataset is books related
+- personal blogs?
+- companies mentions Google, Facebook, Twitter
+- reddit?

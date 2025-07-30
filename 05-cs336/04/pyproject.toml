@@ -25,6 +25,7 @@ dependencies = [
     "aiohttp>=3.12.15",
     "streamlit>=1.47.1",
     "watchdog>=6.0.0",
+    "textstat>=0.7.8",
 ]
 
 [tool.setuptools.packages.find]
