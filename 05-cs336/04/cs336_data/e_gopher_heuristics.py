@@ -86,11 +86,12 @@ def gopher_filters(text: str) -> dict:
         alphabetic_ratio = alphabetic_word_count / word_count
         results["alphabetic_word_ratio"] = alphabetic_ratio
 
-        if alphabetic_ratio < 0.8:
+        if alphabetic_ratio < 0.6:  # 0.8
             results["filters"]["alphabetic_filter"] = False
             results["pass_filter"] = False
 
     return results
+
 
 sample = """
   • Shows
@@ -181,4 +182,5 @@ Do Not Sell My Personal Information |
 
 if __name__ == "__main__":
     import json
+
     print(json.dumps(gopher_filters(sample), indent=2))
