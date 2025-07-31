@@ -21,7 +21,6 @@ dependencies = [
     "tldextract>=5.3.0",
     "warcio>=1.7.5",
     "warcat>=2.2.5",
-    "pywb>=2.8.4",
     "aiohttp>=3.12.15",
     "streamlit>=1.47.1",
     "watchdog>=6.0.0",

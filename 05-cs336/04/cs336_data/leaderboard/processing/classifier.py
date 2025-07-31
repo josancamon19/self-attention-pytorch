@@ -5,13 +5,13 @@ import fasttext
 
 
 def create_low_quality_dataset():
-    from cs336_data._pipeline import warc_extract_pipeline, QualityProcessingType
+    from cs336_data.extract import process_warc_file_parallel, QualityProcessingType
 
     _dir = "cs336_data/leaderboard/.data/"
-    count, path1 = warc_extract_pipeline(
+    count, path1 = process_warc_file_parallel(
         file_path=f"{_dir}00000.warc.gz", quality_processing=QualityProcessingType.NONE
     )
-    count2, path2 = warc_extract_pipeline(
+    count2, path2 = process_warc_file_parallel(
         file_path=f"{_dir}00001.warc.gz", quality_processing=QualityProcessingType.NONE
     )
 
@@ -73,7 +73,7 @@ def create_low_quality_dataset():
 
 
 def create_fasttext_classifier():
-    paloma_file = "cs336_data/leaderboard/.data/paloma_c4_100_domains_validation.txt"
+    paloma_file = "cs336_data/leaderboard/data/paloma_c4_100.txt"
     negative_file = "cs336_data/leaderboard/.data/classifier_negative_samples.txt"
     classifier_train_path = "cs336_data/leaderboard/.data/classifier_train.txt"
     classifier_valid_path = "cs336_data/leaderboard/.data/classifier_valid.txt"
@@ -176,3 +176,7 @@ if __name__ == "__main__":
     create_low_quality_dataset()
     create_fasttext_classifier()
     # in extract.py, call check_separate_sample_with_paloma_filtering and double check the actual filter
+    # 00000 and 00001 with the dumb filters above has 7.4k at each, initially each has 24k records
+    # this same files with gopher filter has about 2.4k
+    # now, 00002 with the paloma filter has 420
+    # so the ratio is ≈ 2%, so each .warc file has about 800k tokens. I need 7B, lol, 9000 .warc files? WTF, each .warc is 1GB, so need to process, 9TB, .-.

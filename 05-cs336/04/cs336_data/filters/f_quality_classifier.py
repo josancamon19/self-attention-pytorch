@@ -55,14 +55,14 @@ def subsample_urls():
 
 
 def create_dataset():
-    from cs336_data.extract import warc_extract_pipeline, QualityProcessingType
+    from cs336_data.extract import process_warc_file_parallel, QualityProcessingType
     from cs336_data._fasttext_util import clean_text_for_fasttext
 
-    pcount, positive_path = warc_extract_pipeline(
+    pcount, positive_path = process_warc_file_parallel(
         subsample_warc_path,
         quality_processing=QualityProcessingType.GOPHER,
     )
-    ncount, negative_path = warc_extract_pipeline(
+    ncount, negative_path = process_warc_file_parallel(
         ".data/sample.warc.gz",
         quality_processing=QualityProcessingType.NONE,
         subsample_count=int(negative_sampling * 0.25),
