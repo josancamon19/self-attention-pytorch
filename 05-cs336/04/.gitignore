@@ -1,9 +1,8 @@
 CC-MAIN-2023-50/
-*.bin
+# *.bin
 
 nav
 tags
-data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
