@@ -24,8 +24,7 @@
 # Deliverable: A quality classifier for use in the next subproblem.
 # (b) Write a function that labels a page as high or low-quality, and provides a confidence score in the
 # label.
-from cs336_data._pipeline import warc_extract_pipeline, QualityProcessingType
-from cs336_data._fasttext_util import clean_text_for_fasttext
+
 import random
 import fasttext
 import re
@@ -150,6 +149,8 @@ Content-Length: {len(content_text.encode("utf-8"))}\r
 
 
 def create_dataset():
+    from cs336_data._pipeline import warc_extract_pipeline, QualityProcessingType
+
     pcount, ppath = warc_extract_pipeline(
         subsample_warc_path,
         quality_processing=QualityProcessingType.GOPHER,
@@ -167,8 +168,9 @@ def create_dataset():
     convert_to_fasttext_format(ppath, npath)
 
 
-
 def convert_to_fasttext_format(positive_path, negative_path, split: float = 0.8):
+    from cs336_data._fasttext_util import clean_text_for_fasttext
+
     # Collect all samples first
     all_samples = []
 
@@ -239,7 +241,7 @@ def classify_quality(text):
     text = text.replace("\n", " ").replace("\r", " ")
     text = re.sub(r"\s+", " ", text).strip()
     labels, probabilities = model.predict(text, k=2)
-    print(labels, probabilities)
+    # print(labels, probabilities)
 
     # Return label and confidence
     top_label = labels[0].replace("__label__", "")

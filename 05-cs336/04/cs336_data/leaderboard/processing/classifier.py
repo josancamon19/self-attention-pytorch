@@ -1,4 +1,4 @@
-from cs336_data._fasttext_util import clean_text_for_fasttext
+from cs336_data.utils.fasttext_util import clean_text_for_fasttext
 import os
 import random
 import fasttext
@@ -162,14 +162,17 @@ def create_fasttext_classifier():
     return model
 
 
-def matches_paloma_quality(text: str, quality_threshold: float = 0.7) -> bool:
+try:
     fasttext_model_path = "cs336_data/leaderboard/.models/paloma_classifier.bin"
     model = fasttext.load_model(fasttext_model_path)
-    cleaned_text = clean_text_for_fasttext(text)
+except:  # noqa: E722
+    pass
 
+
+def matches_paloma_quality(text: str, quality_threshold: float = 0.7) -> bool:
+    cleaned_text = clean_text_for_fasttext(text)
     if not cleaned_text or len(cleaned_text.split()) < 10:
         return False
-
     prediction = model.predict(cleaned_text, k=2)
     return prediction[0][0] == "__label__quality" and prediction[1][0] > quality_threshold
 
@@ -177,4 +180,5 @@ def matches_paloma_quality(text: str, quality_threshold: float = 0.7) -> bool:
 if __name__ == "__main__":
     # create_low_quality_dataset()
     # create_fasttext_classifier()
-    matches_paloma_quality("")  # seems to be good tbh
+    # matches_paloma_quality("")  # seems to be good tbh
+    pass

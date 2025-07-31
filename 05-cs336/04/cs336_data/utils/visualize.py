@@ -1,23 +1,12 @@
-# TODO:
-# - [ ] train classifier
-# - [ ] estimate confidence thresholds
-# - [ ] view a full cleaning examples, compare sizes, viz on streamlit, yea
-
-# -- prioritize finishing it
-# -- and seeing the data
-# -- for some reason this assignment/leaderboard
-# -- gives 0 excitement
-
-
 import streamlit as st
 import gzip
 import pandas as pd
 from fastwarc.warc import ArchiveIterator, WarcRecordType
-from cs336_data.a_html import extract_text_from_html_bytes
-from cs336_data.b_language_id import language_identification
-from cs336_data.c_piid import remove_emails, remove_ip_addresses, remove_phone_numbers
-from cs336_data.d_harmful import is_harmful
-from cs336_data.e_gopher_heuristics import gopher_filters
+from cs336_data.filters.a_html import extract_text_from_html_bytes
+from cs336_data.filters.b_language_id import language_identification
+from cs336_data.filters.c_piid import remove_emails, remove_ip_addresses, remove_phone_numbers
+from cs336_data.filters.d_harmful import is_harmful
+from cs336_data.filters.e_gopher_heuristics import gopher_filters
 
 
 @st.cache_data

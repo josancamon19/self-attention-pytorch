@@ -1,9 +1,9 @@
-from cs336_data.a_html import extract_text_from_html_bytes
-from cs336_data.b_language_id import language_identification
-from cs336_data.c_piid import remove_emails, remove_ip_addresses, remove_phone_numbers
-from cs336_data.d_harmful import is_harmful
-from cs336_data.e_gopher_heuristics import gopher_filters
-from cs336_data.g_deduplication import exact_deduplication as run_exact_deduplication
+from cs336_data.filters.a_html import extract_text_from_html_bytes
+from cs336_data.filters.b_language_id import language_identification
+from cs336_data.filters.c_piid import remove_emails, remove_ip_addresses, remove_phone_numbers
+from cs336_data.filters.d_harmful import is_harmful
+from cs336_data.filters.e_gopher_heuristics import gopher_filters
+from cs336_data.filters.f_quality_classifier import classify_quality as matches_wiki_quality
 from cs336_data.leaderboard.processing.classifier import matches_paloma_quality
 import os
 import gzip
@@ -100,10 +100,9 @@ def warc_extract_pipeline(
     process_language: bool = True,
     process_piid: bool = True,
     process_harmful: bool = True,
-    quality_processing: QualityProcessingType = QualityProcessingType.GOPHER,
-    subsample_count: int = None,  # quality_classifier creation
-    # leaderboard required
-    custom_preprocessing: bool = False,
+    quality_processing=QualityProcessingType.GOPHER,
+    custom_preprocessing: bool = True,  # not asked, but imo is needed
+    subsample_count: int = None,
     valid_urls_patterns: list = [],
 ):
     assert ".warc.gz" in file_path
@@ -193,5 +192,5 @@ if __name__ == "__main__":
     warc_extract_pipeline(
         file_path="cs336_data/leaderboard/.data/2530-002.warc.gz",
         quality_processing=QualityProcessingType.PALOMA,
-        custom_preprocessing=True,  # match structure so classifier diff are mainly on semantics
+        subsample_count=100,
     )
