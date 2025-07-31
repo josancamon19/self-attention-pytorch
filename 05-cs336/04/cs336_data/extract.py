@@ -146,6 +146,7 @@ def process_warc_file(
                     processed_text = process_single_record(
                         html_content, True, True, True, QualityProcessingType.PALOMA, True
                     )
+                    del html_content
 
                     if processed_text is not None:
                         out_f.write(processed_text)

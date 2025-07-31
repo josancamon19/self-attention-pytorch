@@ -108,3 +108,17 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # 50 files, 5k records, fuck me
+    # 151 seconds, 45 seconds per file, with 32 nprocs running, 1 takes an outsized amount, 5 seconds per file
+    # 1. filters are too high?
+    # ~ like 100 records out of 24k is absurd.
+    # [ ] what's cutting the most? is it paloma? most likely? reduce threshold? reduce other thresholds?
+    # ~ can't process more than 10TB, current 100/24000, lol 100M files, wtf 100
+    # ~ nvm, was not considering 100 * tokens, is not tokens, count again and run again ~ somewhere around 700k chars per file * 50 / 4
+    # ~ about 175k tokens per warc file
+    # ~ it'd require about 30000 files, I need at least 3 to 5 x more per file
+    # ~ if I get a 128 nprocs it should be way way faster.
+    # # let's say I keep it at 100 ratio, 30000 files ≈ 30TB ≈ about 3h, not terrible at all, WTF?
+    # TODO: yea do it, but first, improve this a bit, save .warc.gz in a separate folder, same for .txt, then maybe download + process then remove file
+    # TODO: vibe check results, minor script to move them into a single .txt, and provide some general stats with tokenizer.
+    # - yea need to delete them once processed, cause the machine has max 6TB of space
