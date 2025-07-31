@@ -3,7 +3,6 @@ import os
 import sys
 import time
 import subprocess
-import tempfile
 from multiprocessing import Pool, cpu_count, Process
 from concurrent.futures import ThreadPoolExecutor
 import psutil
@@ -53,7 +52,7 @@ def download_process_delete_warc(url_info, delete_downloads=True):
 
     # Check if file is already downloaded
     temp_path = None
-    if download_path.exists():
+    if download_path.exists() and download_path.stat().st_size >= 900 * 1024 * 1024:
         # Use existing downloaded file
         file_to_process = str(download_path)
     else:
@@ -119,7 +118,14 @@ def download_files_ahead(url_infos, script_dir, start_after=None):
             full_filename = warc_path.split("/")[-1]
             parts = full_filename.split("-")
             filename = f"{parts[-2]}-{parts[-1]}"  # "20250707213638-00000.warc.gz"
+            base_name = filename.replace(".warc.gz", "")
             download_path = download_dir / filename
+
+            # Check if already processed - skip download entirely
+            processed_output = script_dir / ".data/processed" / f"{base_name}.txt"
+            if processed_output.exists():
+                skipped_count += 1
+                continue
 
             # Skip if already downloaded
             if download_path.exists():
@@ -188,8 +194,8 @@ def main(target_count: int = 100, delete_downloads: bool = True):
 
     # Start background downloader process after initial batch
     downloader_process = Process(target=download_files_ahead, args=(url_infos, script_dir, num_processes))
-    downloader_process.daemon = True
-    downloader_process.start()
+    # downloader_process.daemon = True # bunch of race conditions cases to manage
+    # downloader_process.start()
     print(f"Started background downloader for files {num_processes}+")
 
     # Process files in parallel with progress tracking
@@ -278,6 +284,11 @@ if __name__ == "__main__":
     # ~ it'd require about 30000 files, I need at least 3 to 5 x more per file
     # ~ if I get a 128 nprocs it should be way way faster.
     # # let's say I keep it at 100 ratio, 30000 files ≈ 30TB ≈ about 3h, not terrible at all, WTF?
-    # TODO: yea do it, but first, improve this a bit, save .warc.gz in a separate folder, same for .txt, then maybe download + process then remove file
     # TODO: vibe check results, minor script to move them into a single .txt, and provide some general stats with tokenizer.
     # - yea need to delete them once processed, cause the machine has max 6TB of space
+    # ~
+    # deduplicate call after first 8000 files processed
+    # - then, check how many tokens are there, compute some thoughts with it
+    # - create a script to tokenize into npy file or however format
+    # - trigger a partial run with less steps than mentioned.
+    # - extract the remaining needed data
