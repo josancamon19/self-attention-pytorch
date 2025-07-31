@@ -3,6 +3,7 @@ from cs336_data.b_language_id import language_identification
 from cs336_data.c_piid import remove_emails, remove_ip_addresses, remove_phone_numbers
 from cs336_data.d_harmful import is_harmful
 from cs336_data.e_gopher_heuristics import gopher_filters
+from cs336_data.g_deduplication import exact_deduplication as run_exact_deduplication
 import os
 import gzip
 from fastwarc.warc import ArchiveIterator, WarcRecordType
@@ -11,12 +12,19 @@ from concurrent.futures import ProcessPoolExecutor
 from collections import defaultdict
 import random
 from enum import Enum
+import re
+import shutil
+import fasttext
 
 
 class QualityProcessingType(Enum):
     GOPHER = "gopher"
     FASTTEXT = "fasttext"
+    PALOMA = "paloma"
     NONE = "none"
+
+
+# paloma_quality_model = fasttext.load_model("cs336_data/leaderboard/.models/paloma_classifier.bin")
 
 
 def process_record_batch(
@@ -25,6 +33,7 @@ def process_record_batch(
     process_piid: bool,
     process_harmful: bool,
     quality_processing: QualityProcessingType,
+    custom_preprocessing: bool,
 ):
     """Process a batch of records in parallel"""
     results = []
@@ -32,6 +41,36 @@ def process_record_batch(
     for record_data in records_batch:
         url, html_content = record_data
         plain_text = extract_text_from_html_bytes(html_content)
+
+        if process_language and not language_identification(plain_text, True, 0.6):
+            filtered_by["language"] += 1
+            continue
+
+        if process_harmful and is_harmful(plain_text, 0.8):
+            filtered_by["harmful"] += 1
+            continue
+
+        if custom_preprocessing:
+            lines = plain_text.split("\n")
+            del plain_text
+            cleaned_lines = []
+
+            for line in lines:
+                line = line.strip()
+                if line.endswith("..."):
+                    continue  # no at all of this data, and most times cause it's cut here, not really making sense
+                if line.startswith("• "):  # TODO: I might add some of this data at some point but prob not
+                    line = line[2:].strip()
+                if not line:
+                    continue
+                if len(line) > 100:  # split is too expensive
+                    cleaned_lines.append(line)
+                    continue
+
+                if sum([len(w) >= 3 for w in line.split()]) < 5:  # some • or random symbols
+                    continue
+                cleaned_lines.append(line)
+            plain_text = "\n".join(cleaned_lines)
 
         if quality_processing == QualityProcessingType.GOPHER:
             result = gopher_filters(plain_text)
@@ -46,15 +85,7 @@ def process_record_batch(
                 filtered_by["gopher"] += 1
                 continue
         elif quality_processing == QualityProcessingType.FASTTEXT:
-            # TODO: implement
-            pass
-
-        if process_language and not language_identification(plain_text, True, 0.9):
-            filtered_by["language"] += 1
-            continue
-        if process_harmful and is_harmful(plain_text, 0.8):
-            filtered_by["harmful"] += 1
-            continue
+            raise NotImplementedError()
 
         if process_piid:
             plain_text, _ = remove_emails(plain_text)
@@ -67,12 +98,15 @@ def process_record_batch(
 
 def warc_extract_pipeline(
     file_path: str = ".data/sample.warc.gz",
+    target_output_path: str | None = None,
     process_language: bool = True,
     process_piid: bool = True,
     process_harmful: bool = True,
     quality_processing: QualityProcessingType = QualityProcessingType.GOPHER,
-    subsample_count: int = None,
-    target_output_path: str | None = None,
+    subsample_count: int = None,  # quality_classifier creation
+    # leaderboard required
+    custom_preprocessing: bool = False,
+    valid_urls_patterns: list = [],
 ):
     assert ".warc.gz" in file_path
 
@@ -86,14 +120,31 @@ def warc_extract_pipeline(
 
     # Collect all records first
     all_records = []
+    skipped_by_url_count = 0
     with gzip.open(file_path, "rb") as stream:
         for record in ArchiveIterator(stream):
             if record.record_type == WarcRecordType.response:
                 url = record.headers.get("WARC-Target-URI", "Unknown URL")
-                html_content = record.reader.read()
-                all_records.append((url, html_content))
+                if valid_urls_patterns:
+                    url_matches = False
+                    for pattern in valid_urls_patterns:
+                        if re.search(pattern, url, re.IGNORECASE):
+                            url_matches = True
+                            break
+
+                    if url_matches:
+                        html_content = record.reader.read()
+                        all_records.append((url, html_content))
+                    else:
+                        skipped_by_url_count += 1
+                else:
+                    html_content = record.reader.read()
+                    all_records.append((url, html_content))
 
     print(f"Collected {len(all_records)} records, processing with {cpu_count()} processes")
+    if skipped_by_url_count:
+        print(f"skipped {skipped_by_url_count} cause not in URL matches")
+
     if subsample_count:
         all_records = random.sample(all_records, subsample_count)
         print(f"Records subsampled down to {len(all_records)} records")
@@ -108,7 +159,13 @@ def warc_extract_pipeline(
         futures = []
         for batch in batches:
             future = executor.submit(
-                process_record_batch, batch, process_language, process_piid, process_harmful, quality_processing
+                process_record_batch,
+                batch,
+                process_language,
+                process_piid,
+                process_harmful,
+                quality_processing,
+                custom_preprocessing,
             )
             futures.append(future)
 
@@ -133,6 +190,3 @@ def warc_extract_pipeline(
     print(f"Results saved to: {parsed_text_file}")
     return len(all_results), parsed_text_file
 
-
-if __name__ == "__main__":
-    warc_extract_pipeline(file_path=".custom-data/2530-000.warc.gz")
