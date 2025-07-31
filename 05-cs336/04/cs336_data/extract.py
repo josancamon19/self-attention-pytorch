@@ -112,6 +112,8 @@ def process_record_batch(
         plain_text = process_single_record(
             html_content, process_language, process_piid, process_harmful, quality_processing, custom_preprocessing
         )
+        if not plain_text:
+            continue
         results.append((url, plain_text))
     return results, filtered_by
 
@@ -120,8 +122,9 @@ def process_warc_file(
     file_path: str,
     target_output_path: str | None = None,
     subsample_count: int = None,
+    low_ram_usage: bool = False,
 ):
-    """process and stream to disk directly, faster(?)"""
+    """Process WARC file with option for high-memory mode"""
     assert ".warc.gz" in file_path
 
     if not target_output_path:
@@ -132,10 +135,29 @@ def process_warc_file(
     else:
         output_path = target_output_path
 
-    # Stream and process records directly to disk
-    processed_count = 0
+    if low_ram_usage:
+        # Original streaming approach - low RAM usage
+        processed_count = 0
+        with open(output_path, "w", encoding="utf-8") as out_f:
+            with gzip.open(file_path, "rb") as stream:
+                for record in ArchiveIterator(stream):
+                    if record.record_type == WarcRecordType.response:
+                        if subsample_count and processed_count >= subsample_count:
+                            break
 
-    with open(output_path, "w", encoding="utf-8") as out_f:
+                        html_content = record.reader.read()
+                        processed_text = process_single_record(
+                            html_content, True, True, True, QualityProcessingType.PALOMA, True
+                        )
+                        if processed_text is not None:
+                            out_f.write(processed_text)
+                            out_f.write("<|endoftext|>")
+                            processed_count += 1
+    else:
+        # High-memory mode - process everything in RAM then write once
+        all_processed_texts = []
+        processed_count = 0
+
         with gzip.open(file_path, "rb") as stream:
             for record in ArchiveIterator(stream):
                 if record.record_type == WarcRecordType.response:
@@ -146,14 +168,15 @@ def process_warc_file(
                     processed_text = process_single_record(
                         html_content, True, True, True, QualityProcessingType.PALOMA, True
                     )
-                    del html_content
-
                     if processed_text is not None:
-                        out_f.write(processed_text)
-                        out_f.write("<|endoftext|>")
+                        all_processed_texts.append(processed_text)
                         processed_count += 1
 
-    # print(f"Streaming processing completed: {processed_count} records")
+        # Single write operation with large buffer
+        with open(output_path, "w", encoding="utf-8", buffering=32 * 1024 * 1024) as out_f:  # 32MB buffer
+            text_content = "<|endoftext|>".join(all_processed_texts)
+            out_f.write(text_content)
+
     return processed_count, output_path
 
 
@@ -241,6 +264,8 @@ def process_warc_file_parallel(
     # Write all results to output file
     with open(parsed_text_file, "w", encoding="utf-8") as out_f:
         for i, (url, plain_text) in enumerate(all_results, 1):
+            if not plain_text:
+                continue
             if include_metadata:
                 out_f.write(f"=== Record {i} ===\n")
                 out_f.write(f"URL: {url}\n")
@@ -264,6 +289,8 @@ def check_separate_sample_with_paloma_filtering():
         quality_processing=QualityProcessingType.PALOMA,
         # subsample_count=100,
     )
+    # 600k tokens? per file, 380/24k records, 1.7%, 11k .warc files to process
+    # 1 takes 11 seconds or so ~ 33 hours .-. if individual
 
 
 if __name__ == "__main__":

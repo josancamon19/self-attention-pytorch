@@ -12,7 +12,7 @@ def download_warc_files(target_count: int, max_workers: int = 8) -> None:
         max_workers: Maximum number of parallel downloads
     """
     warc_paths_file = Path(__file__).parent / "data" / "warc.paths"
-    output_dir = Path(__file__).parent / ".data"
+    output_dir = Path(__file__).parent / ".data/warcs"
 
     # Ensure output directory exists
     output_dir.mkdir(exist_ok=True)
@@ -33,7 +33,7 @@ def download_warc_files(target_count: int, max_workers: int = 8) -> None:
 
         try:
             cmd = ["wget", "-O", str(output_file), url]
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            subprocess.run(cmd, capture_output=False, text=False, check=True)
             return index, True, f"Downloaded {output_file.name}"
         except subprocess.CalledProcessError as e:
             return index, False, f"Failed to download {output_file.name}: {e}"
