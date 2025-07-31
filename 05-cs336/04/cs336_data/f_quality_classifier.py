@@ -166,17 +166,18 @@ def create_dataset():
     convert_to_fasttext_format(ppath, npath)
 
 
+def clean_text_for_fasttext(text):
+    text = re.sub(r"^\d+ ===\n", "", text)  # Remove "1 ===\n"
+    text = re.sub(r"^URL: .*?\n", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^Content-Length: .*?\n", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^-{80,}\n", "", text, flags=re.MULTILINE)  # 80+ dashes
+    text = re.sub(r"^={80,}\n*", "", text, flags=re.MULTILINE)  # 80+ equals
+
+    text = text.replace("\n", " ").replace("\r", " ")
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def convert_to_fasttext_format(positive_path, negative_path, split: float = 0.8):
-    def clean_text_for_fasttext(text):
-        text = re.sub(r"^\d+ ===\n", "", text)  # Remove "1 ===\n"
-        text = re.sub(r"^URL: .*?\n", "", text, flags=re.MULTILINE)
-        text = re.sub(r"^Content-Length: .*?\n", "", text, flags=re.MULTILINE)
-        text = re.sub(r"^-{80,}\n", "", text, flags=re.MULTILINE)  # 80+ dashes
-        text = re.sub(r"^={80,}\n*", "", text, flags=re.MULTILINE)  # 80+ equals
-
-        text = text.replace("\n", " ").replace("\r", " ")
-        return re.sub(r"\s+", " ", text).strip()
-
     # Collect all samples first
     all_samples = []
 

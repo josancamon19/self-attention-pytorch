@@ -14,5 +14,5 @@ def language_identification(
     label = prediction[0][0].replace("__label__", "")
     confidence = prediction[1].item()
     if determine_is_english:
-        return label == "en" and confidence_threshold >= confidence
+        return label == "en" and confidence >= confidence_threshold
     return label, confidence

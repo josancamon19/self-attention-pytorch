@@ -212,7 +212,7 @@ Vocabulary Analysis:
   Spam indicator words: 34,416 (0.471% of all words)
 
 
-
+```
 Given this stats
 - No coding needed
 - 40% is news related content, can filter a lot of sources for news articles, and cleanup the templating e.g. menu page (very imp)
@@ -221,9 +221,109 @@ Given this stats
 - barely has URL'S
 - a lot of tech reviews as well.
 - sports outlets, a bit, but nothing super relevant
+- not product reviews, like amazon model says 0.4%
 
 Things I wanna know
-- how much of this dataset is books related
+- books? I don't think so, cause documents are very small on avg
 - personal blogs?
 - companies mentions Google, Facebook, Twitter
 - reddit?
+- academic content?
+- emails? re: >> format
+- if I run this dataset through my filters, how much of it is left? what's being filtered, I'd say 98%+ would remain
+
+weird things
+- if I look at the data, I'd say at least 2% is code, specially like shell interactions, and PR's (text mostly but PR's format)
+
+```
+
+Company/Tech Company Analysis:
+  google      : 1,938 mentions
+  facebook    : 1,646 mentions
+  apple       : 1,597 mentions
+  microsoft   : 1,129 mentions
+  twitter     : 953 mentions
+  amazon      : 809 mentions
+  instagram   : 487 mentions
+  youtube     : 453 mentions
+  ibm         : 334 mentions
+  intel       : 332 mentions
+  netflix     : 306 mentions
+  tesla       : 244 mentions
+  uber        : 230 mentions
+  oracle      : 151 mentions
+  adobe       : 139 mentions
+
+
+this mentions are actually from news kinda thing
+
+Academic Content Analysis:
+  Documents with citations: 7599 (1.3%)  ## (54.1%) prev
+  Documents with academic words (>2): 985 (7.0%) # this is too broad, prob ignore here
+  Documents with author patterns: 42 (0.3%)
+  Documents with DOI patterns: 117 (0.8%)
+  Documents with arXiv patterns: 7 (0.0%)
+  Documents with any academic indicators: 7878 (8.4%)
+  Characters in academic docs: 28,366,660 (14.9%)
+
+Email/Forum Format Analysis:
+  Documents with email quotes: 229 (1.6%)
+  Documents with email headers: 11 (0.1%)
+  Documents with forum quotes: 572 (4.1%)
+  Documents with thread patterns: 337 (2.4%)
+  Documents with reddit patterns: 34 (0.2%)
+  Documents with any email/forum indicators: 1085 (7.7%)
+  Characters in email/forum docs: 3,725,975 (8.5%)
+
+Blog Content Analysis:
+  Documents with blog words: 443 (3.2%)
+  Documents with heavy personal pronoun use (>10): 1769 (12.6%)
+  Documents with opinion words: 1836 (13.1%)
+  Documents with informal language (>2): 71 (0.5%)
+  Documents with any blog indicators: 3107 (22.1%)
+  Characters in blog-style docs: 12,860,652 (29.3%)
+
+Book Content Analysis:
+  Documents with chapter headings: 50 (0.4%)
+  Documents with ISBN patterns: 52 (0.4%)
+  Documents with publisher patterns: 466 (3.3%)
+  Documents with book references: 120 (0.9%)
+  Documents with any book indicators: 600 (4.3%)
+  Characters in book-related docs: 3,406,343 (7.8%)
+
+This analysis above is a bit blurry, like citations seem super high 
+## if len(re.findall(r"\[?\d{4}\]?|\(19\d{2}\)|\(20\d{2}\)", doc)) > 0:
+
+```
+changed regex and now makes sense:
+Documents with citations: 189 (1.3%)
+
+Given this I'd go for some data comp like:
+2% academic papers
+3% emails
+20% blogs, but this might be confused with news as well, but is kinda the same
+50% news
+20% QA
+
+3% books?
+1/2% 
+
+I'd honestly go for 80% between news/blogs
+everything else then
+
+After runing _pipeline on paloma dataset
+noticed language threshold had to be reduced to 0.6, and it filters still like 50 by language
+most of them pure code, and 2 or 3 other languages
+- [ ] check how many other languages it has, and include them into the training data, a few %?
+
+some data get's filtered by gopher, mainly on word count, had to remove the sensitivty to alphabetic
+cause as well a lot was being removed, tho hmmm it kinda make sense what it is removing
+bunch of code, weird logs, weird structure of text
+
+out: 13856 results, 98.549% kept
+{
+  "language": 55,
+  "gopher": 148,
+  "harmful": 1
+}
+```
