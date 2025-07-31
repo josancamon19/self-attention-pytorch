@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 def retrieve_multiple_urls_to_warc(urls_path, warc_path):
+    # receives websites URL's, and parses them into warc
     async def fetch_url(session, url, semaphore):
         async with semaphore:
             try:

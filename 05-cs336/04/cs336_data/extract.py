@@ -188,9 +188,13 @@ def warc_extract_pipeline(
     return len(all_results), parsed_text_file
 
 
-if __name__ == "__main__":
+def check_separate_sample_with_paloma_filtering():
     warc_extract_pipeline(
-        file_path="cs336_data/leaderboard/.data/2530-002.warc.gz",
+        file_path="cs336_data/leaderboard/.data/00002.warc.gz",
         quality_processing=QualityProcessingType.PALOMA,
         subsample_count=100,
     )
+
+
+# if __name__ == "__main__":
+#   check_separate_sample_with_paloma_filtering()

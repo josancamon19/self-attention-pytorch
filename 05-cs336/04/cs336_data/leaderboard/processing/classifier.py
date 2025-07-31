@@ -7,17 +7,12 @@ import fasttext
 def create_low_quality_dataset():
     from cs336_data._pipeline import warc_extract_pipeline, QualityProcessingType
 
-    # wget https://data.commoncrawl.org/crawl-data/CC-MAIN-2025-30/segments/1751905933612.63/warc/CC-MAIN-20250707183638-20250707213638-00001.warc.gz
-    # wget https://data.commoncrawl.org/crawl-data/CC-MAIN-2025-30/segments/1751905933612.63/warc/CC-MAIN-20250707183638-20250707213638-00002.warc.gz
+    _dir = "cs336_data/leaderboard/.data/"
     count, path1 = warc_extract_pipeline(
-        file_path="cs336_data/leaderboard/.data/2530-000.warc.gz",
-        quality_processing=QualityProcessingType.NONE,
-        custom_preprocessing=True,  # match structure so classifier diff are mainly on semantics
-    )  # count, path1= 7110, "cs336_data/leaderboard/.data/2530-000_parsed.txt"
+        file_path=f"{_dir}00000.warc.gz", quality_processing=QualityProcessingType.NONE
+    )
     count2, path2 = warc_extract_pipeline(
-        file_path="cs336_data/leaderboard/.data/2530-001.warc.gz",
-        quality_processing=QualityProcessingType.NONE,
-        custom_preprocessing=True,  # match structure so classifier diff are mainly on semantics
+        file_path=f"{_dir}00001.warc.gz", quality_processing=QualityProcessingType.NONE
     )
 
     # Extract documents from both parsed files
@@ -28,7 +23,7 @@ def create_low_quality_dataset():
             print(f"Warning: File {path} not found, skipping...")
             continue
 
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             content = f.read()
 
         # Split by record separator
@@ -178,7 +173,6 @@ def matches_paloma_quality(text: str, quality_threshold: float = 0.7) -> bool:
 
 
 if __name__ == "__main__":
-    # create_low_quality_dataset()
-    # create_fasttext_classifier()
-    # matches_paloma_quality("")  # seems to be good tbh
-    pass
+    create_low_quality_dataset()
+    create_fasttext_classifier()
+    # in extract.py, call check_separate_sample_with_paloma_filtering and double check the actual filter
