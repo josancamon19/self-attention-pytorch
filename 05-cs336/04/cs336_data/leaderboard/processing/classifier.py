@@ -1,17 +1,19 @@
-from cs336_data.f_quality_classifier import clean_text_for_fasttext
-from cs336_data._pipeline import warc_extract_pipeline, QualityProcessingType
+from cs336_data._fasttext_util import clean_text_for_fasttext
 import os
+import random
 import fasttext
 
 
-def create_low_quality_samples():
+def create_low_quality_dataset():
+    from cs336_data._pipeline import warc_extract_pipeline, QualityProcessingType
+
     # wget https://data.commoncrawl.org/crawl-data/CC-MAIN-2025-30/segments/1751905933612.63/warc/CC-MAIN-20250707183638-20250707213638-00001.warc.gz
     # wget https://data.commoncrawl.org/crawl-data/CC-MAIN-2025-30/segments/1751905933612.63/warc/CC-MAIN-20250707183638-20250707213638-00002.warc.gz
     count, path1 = warc_extract_pipeline(
         file_path="cs336_data/leaderboard/.data/2530-000.warc.gz",
         quality_processing=QualityProcessingType.NONE,
         custom_preprocessing=True,  # match structure so classifier diff are mainly on semantics
-    ) # count, path1= 7110, "cs336_data/leaderboard/.data/2530-000_parsed.txt"
+    )  # count, path1= 7110, "cs336_data/leaderboard/.data/2530-000_parsed.txt"
     count2, path2 = warc_extract_pipeline(
         file_path="cs336_data/leaderboard/.data/2530-001.warc.gz",
         quality_processing=QualityProcessingType.NONE,
@@ -72,31 +74,57 @@ def create_low_quality_samples():
         f.write("\n".join(negative_samples))
 
     print(f"Saved {len(negative_samples)} negative samples to {output_file}")
-    return negative_samples
+    return negative_samples  # cs336_data/leaderboard/.data/classifier_negative_samples.txt
 
 
 def create_fasttext_classifier():
-    data_file = "cs336_data/leaderboard/.data/paloma_c4_100_domains_validation.txt"
+    paloma_file = "cs336_data/leaderboard/.data/paloma_c4_100_domains_validation.txt"
+    negative_file = "cs336_data/leaderboard/.data/classifier_negative_samples.txt"
     classifier_train_path = "cs336_data/leaderboard/.data/classifier_train.txt"
     classifier_valid_path = "cs336_data/leaderboard/.data/classifier_valid.txt"
     fasttext_model_path = "cs336_data/leaderboard/.models/paloma_classifier.bin"
     os.makedirs("cs336_data/leaderboard/.models", exist_ok=True)
 
-    with open(data_file, encoding="utf-8") as f:
-        content = f.read()
+    # Read positive samples (Paloma)
+    with open(paloma_file, encoding="utf-8") as f:
+        paloma_content = f.read()
 
-    documents = content.split("<|endoftext|>")
-    documents = [doc.strip() for doc in documents if doc.strip()]
+    paloma_documents = paloma_content.split("<|endoftext|>")
+    paloma_documents = [doc.strip() for doc in paloma_documents if doc.strip()]
 
-    # Prepare training samples
-    all_samples = []
-    for text in documents:
-        # Clean text for FastText format
+    positive_samples = []
+    for text in paloma_documents:
         cleaned_text = clean_text_for_fasttext(text)
-        if cleaned_text and len(cleaned_text.split()) > 10:  # Minimum word count
-            all_samples.append(f"__label__paloma {cleaned_text}")
+        if cleaned_text and len(cleaned_text.split()) > 10:
+            positive_samples.append(f"__label__quality {cleaned_text}")
 
-    print(f"Created {len(all_samples)} training samples from {len(documents)} documents")
+    print(f"Created {len(positive_samples)} positive samples from Paloma data")
+
+    # Read negative samples
+    negative_samples = []
+    if os.path.exists(negative_file):
+        with open(negative_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and line.startswith("__label__low_quality"):
+                    negative_samples.append(line)
+        print(f"Loaded {len(negative_samples)} negative samples from file")
+    else:
+        print(f"Warning: Negative samples file {negative_file} not found!")
+        return None
+
+    # Balance datasets - use minimum of both
+    min_samples = min(len(positive_samples), len(negative_samples))
+    positive_samples = positive_samples[:min_samples]
+    negative_samples = negative_samples[:min_samples]
+
+    print(f"Balanced datasets: {len(positive_samples)} positive, {len(negative_samples)} negative")
+
+    # Combine and shuffle samples
+    all_samples = positive_samples + negative_samples
+    random.shuffle(all_samples)
+
+    print(f"Total samples for training: {len(all_samples)}")
 
     # Split into train/validation (80/20)
     split_idx = int(0.8 * len(all_samples))
@@ -134,23 +162,19 @@ def create_fasttext_classifier():
     return model
 
 
-def matches_paloma_quality(text: str) -> bool:
+def matches_paloma_quality(text: str, quality_threshold: float = 0.7) -> bool:
     fasttext_model_path = "cs336_data/leaderboard/.models/paloma_classifier.bin"
     model = fasttext.load_model(fasttext_model_path)
     cleaned_text = clean_text_for_fasttext(text)
 
-    # Basic quality checks
     if not cleaned_text or len(cleaned_text.split()) < 10:
         return False
 
-    # Predict with model
-    prediction = model.predict(cleaned_text, k=1)
-    label = prediction[0][0]
-    confidence = prediction[1][0]
-
-    # Return True if classified as paloma with high confidence
-    return label == "__label__paloma" and confidence > 0.7
+    prediction = model.predict(cleaned_text, k=2)
+    return prediction[0][0] == "__label__quality" and prediction[1][0] > quality_threshold
 
 
 if __name__ == "__main__":
-    create_low_quality_samples()
+    # create_low_quality_dataset()
+    # create_fasttext_classifier()
+    matches_paloma_quality("")  # seems to be good tbh

@@ -4,6 +4,7 @@ from cs336_data.c_piid import remove_emails, remove_ip_addresses, remove_phone_n
 from cs336_data.d_harmful import is_harmful
 from cs336_data.e_gopher_heuristics import gopher_filters
 from cs336_data.g_deduplication import exact_deduplication as run_exact_deduplication
+from cs336_data.leaderboard.processing.classifier import matches_paloma_quality
 import os
 import gzip
 from fastwarc.warc import ArchiveIterator, WarcRecordType
@@ -13,8 +14,6 @@ from collections import defaultdict
 import random
 from enum import Enum
 import re
-import shutil
-import fasttext
 
 
 class QualityProcessingType(Enum):
@@ -22,9 +21,6 @@ class QualityProcessingType(Enum):
     FASTTEXT = "fasttext"
     PALOMA = "paloma"
     NONE = "none"
-
-
-# paloma_quality_model = fasttext.load_model("cs336_data/leaderboard/.models/paloma_classifier.bin")
 
 
 def process_record_batch(
@@ -86,6 +82,8 @@ def process_record_batch(
                 continue
         elif quality_processing == QualityProcessingType.FASTTEXT:
             raise NotImplementedError()
+        elif quality_processing == QualityProcessingType.PALOMA and not matches_paloma_quality(plain_text):
+            continue
 
         if process_piid:
             plain_text, _ = remove_emails(plain_text)
@@ -190,3 +188,10 @@ def warc_extract_pipeline(
     print(f"Results saved to: {parsed_text_file}")
     return len(all_results), parsed_text_file
 
+
+if __name__ == "__main__":
+    warc_extract_pipeline(
+        file_path="cs336_data/leaderboard/.data/2530-002.warc.gz",
+        quality_processing=QualityProcessingType.PALOMA,
+        custom_preprocessing=True,  # match structure so classifier diff are mainly on semantics
+    )
