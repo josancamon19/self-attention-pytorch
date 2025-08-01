@@ -1,5 +1,5 @@
 [project]
-name = "alignment"
+name = "src"
 version = "1.0.0"
 description = "CS 336 Spring 2025 Assignment 5: Alignment"
 readme = "README.md"
@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["cs336_alignment"]
+include = ["src"]
 
 # [tool.uv]
 # package = true
