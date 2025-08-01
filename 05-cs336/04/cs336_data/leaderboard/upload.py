@@ -65,12 +65,13 @@ def process_exact_deduplicated_to_npy(exact_dedup_dir, output_npy_path):
 
     # Split text into chunks for multiprocessing (to avoid memory issues)
     chunk_size = 100000  # 100k characters per chunk
-    text_chunks = [all_text[i:i+chunk_size] for i in range(0, len(all_text), chunk_size)]
-    
+    text_chunks = [all_text[i : i + chunk_size] for i in range(0, len(all_text), chunk_size)]
+
     print(f"Split into {len(text_chunks)} chunks for processing")
 
     # Tokenize using multiprocessing
-    pool = multiprocessing.Pool(multiprocessing.cpu_count())
+    pool = multiprocessing.Pool(1)
+    # pool = multiprocessing.Pool(multiprocessing.cpu_count())
     chunksize = 1
 
     # Prepare arguments for multiprocessing
@@ -98,8 +99,8 @@ def process_exact_deduplicated_to_npy(exact_dedup_dir, output_npy_path):
 
 def main():
     # Configuration
-    DATA_DIR = ".data"
-    BUCKET_NAME = "your-gcp-bucket-name"  # Update this with your actual bucket name
+    DATA_DIR = "cs336_data/leaderboard/.data"
+    BUCKET_NAME = "test-joan1"
 
     processed_dir = os.path.join(DATA_DIR, "processed")
     exact_dedup_dir = os.path.join(DATA_DIR, "exact_deduplicated")
@@ -114,7 +115,7 @@ def main():
         return
 
     # Create output directory for compressed files
-    output_dir = "compressed_uploads"
+    output_dir = DATA_DIR + "/compressed_uploads"
     os.makedirs(output_dir, exist_ok=True)
 
     # Compress directories
