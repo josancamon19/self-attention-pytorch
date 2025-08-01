@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from cs336_data.extract import process_warc_file
+from cs336_data.filters.g_deduplication import exact_deduplication, minhash_deduplication
 
 
 def download_process_delete_warc(url_info, delete_downloads=True):
@@ -98,70 +99,6 @@ def download_process_delete_warc(url_info, delete_downloads=True):
                 pass
 
 
-def download_files_ahead(url_infos, script_dir, start_after=None):
-    """Download files ahead of time in a separate process"""
-    download_dir = script_dir / ".data/warcs"
-    download_dir.mkdir(parents=True, exist_ok=True)
-
-    # Start downloading after the initial batch if specified
-    urls_to_download = url_infos[start_after:] if start_after else url_infos
-
-    print(f"[DOWNLOADER] Starting to download {len(urls_to_download)} files ahead...")
-    downloaded_count = 0
-    skipped_count = 0
-
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = []
-
-        for _, warc_path in urls_to_download:
-            # Extract filename with timestamp to avoid collisions
-            full_filename = warc_path.split("/")[-1]
-            parts = full_filename.split("-")
-            filename = f"{parts[-2]}-{parts[-1]}"  # "20250707213638-00000.warc.gz"
-            base_name = filename.replace(".warc.gz", "")
-            download_path = download_dir / filename
-
-            # Check if already processed - skip download entirely
-            processed_output = script_dir / ".data/processed" / f"{base_name}.txt"
-            if processed_output.exists():
-                skipped_count += 1
-                continue
-
-            # Skip if already downloaded
-            if download_path.exists():
-                skipped_count += 1
-                continue
-
-            # Download file
-            url = f"https://data.commoncrawl.org/{warc_path}"
-
-            def download_single(url, path, filename):
-                try:
-                    cmd = ["wget", "-O", str(path), url]
-                    subprocess.run(cmd, capture_output=True, text=True, check=True)
-                    return True, filename
-                except subprocess.CalledProcessError:
-                    # Remove failed download
-                    try:
-                        os.remove(path)
-                    except OSError:
-                        pass
-                    return False, filename
-
-            future = executor.submit(download_single, url, download_path, filename)
-            futures.append(future)
-
-        # Track completed downloads
-        for future in futures:
-            success, filename = future.result()
-            if success:
-                downloaded_count += 1
-                if downloaded_count % 10 == 0:  # Log every 10 downloads
-                    print(f"[DOWNLOADER] Downloaded {downloaded_count} files ahead (skipped {skipped_count} existing)")
-
-    print(f"[DOWNLOADER] Finished: {downloaded_count} downloaded, {skipped_count} skipped")
-
-
 def main(target_count: int = 100, delete_downloads: bool = True):
     warc_paths_file = Path(__file__).parent / "data" / "warc.paths"
     with open(warc_paths_file) as f:
@@ -193,9 +130,6 @@ def main(target_count: int = 100, delete_downloads: bool = True):
     print("Each process will: check cache -> download (if needed) -> process -> cleanup")
 
     # Start background downloader process after initial batch
-    downloader_process = Process(target=download_files_ahead, args=(url_infos, script_dir, num_processes))
-    # downloader_process.daemon = True # bunch of race conditions cases to manage
-    # downloader_process.start()
     print(f"Started background downloader for files {num_processes}+")
 
     # Process files in parallel with progress tracking
@@ -255,10 +189,11 @@ def main(target_count: int = 100, delete_downloads: bool = True):
         print(f"Average records per file: {total_records / successful_files:.0f}")
     print(f"{'=' * 60}")
 
-    # Clean up downloader process
-    if downloader_process.is_alive():
-        downloader_process.terminate()
-        downloader_process.join()
+    # Run deduplication on processed files
+    # run_deduplication(script_dir)
+
+    # Analyze current character counts
+    # analyze_deduplication_impact(script_dir)
 
 
 if __name__ == "__main__":
@@ -285,7 +220,6 @@ if __name__ == "__main__":
     # ~ if I get a 128 nprocs it should be way way faster.
     # # let's say I keep it at 100 ratio, 30000 files ≈ 30TB ≈ about 3h, not terrible at all, WTF?
     # TODO: vibe check results, minor script to move them into a single .txt, and provide some general stats with tokenizer.
-    # - yea need to delete them once processed, cause the machine has max 6TB of space
     # ~
     # deduplicate call after first 8000 files processed
     # - then, check how many tokens are there, compute some thoughts with it
