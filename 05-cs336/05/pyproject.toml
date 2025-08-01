@@ -7,7 +7,7 @@ requires-python = ">=3.11,<3.13"  # Python 3.13 not yet supported for some deps
 dependencies = [
     "accelerate>=1.5.2",
     "alpaca-eval",
-    "flash-attn==2.7.4.post1",
+    # "flash-attn==2.7.4.post1",
     "jupyter>=1.1.1",
     "math-verify[antlr4-13-2]>=0.7.0",
     "pylatexenc==2.10",
@@ -25,9 +25,9 @@ dependencies = [
 [tool.setuptools.packages.find]
 include = ["cs336_alignment"]
 
-[tool.uv]
-package = true
-no-build-isolation-package = ["flash-attn"]
+# [tool.uv]
+# package = true
+# no-build-isolation-package = ["flash-attn"]
 
 
 [tool.uv.sources]
@@ -37,7 +37,7 @@ alpaca-eval = { git = "https://github.com/nelson-liu/alpaca_eval.git", rev = "fo
 log_cli = true
 log_cli_level = "WARNING"
 
-[[tool.uv.dependency-metadata]]
-name = "flash-attn"
-version = "2.7.4.post1"
-requires-dist = ["torch", "einops", "setuptools"]
+# [[tool.uv.dependency-metadata]]
+# name = "flash-attn"
+# version = "2.7.4.post1"
+# requires-dist = ["torch", "einops", "setuptools"]
