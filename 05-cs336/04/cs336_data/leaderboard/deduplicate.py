@@ -112,8 +112,8 @@ def run_deduplication(script_dir):
         ngrams = 3
         jaccard_threshold = 0.8
 
-        minhash_deduplication(exact_dedup_paths, num_hashes, num_bands, ngrams, jaccard_threshold, str(fuzzy_dedup_dir))
-        print(f"Fuzzy deduplication complete. Final output saved to {fuzzy_dedup_dir}")
+        # minhash_deduplication(exact_dedup_paths, num_hashes, num_bands, ngrams, jaccard_threshold, str(fuzzy_dedup_dir))
+        # print(f"Fuzzy deduplication complete. Final output saved to {fuzzy_dedup_dir}")
     else:
         print("No files remaining after exact deduplication")
 
@@ -121,6 +121,6 @@ def run_deduplication(script_dir):
 if __name__ == "__main__":
     # After run.py finished, this should be called
     script_dir = Path(__file__).parent
-    # run_deduplication(script_dir)
+    run_deduplication(script_dir)
     analyze_deduplication_impact(script_dir)
     # fuzzy deduplication takes too long, skipping for now, want to get rid of this

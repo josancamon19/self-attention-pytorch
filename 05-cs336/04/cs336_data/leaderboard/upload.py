@@ -1,26 +1,16 @@
 #!/usr/bin/env python3
 
 import os
-import tarfile
 import multiprocessing
 import numpy as np
-from pathlib import Path
 from tqdm import tqdm
 from google.cloud import storage
 from transformers import AutoTokenizer
 
 
-def compress_directory(dir_path, output_path):
-    """Compress a directory into a tar.gz file."""
-    print(f"Compressing {dir_path} to {output_path}")
-    with tarfile.open(output_path, "w:gz") as tar:
-        tar.add(dir_path, arcname=os.path.basename(dir_path))
-    print(f"Compression complete: {output_path}")
-
-
 def upload_to_gcp(file_path, bucket_name, blob_name):
     """Upload a file to Google Cloud Storage."""
-    client = storage.Client()
+    client = storage.Client.from_service_account_json("google-credentials.json")
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
 
@@ -29,69 +19,75 @@ def upload_to_gcp(file_path, bucket_name, blob_name):
     print(f"Upload complete: gs://{bucket_name}/{blob_name}")
 
 
-def tokenize_chunk(args):
-    """Tokenize a chunk of text."""
-    text_chunk, tokenizer = args
-    return tokenizer.encode(text_chunk)
+tokenizer = None
+
+
+def init_worker():
+    """Initialize tokenizer once per worker process."""
+    global tokenizer
+    tokenizer = AutoTokenizer.from_pretrained("gpt2", cache_dir="cs336_data/leaderboard/.cache")
+    tokenizer.model_max_length = 10000000  # to avoid warning
+
+
+def tokenize_file(file_path):
+    print("tokenize_file", file_path)
+    """Tokenize a single file in chunks and return the token IDs."""
+    # Initialize tokenizer in each process
+
+    global tokenizer
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    token_ids = tokenizer.encode(text, add_special_tokens=False)
+    return token_ids
 
 
 def process_exact_deduplicated_to_npy(exact_dedup_dir, output_npy_path):
-    """Convert all files in exact_deduplicated directory to a single npy file."""
+    """Convert all files in exact_deduplicated directory to a single npy file using max CPU cores."""
     print(f"Processing {exact_dedup_dir} to {output_npy_path}")
-
-    # Initialize tokenizer
-    tokenizer = AutoTokenizer.from_pretrained("gpt2")
 
     # Collect all text files
     text_files = []
     for root, dirs, files in os.walk(exact_dedup_dir):
         for file in files:
-            if file.endswith((".txt", ".jsonl", ".json")):
+            if file.endswith((".txt",)):
                 text_files.append(os.path.join(root, file))
 
     print(f"Found {len(text_files)} text files to process")
 
-    # Read all content from all files as continuous text
-    all_text = ""
-    for file_path in tqdm(text_files, desc="Reading files"):
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                all_text += f.read()
-        except Exception as e:
-            print(f"Error reading {file_path}: {e}")
-            continue
+    if not text_files:
+        print("No text files found!")
+        return
 
-    print(f"Total text length: {len(all_text)} characters")
+    # Use all available CPU cores (288 in your case)
+    # init_worker()
+    # for f in text_files:
+    #     tokenize_file(f)
+    # raise Exception()
+    num_processes = multiprocessing.cpu_count()
+    print(f"Using {num_processes} CPU cores for maximum speed")
 
-    # Split text into chunks for multiprocessing (to avoid memory issues)
-    chunk_size = 100000  # 100k characters per chunk
-    text_chunks = [all_text[i : i + chunk_size] for i in range(0, len(all_text), chunk_size)]
+    # Process each file on a separate core
+    with multiprocessing.Pool(num_processes, initializer=init_worker) as pool:
+        print("Starting parallel tokenization of all files...")
+        results = list(
+            tqdm(pool.imap(tokenize_file, text_files, chunksize=1), total=len(text_files), desc="Tokenizing files")
+        )
 
-    print(f"Split into {len(text_chunks)} chunks for processing")
+    print("Merging results in main thread...")
 
-    # Tokenize using multiprocessing
-    pool = multiprocessing.Pool(1)
-    # pool = multiprocessing.Pool(multiprocessing.cpu_count())
-    chunksize = 1
+    # Merge all results into a single list
+    all_ids = []
+    total_tokens = 0
+    for file_tokens in tqdm(results, desc="Merging tokenized results"):
+        all_ids.extend(file_tokens)
+        total_tokens += len(file_tokens)
 
-    # Prepare arguments for multiprocessing
-    args_list = [(chunk, tokenizer) for chunk in text_chunks]
+    print(f"Total tokenized tokens: {total_tokens}")
 
-    results = []
-    for result in tqdm(
-        pool.imap(tokenize_chunk, args_list, chunksize=chunksize),
-        total=len(text_chunks),
-        desc="Tokenizing chunks",
-    ):
-        results.append(result)
-
-    pool.close()
-    pool.join()
-
-    # Flatten the list of ids and convert to numpy array
-    all_ids = [token_id for sublist in results for token_id in sublist]
-    print(f"Tokenized into {len(all_ids)} tokens")
-
+    # Convert to numpy array and save
+    print("Converting to numpy array and saving...")
     ids_array = np.array(all_ids, dtype=np.uint16)
     ids_array.tofile(output_npy_path)
     print(f"Saved tokenized data to {output_npy_path}")
@@ -99,49 +95,16 @@ def process_exact_deduplicated_to_npy(exact_dedup_dir, output_npy_path):
 
 def main():
     # Configuration
-    DATA_DIR = "cs336_data/leaderboard/.data"
-    BUCKET_NAME = "test-joan1"
+    # tar -cf - cs336_data/leaderboard/.data/exact_deduplicated | pigz -9 -p 288 > exact_deduplicated.tar.gz
+    # tar -cf - cs336_data/leaderboard/.data/processed | pigz -9 -p 288 > processed.tar.gz
 
-    processed_dir = os.path.join(DATA_DIR, "processed")
-    exact_dedup_dir = os.path.join(DATA_DIR, "exact_deduplicated")
+    # upload_to_gcp("deduplicated.tar.gz", "test-joan1", "deduplicated.tar.gz")
+    upload_to_gcp("processed.tar.gz", "test-joan1", "processed.tar.gz")
 
-    # Check if directories exist
-    if not os.path.exists(processed_dir):
-        print(f"Error: {processed_dir} does not exist")
-        return
-
-    if not os.path.exists(exact_dedup_dir):
-        print(f"Error: {exact_dedup_dir} does not exist")
-        return
-
-    # Create output directory for compressed files
-    output_dir = DATA_DIR + "/compressed_uploads"
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Compress directories
-    processed_tar = os.path.join(output_dir, "processed.tar.gz")
-    exact_dedup_tar = os.path.join(output_dir, "exact_deduplicated.tar.gz")
-
-    compress_directory(processed_dir, processed_tar)
-    compress_directory(exact_dedup_dir, exact_dedup_tar)
-
-    # Upload to GCP
-    try:
-        upload_to_gcp(processed_tar, BUCKET_NAME, "processed.tar.gz")
-        upload_to_gcp(exact_dedup_tar, BUCKET_NAME, "exact_deduplicated.tar.gz")
-    except Exception as e:
-        print(f"Error uploading to GCP: {e}")
-        print("Make sure you have set up GCP authentication and updated BUCKET_NAME")
-
-    # Convert exact_deduplicated to npy
-    npy_output = os.path.join(output_dir, "exact_deduplicated_tokenized.npy")
-    try:
-        process_exact_deduplicated_to_npy(exact_dedup_dir, npy_output)
-
-        # Upload the npy file as well
-        upload_to_gcp(npy_output, BUCKET_NAME, "tokenized_data.npy")
-    except Exception as e:
-        print(f"Error processing to npy: {e}")
+    # AutoTokenizer.from_pretrained("gpt2", cache_dir="cs336_data/leaderboard/.cache") ~ cache
+    # npy_output = os.path.join(output_dir, "tokenized_data.npy")
+    # process_exact_deduplicated_to_npy(os.path.join(DATA_DIR, "exact_deduplicated"), npy_output)
+    # upload_to_gcp(npy_output, BUCKET_NAME, "tokenized_data.npy")
 
 
 if __name__ == "__main__":

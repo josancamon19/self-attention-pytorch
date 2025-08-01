@@ -174,3 +174,5 @@ sample.warc.wet.gz
 enwiki-20240420-extracted_urls.txt
 .data
 cooking.*
+*.tar.gz
+google-credentials.json
