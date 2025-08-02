@@ -7,45 +7,45 @@ import triton.language as tl
 
 from src.flash_torch import dummy_attention  # , FlashForward as FlashPytorch
 import os
-import pdb
+# import pdb
 
 # os.environ["TRITON_INTERPRET"] = "1"
-# os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
+os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
 
 torch.manual_seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def get_cuda_autotune_config():
-    def config_item(q, k, ns, nw, mr):
+    def config_item(q, k, ns, nw, mr= None):
         config = triton.Config({"BLOCK_SIZE_Q": q, "BLOCK_SIZE_K": k}, num_stages=ns, num_warps=nw)
         if mr is not None:
             config.maxnreg = mr
         return config
 
-    configs = []
-    for q in [64, 128, 256, 512]:
-        for k in [64, 128, 256, 512]:
-            for ns in [3, 4, 5, 6, 7]:  # , 4, 5, 6, 7
-                for nw in [4, 8]:  # must be power of 2 # 16, 32? caused register allocation failed
-                    # for mr in [None, 128, 160, 192]:  # maxnreg
-                    configs.append(config_item(q, k, ns, nw, None))
-    print(len(configs))  # 192 configs, took 6.5 minutes
-    return configs
+    # configs = []
+    # for q in [64, 128, 256, 512]:
+    #     for k in [64, 128, 256, 512]:
+    #         for ns in [3, 4, 5, 6, 7]:  # , 4, 5, 6, 7
+    #             for nw in [4, 8]:  # must be power of 2 # 16, 32? caused register allocation failed
+    #                 # for mr in [None, 128, 160, 192]:  # maxnreg
+    #                 configs.append(config_item(q, k, ns, nw, None))
+    # print(len(configs))  # 192 configs, took 6.5 minutes
+    # return configs
 
-    # return [
-    #     config_item(128, 256, 3, 8),
-    #     config_item(64, 256, 4, 4),
-    #     config_item(64, 64, 3, 4), # best
-    #     config_item(128, 128, 4, 4),
-    #     config_item(128, 64, 4, 4),
-    #     config_item(64, 128, 4, 4),
-    #     config_item(128, 32, 4, 4),
-    #     config_item(64, 32, 5, 2),
-    #     config_item(32, 64, 5, 2),
-    #     config_item(128, 64, 5, 8),
-    #     config_item(256, 64, 5, 8),
-    # ]
+    return [
+        config_item(128, 256, 3, 8),
+        config_item(64, 256, 4, 4),
+        config_item(64, 64, 3, 4), # best
+        config_item(128, 128, 4, 4),
+        config_item(128, 64, 4, 4),
+        config_item(64, 128, 4, 4),
+        config_item(128, 32, 4, 4),
+        config_item(64, 32, 5, 2),
+        config_item(32, 64, 5, 2),
+        config_item(128, 64, 5, 8),
+        config_item(256, 64, 5, 8),
+    ]
 
 
 # Triton autotuning for function flash finished after 740.29s;
@@ -134,7 +134,7 @@ def flash(
     l_mask = l_offset < seq_length
     tl.store(l_ptrs, li, mask=l_mask)
 
-
+# @triton.autotune(configs=get_cuda_autotune_config(), key=["q", "k", "v"])
 @triton.jit
 def flash_backward(
     grad_out_ptr,
@@ -330,7 +330,8 @@ class FlashAttention(torch.autograd.Function):
     def backward(ctx, grad_out):
         q, k, v, o, l = ctx.saved_tensors
         D = torch.sum(o * grad_out, dim=-1)
-
+        grad_out = grad_out.contiguous()
+        
         has_batch_size = len(q.shape) == 4
         if has_batch_size:
             batch_size, num_heads, seq_length, d = q.shape
@@ -347,6 +348,7 @@ class FlashAttention(torch.autograd.Function):
 
         BLOCK_SIZE_Q, BLOCK_SIZE_K = 64, 64
         grid = (triton.cdiv(seq_length, BLOCK_SIZE_K), batch_heads)
+        # grid = lambda meta: (triton.cdiv(seq_length, meta['BLOCK_SIZE_K']), batch_heads) # noqa
         reshape = lambda m: m.reshape((batch_heads, seq_length, d)) # noqa
 
         # pdb.set_trace()
@@ -391,7 +393,7 @@ def get_q_k_v(n_heads = 16, seq_length = 16384, head_dim=64, dtype=torch.float32
 
 
 def flash_benchmarking():
-    q, k, v = get_q_k_v()
+    q, k, v = get_q_k_v(dtype=torch.bfloat16)
     flash = torch.compile(FlashAttention.apply)
     # flash_torch = torch.compile(FlashPytorch.apply)
     # flash_torch = FlashPytorch.apply
@@ -407,10 +409,10 @@ def flash_benchmarking():
 
     results = triton.testing.do_bench(benchmark(flash), rep=10000, warmup=1000)
     print("flash_triton:", results)
-    # results = triton.testing.do_bench(benchmark(dummy_attention), rep=10000, warmup=100)
-    # print("dummy:", results)
-    # results = triton.testing.do_bench(benchmark(dummy_compiled_fn), rep=10000, warmup=100)
-    # print("dummy_compiled:", results)
+    results = triton.testing.do_bench(benchmark(dummy_attention), rep=10000, warmup=100)
+    print("dummy:", results)
+    results = triton.testing.do_bench(benchmark(dummy_compiled_fn), rep=10000, warmup=100)
+    print("dummy_compiled:", results)
 
 
 def verify_correctness(is_causal: bool = True):
@@ -471,11 +473,16 @@ def verify_correctness(is_causal: bool = True):
         print()
 
 if __name__ == "__main__":
-    # flashattn = torch.compile(FlashAttention.apply)
     # flashattn = FlashAttention.apply
-    # q, k, v = get_q_k_v(2, 20, 16)
+    # q, k, v = get_q_k_v(dtype=torch.bfloat16)
     # output = flashattn(q, k, v, True)
     # loss = output.sum()
     # loss.backward()
     # verify_correctness()
     flash_benchmarking()
+    # TODO: fix why is so off on bfloat16 correctness, and closer to float32
+    # TODO: what's happening to so many dtype converdsions?
+    # TODO: verify stupid improvements with atomic stuff
+    # TODO: base2 ops instead of exp
+    # TODO: don't do atomic ops
+    # TODO: navigate through backward algo, and write it on your own words
