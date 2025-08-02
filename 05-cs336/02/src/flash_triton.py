@@ -7,7 +7,7 @@ import triton.language as tl
 
 from src.flash_torch import dummy_attention  # , FlashForward as FlashPytorch
 import os
-# import pdb
+import pdb
 
 # os.environ["TRITON_INTERPRET"] = "1"
 os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
@@ -65,74 +65,98 @@ def flash(
     BLOCK_SIZE_Q: tl.constexpr,
     BLOCK_SIZE_K: tl.constexpr,
 ):
-    q = tl.program_id(0)  # q_tile
+    q_block_id = tl.program_id(0)  # q_tile
     bh = tl.program_id(1)  # batch * head
-
-    q_start = q * BLOCK_SIZE_Q
-    qm_offset = q_start + tl.arange(0, BLOCK_SIZE_Q)[:, None]
-    qn_offset = tl.arange(0, head_dim)[None, :]
-
-    q_ptrs = q_ptr + bh * seq_length * head_dim + qm_offset * head_dim + qn_offset
-    q_mask = (qm_offset < seq_length) & (qn_offset < head_dim)
-
-    q_tile = tl.load(q_ptrs, mask=q_mask, other=0.0)
-
+    
+    # Calculate base offset for this batch/head
+    base_offset = bh * seq_length * head_dim
+    
+    # Create block pointer for Q
+    q_block_ptr = tl.make_block_ptr(
+        base=q_ptr + base_offset,
+        shape=(seq_length, head_dim),
+        strides=(head_dim, 1),  # row-major layout
+        offsets=(q_block_id * BLOCK_SIZE_Q, 0),
+        block_shape=(BLOCK_SIZE_Q, head_dim),
+        order=(1, 0)  # row-major
+    )
+    
+    # Load Q tile using block pointer
+    q_tile = tl.load(q_block_ptr, boundary_check=(0, 1))
+    
+    # Initialize accumulators
     mi = tl.full((BLOCK_SIZE_Q,), float("-inf"), dtype=tl.float32)
     li = tl.zeros((BLOCK_SIZE_Q,), dtype=tl.float32)
     oi = tl.zeros((BLOCK_SIZE_Q, head_dim), dtype=tl.float32)
-
+    
     scale = 1.0 / tl.sqrt(float(head_dim))
-
-    for j in range(0, tl.cdiv(seq_length, BLOCK_SIZE_K)):
-        k_start = j * BLOCK_SIZE_K
-        # this would affect once you launch more than # of SMs so they can move on to other processes
-        kvm_offset = k_start + tl.arange(0, BLOCK_SIZE_K)[:, None]
-        kvn_offset = tl.arange(0, head_dim)[None, :]
-
-        k_ptrs = k_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
-        v_ptrs = v_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
-
-        kv_mask = (kvm_offset < seq_length) & (kvn_offset < head_dim)
-        k_tile = tl.load(k_ptrs, mask=kv_mask, other=0.0)
-        v_tile = tl.load(v_ptrs, mask=kv_mask, other=0.0)
-
-        # tl.device_print("k_tile", k_tile)  # shape?
-        # tl.device_print("v_tile", v_tile)
-
-        # attn_scores = tl.dot(q_tile.to(tl.float16), tl.trans(k_tile).to(tl.float16)) * scale
+    
+    # Loop over K/V blocks
+    for k_block_id in range(0, tl.cdiv(seq_length, BLOCK_SIZE_K)):
+        # Create block pointers for K and V
+        k_block_ptr = tl.make_block_ptr(
+            base=k_ptr + base_offset,
+            shape=(seq_length, head_dim),
+            strides=(head_dim, 1),
+            offsets=(k_block_id * BLOCK_SIZE_K, 0),
+            block_shape=(BLOCK_SIZE_K, head_dim),
+            order=(1, 0)
+        )
+        
+        v_block_ptr = tl.make_block_ptr(
+            base=v_ptr + base_offset,
+            shape=(seq_length, head_dim),
+            strides=(head_dim, 1),
+            offsets=(k_block_id * BLOCK_SIZE_K, 0),
+            block_shape=(BLOCK_SIZE_K, head_dim),
+            order=(1, 0)
+        )
+        
+        # Load K and V tiles
+        k_tile = tl.load(k_block_ptr, boundary_check=(0, 1))
+        v_tile = tl.load(v_block_ptr, boundary_check=(0, 1))
+        
+        # Compute attention scores
         attn_scores = tl.dot(q_tile, tl.trans(k_tile)) * scale
-
+        
+        # Apply causal mask if needed
         if is_causal:
-            q_indices = qm_offset  # [BLOCK_SIZE_Q, 1]
-            k_indices = k_start + tl.arange(0, BLOCK_SIZE_K)[None, :]  # [1, BLOCK_SIZE_K]
-            causal_mask = q_indices >= k_indices  # True where attention is allowed
+            q_indices = q_block_id * BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)[:, None]
+            k_indices = k_block_id * BLOCK_SIZE_K + tl.arange(0, BLOCK_SIZE_K)[None, :]
+            causal_mask = q_indices >= k_indices
             attn_scores = tl.where(causal_mask, attn_scores, float("-inf"))
-        # tl.device_print("attn_scores", attn_scores)
-
+        
+        # Flash attention online softmax update
         rowmax = tl.max(attn_scores, axis=1)
+        
         prev_mi = mi
         mi = tl.maximum(mi, rowmax)
         pj = tl.exp(attn_scores - mi[:, None])
-        li = tl.exp(prev_mi - mi) * li + tl.sum(pj, axis=-1)
-        # oi = tl.exp(prev_mi - mi)[:, None] * oi + tl.dot(pj.to(tl.float16), v_tile.to(tl.float16))
-        # oi = tl.exp(prev_mi - mi)[:, None] * oi + tl.dot(pj, v_tile.to(tl.float32))
-        oi = tl.exp(prev_mi - mi)[:, None] * oi + tl.dot(pj.to(v_tile.dtype), v_tile)
-
-    # tl.device_print("oi_before_div", oi)
+        # pj_sum = tl.sum(pj, axis=-1).to(tl.float32)
+        
+        rescale_factor = tl.exp(prev_mi - mi)
+        li = rescale_factor * li + tl.sum(pj, axis=-1)
+        oi = rescale_factor[:, None] * oi + tl.dot(pj.to(v_tile.dtype), v_tile)
+    
+    # Final normalization
     oi = oi / li[:, None]
-
+    
+    # Store output using block pointer
+    o_block_ptr = tl.make_block_ptr(
+        base=o_ptr + base_offset,
+        shape=(seq_length, head_dim),
+        strides=(head_dim, 1),
+        offsets=(q_block_id * BLOCK_SIZE_Q, 0),
+        block_shape=(BLOCK_SIZE_Q, head_dim),
+        order=(1, 0)
+    )
+    tl.store(o_block_ptr, oi.to(q_tile.dtype), boundary_check=(0, 1))
+    
+    # Store L (log sum exp)
+    l_offset = bh * seq_length + q_block_id * BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)
+    l_mask = (q_block_id * BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)) < seq_length
     li = mi + tl.log(li)
-
-    om_offset = q_start + tl.arange(0, BLOCK_SIZE_Q)[:, None]
-    on_offset = tl.arange(0, head_dim)[None, :]
-    o_ptrs = o_ptr + bh * seq_length * head_dim + om_offset * head_dim + on_offset
-    o_mask = (om_offset < seq_length) & (on_offset < head_dim)
-    tl.store(o_ptrs, oi, mask=o_mask)
-
-    l_offset = q_start + tl.arange(0, BLOCK_SIZE_Q)
-    l_ptrs = l_ptr + bh * seq_length + l_offset
-    l_mask = l_offset < seq_length
-    tl.store(l_ptrs, li, mask=l_mask)
+    tl.store(l_ptr + l_offset, li, mask=l_mask)
 
 # @triton.autotune(configs=get_cuda_autotune_config(), key=["q", "k", "v"])
 @triton.jit
@@ -303,6 +327,7 @@ class FlashAttention(torch.autograd.Function):
             print(f"output shape: {o.shape}")
         ctx.save_for_backward(q, k, v, o, l)
         ctx.is_causal = is_causal
+        # pdb.set_trace()
         return o
 
     # @staticmethod
@@ -415,7 +440,7 @@ def flash_benchmarking():
     print("dummy_compiled:", results)
 
 
-def verify_correctness(is_causal: bool = True):
+def verify_correctness(dtype = torch.float32):
     test_configs = [
         # (n_heads, seq_length, d_head, is_causal, desc)
         (4, 128, 64, False, "small non-causal"),
@@ -426,7 +451,7 @@ def verify_correctness(is_causal: bool = True):
         (12, 1024, 64, True, "large causal"),
     ]
     for n_heads, seq_length, d_head, is_causal, desc in test_configs:
-        q, k, v = get_q_k_v(n_heads, seq_length, d_head, torch.float32)
+        q, k, v = get_q_k_v(n_heads, seq_length, d_head, dtype)
         
         # Clone tensors for both implementations
         q_flash = q.clone().detach().requires_grad_(True)
@@ -473,14 +498,14 @@ def verify_correctness(is_causal: bool = True):
         print()
 
 if __name__ == "__main__":
-    flashattn = FlashAttention.apply
-    q, k, v = get_q_k_v(dtype=torch.bfloat16)
-    output = flashattn(q, k, v, True)
-    loss = output.sum()
-    loss.backward()
-    # verify_correctness()
-    # flash_benchmarking()
-    # TODO: fix why is so off on bfloat16 correctness, and closer to float32
+    # flashattn = FlashAttention.apply
+    # q, k, v = get_q_k_v(dtype=torch.bfloat16)
+    # output = flashattn(q, k, v, True)
+    # loss = output.sum()
+    # loss.backward()
+    # verify_correctness(dtype=torch.bfloat16)
+    flash_benchmarking()
+    # fix why is so off on bfloat16 correctness, and closer to float32 ✅
     # TODO: what's happening to so many dtype converdsions?
     # TODO: verify stupid improvements with atomic stuff
     # TODO: base2 ops instead of exp
