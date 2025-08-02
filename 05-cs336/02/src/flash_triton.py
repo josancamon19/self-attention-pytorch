@@ -6,6 +6,7 @@ import triton.language as tl
 
 from src.flash_torch import dummy_attention  # , FlashForward as FlashPytorch
 import os
+import pdb
 
 # os.environ["TRITON_INTERPRET"] = "1"
 os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
@@ -158,7 +159,7 @@ def flash_backward(
     bh = tl.program_id(1)  # batch * head
 
     # this would affect once you launch more than # of SMs so they can move on to other processes
-    kvm_offset = k_start + tl.arange(0, BLOCK_SIZE_K)[:, None]
+    kvm_offset = k_start*BLOCK_SIZE_K + tl.arange(0, BLOCK_SIZE_K)[:, None]
     kvn_offset = tl.arange(0, head_dim)[None, :]
 
     k_ptrs = k_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
@@ -169,6 +170,9 @@ def flash_backward(
     v_tile = tl.load(v_ptrs, mask=kv_mask, other=0.0)
     
     scale = 1.0 / tl.sqrt(float(head_dim))
+    
+    grad_v = tl.zeros((BLOCK_SIZE_K, head_dim), dtype=tl.float32)
+    grad_k = tl.zeros((BLOCK_SIZE_K, head_dim), dtype=tl.float32)
     
     for j in range(0, tl.cdiv(seq_length, BLOCK_SIZE_Q)):
         q_start = j * BLOCK_SIZE_Q
@@ -185,45 +189,41 @@ def flash_backward(
         q_tile = tl.load(q_ptrs, mask=q_mask, other=0.0)
         o_tile = tl.load(o_ptrs, mask=q_mask, other=0.0)
         grad_out_tile = tl.load(grad_out_ptrs, mask=q_mask, other=0.0)
-        grad_q_tile = tl.load(grad_q_ptrs, mask=q_mask, other=0.0)
-
-        l_tile = None
-        D_tile = None
+        
+        # Load L and D tiles - they are 1D tensors
+        l_offset = q_start + tl.arange(0, BLOCK_SIZE_Q)
+        l_mask = l_offset < seq_length
+        
+        l_ptrs = l_ptr + bh * seq_length + l_offset
+        D_ptrs = D_ptr + bh * seq_length + l_offset
+        
+        l_tile = tl.load(l_ptrs, mask=l_mask, other=0.0)[:, None]  # Shape: (BLOCK_SIZE_Q, 1)
+        D_tile = tl.load(D_ptrs, mask=l_mask, other=0.0)[:, None]  # Shape: (BLOCK_SIZE_Q, 1)
 
         s = tl.dot(q_tile, tl.trans(k_tile)) * scale
-
+        
+        if is_causal:
+            q_indices = qm_offset  # [BLOCK_SIZE_Q, 1]
+            k_indices = k_start * BLOCK_SIZE_K + tl.arange(0, BLOCK_SIZE_K)[None, :]  # [1, BLOCK_SIZE_K]
+            causal_mask = q_indices >= k_indices
+            s = tl.where(causal_mask, s, float("-inf"))
+        
         p = tl.exp(s - l_tile)
         
+        grad_v += tl.dot(tl.trans(p.to(grad_out_tile.dtype)), grad_out_tile)
+        grad_p = tl.dot(grad_out_tile, tl.trans(v_tile))
+        grad_s = p * (grad_p - D_tile)  * scale
         
+        grad_q_update = tl.dot(grad_s, k_tile.to(tl.float32)).to(tl.float32)
+        tl.atomic_add(grad_q_ptrs, grad_q_update, mask=q_mask)
+        
+        grad_k += tl.dot(tl.trans(grad_s.to(q_tile.dtype)), q_tile)
     
-    # q_tile is 1 head, 64 sequence items
-    # for q @ k, clearly need to compute q among all k in the sequence ofc
-    # once I have s
-    # - compute p
-    # - grad_p, 
-    # - - has to compute p, iterating through grad_out in sections as in k
-    # - grad_s, 
-    # - - requires computing D, and D
-    # - - D = part of o * part of grad_out easy
-    # - - compute
-    # - grad_q, iterates again through k
-    # - grad_k, computes right away
+    grad_k_ptrs = grad_k_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
+    grad_v_ptrs = grad_v_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
 
-    # D = torch.sum(o * grad_out, dim=-1)
-    # s = q @ k.transpose(-2, -1) * scale
-
-    # if ctx.is_causal:
-    #     causal_mask = torch.tril(torch.ones_like(s, dtype=torch.bool))
-    #     s = s.masked_fill(~causal_mask, float("-inf"))
-
-    # p = torch.exp(s - l.unsqueeze(-1))
-    # grad_v = p.transpose(-2, -1) @ grad_out
-    # grad_p = grad_out @ v.transpose(-2, -1)
-    # grad_s = p * (grad_p - D.unsqueeze(-1))
-    # grad_q = grad_s @ k * scale
-    # grad_k = grad_s.transpose(-2, -1) @ q * scale
-
-    pass
+    tl.store(grad_k_ptrs, grad_k, mask=kv_mask)
+    tl.store(grad_v_ptrs, grad_v, mask=kv_mask)
 
 
 class FlashAttention(torch.autograd.Function):
@@ -336,14 +336,15 @@ class FlashAttention(torch.autograd.Function):
         batch_heads = batch_size * num_heads
 
         shape = (batch_heads, seq_length, d)
-        grad_q = torch.empty(shape, device=q.device, dtype=q.dtype)
-        grad_k = torch.empty(shape, device=k.device, dtype=k.dtype)
-        grad_v = torch.empty(shape, device=v.device, dtype=v.dtype)
+        grad_q = torch.empty(shape, device=q.device, dtype=torch.float32)  # atomic ops
+        grad_k = torch.empty(shape, device=k.device, dtype=torch.float32)  # fp32 for accumulation
+        grad_v = torch.empty(shape, device=v.device, dtype=torch.float32)  # fp32 for accumulation
 
         BLOCK_SIZE_Q, BLOCK_SIZE_K = 64, 64
-        grid = (triton.cdiv(seq_length, BLOCK_SIZE_Q), batch_heads)
+        grid = (triton.cdiv(seq_length, BLOCK_SIZE_K), batch_heads)
         reshape = lambda m: m.reshape((batch_heads, seq_length, d)) # noqa
 
+        pdb.set_trace()
         flash_backward[grid](
             grad_out,
             D,
@@ -357,13 +358,18 @@ class FlashAttention(torch.autograd.Function):
             grad_v,
             seq_length,
             d,
-            ctx.is_backward,
+            ctx.is_causal,
             BLOCK_SIZE_Q,
             BLOCK_SIZE_K,
-            
         )
-
-        return grad_q, grad_k, grad_v, None, None, None, None
+        
+        # Reshape gradients to match input shapes
+        if has_batch_size:
+            grad_q = grad_q.reshape(batch_size, num_heads, seq_length, d)
+            grad_k = grad_k.reshape(batch_size, num_heads, seq_length, d)
+            grad_v = grad_v.reshape(batch_size, num_heads, seq_length, d)
+        
+        return grad_q.to(q.dtype), grad_k.to(k.dtype), grad_v.to(v.dtype), None, None, None, None
 
 
 def get_q_k_v():
