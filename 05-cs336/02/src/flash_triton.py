@@ -473,13 +473,13 @@ def verify_correctness(is_causal: bool = True):
         print()
 
 if __name__ == "__main__":
-    # flashattn = FlashAttention.apply
-    # q, k, v = get_q_k_v(dtype=torch.bfloat16)
-    # output = flashattn(q, k, v, True)
-    # loss = output.sum()
-    # loss.backward()
+    flashattn = FlashAttention.apply
+    q, k, v = get_q_k_v(dtype=torch.bfloat16)
+    output = flashattn(q, k, v, True)
+    loss = output.sum()
+    loss.backward()
     # verify_correctness()
-    flash_benchmarking()
+    # flash_benchmarking()
     # TODO: fix why is so off on bfloat16 correctness, and closer to float32
     # TODO: what's happening to so many dtype converdsions?
     # TODO: verify stupid improvements with atomic stuff
