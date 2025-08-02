@@ -4,7 +4,7 @@ import torch
 import triton
 import triton.language as tl
 
-from src.flash_torch import dummy_attention # , FlashForward as FlashPytorch
+from src.flash_torch import dummy_attention  # , FlashForward as FlashPytorch
 import os
 
 # os.environ["TRITON_INTERPRET"] = "1"
@@ -22,10 +22,10 @@ def get_cuda_autotune_config():
         return config
 
     configs = []
-    for q in [64, 128, 256, 512]: 
+    for q in [64, 128, 256, 512]:
         for k in [64, 128, 256, 512]:
-            for ns in [3, 4, 5, 6, 7]: # , 4, 5, 6, 7
-                for nw in [4, 8]: # must be power of 2 # 16, 32? caused register allocation failed
+            for ns in [3, 4, 5, 6, 7]:  # , 4, 5, 6, 7
+                for nw in [4, 8]:  # must be power of 2 # 16, 32? caused register allocation failed
                     # for mr in [None, 128, 160, 192]:  # maxnreg
                     configs.append(config_item(q, k, ns, nw, None))
     print(len(configs))  # 192 configs, took 6.5 minutes
@@ -45,8 +45,9 @@ def get_cuda_autotune_config():
     #     config_item(256, 64, 5, 8),
     # ]
 
-# Triton autotuning for function flash finished after 740.29s; 
-# best config selected: BLOCK_SIZE_Q: 64, BLOCK_SIZE_K: 64, num_warps: 4, num_ctas: 1, num_stages: 4, 
+
+# Triton autotuning for function flash finished after 740.29s;
+# best config selected: BLOCK_SIZE_Q: 64, BLOCK_SIZE_K: 64, num_warps: 4, num_ctas: 1, num_stages: 4,
 # num_buffers_warp_spec: 0, num_consumer_groups: 0, reg_dec_producer: 0, reg_inc_consumer: 0, maxnreg: None;
 # @triton.autotune(configs=get_cuda_autotune_config(), key=["q", "k", "v"])
 @triton.jit
@@ -62,7 +63,7 @@ def flash(
     BLOCK_SIZE_Q: tl.constexpr,
     BLOCK_SIZE_K: tl.constexpr,
 ):
-    q = tl.program_id(0)  # q_tile
+    q_start = tl.program_id(0)  # q_tile
     bh = tl.program_id(1)  # batch * head
 
     # - performance nsights compute
@@ -135,6 +136,96 @@ def flash(
     tl.store(l_ptrs, li, mask=l_mask)
 
 
+@triton.jit
+def flash_backward(
+    grad_out_ptr,
+    D_ptr,
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    o_ptr,
+    l_ptr,
+    grad_q_ptr,
+    grad_k_ptr,
+    grad_v_ptr,
+    seq_length: tl.constexpr,
+    head_dim: tl.constexpr,
+    is_causal: tl.constexpr,
+    BLOCK_SIZE_Q: tl.constexpr,
+    BLOCK_SIZE_K: tl.constexpr,
+):
+    k_start = tl.program_id(0)  # k_tile    
+    bh = tl.program_id(1)  # batch * head
+
+    # this would affect once you launch more than # of SMs so they can move on to other processes
+    kvm_offset = k_start + tl.arange(0, BLOCK_SIZE_K)[:, None]
+    kvn_offset = tl.arange(0, head_dim)[None, :]
+
+    k_ptrs = k_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
+    v_ptrs = v_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
+
+    kv_mask = (kvm_offset < seq_length) & (kvn_offset < head_dim)
+    k_tile = tl.load(k_ptrs, mask=kv_mask, other=0.0)
+    v_tile = tl.load(v_ptrs, mask=kv_mask, other=0.0)
+    
+    scale = 1.0 / tl.sqrt(float(head_dim))
+    
+    for j in range(0, tl.cdiv(seq_length, BLOCK_SIZE_Q)):
+        q_start = j * BLOCK_SIZE_Q
+        qm_offset = q_start + tl.arange(0, BLOCK_SIZE_Q)[:, None]
+        qn_offset = tl.arange(0, head_dim)[None, :]
+
+        q_ptrs = q_ptr + bh * seq_length * head_dim + qm_offset * head_dim + qn_offset
+        o_ptrs = o_ptr + bh * seq_length * head_dim + qm_offset * head_dim + qn_offset
+        grad_out_ptrs = grad_out_ptr + bh * seq_length * head_dim + qm_offset * head_dim + qn_offset
+        grad_q_ptrs = grad_q_ptr + bh * seq_length * head_dim + qm_offset * head_dim + qn_offset
+
+        q_mask = (qm_offset < seq_length) & (qn_offset < head_dim)
+
+        q_tile = tl.load(q_ptrs, mask=q_mask, other=0.0)
+        o_tile = tl.load(o_ptrs, mask=q_mask, other=0.0)
+        grad_out_tile = tl.load(grad_out_ptrs, mask=q_mask, other=0.0)
+        grad_q_tile = tl.load(grad_q_ptrs, mask=q_mask, other=0.0)
+
+        l_tile = None
+        D_tile = None
+
+        s = tl.dot(q_tile, tl.trans(k_tile)) * scale
+
+        p = tl.exp(s - l_tile)
+        
+        
+    
+    # q_tile is 1 head, 64 sequence items
+    # for q @ k, clearly need to compute q among all k in the sequence ofc
+    # once I have s
+    # - compute p
+    # - grad_p, 
+    # - - has to compute p, iterating through grad_out in sections as in k
+    # - grad_s, 
+    # - - requires computing D, and D
+    # - - D = part of o * part of grad_out easy
+    # - - compute
+    # - grad_q, iterates again through k
+    # - grad_k, computes right away
+
+    # D = torch.sum(o * grad_out, dim=-1)
+    # s = q @ k.transpose(-2, -1) * scale
+
+    # if ctx.is_causal:
+    #     causal_mask = torch.tril(torch.ones_like(s, dtype=torch.bool))
+    #     s = s.masked_fill(~causal_mask, float("-inf"))
+
+    # p = torch.exp(s - l.unsqueeze(-1))
+    # grad_v = p.transpose(-2, -1) @ grad_out
+    # grad_p = grad_out @ v.transpose(-2, -1)
+    # grad_s = p * (grad_p - D.unsqueeze(-1))
+    # grad_q = grad_s @ k * scale
+    # grad_k = grad_s.transpose(-2, -1) @ q * scale
+
+    pass
+
+
 class FlashAttention(torch.autograd.Function):
     @staticmethod
     def forward(
@@ -154,12 +245,12 @@ class FlashAttention(torch.autograd.Function):
 
         batch_heads = batch_size * num_heads
 
-        l = torch.zeros(
+        l = torch.empty(
             (batch_heads, seq_length),
             device=q.device,
             dtype=q.dtype,
         )
-        o = torch.zeros(
+        o = torch.empty(
             (batch_heads, seq_length, d),
             device=q.device,
             dtype=q.dtype,
@@ -209,24 +300,68 @@ class FlashAttention(torch.autograd.Function):
         ctx.is_causal = is_causal
         return o
 
+    # @staticmethod
+    # def backward(ctx, grad_out):
+    #     q, k, v, o, l = ctx.saved_tensors
+    #     D = torch.sum(o * grad_out, dim=-1)
+    #     scale = 1.0 / math.sqrt(k.shape[-1])
+
+    #     s = q @ k.transpose(-2, -1) * scale
+
+    #     if ctx.is_causal:
+    #         causal_mask = torch.tril(torch.ones_like(s, dtype=torch.bool))
+    #         s = s.masked_fill(~causal_mask, float("-inf"))
+
+    #     p = torch.exp(s - l.unsqueeze(-1))
+    #     grad_v = p.transpose(-2, -1) @ grad_out
+    #     grad_p = grad_out @ v.transpose(-2, -1)
+    #     grad_s = p * (grad_p - D.unsqueeze(-1))
+    #     grad_q = grad_s @ k * scale
+    #     grad_k = grad_s.transpose(-2, -1) @ q * scale
+
+    #     return grad_q, grad_k, grad_v, None, None, None, None
+
     @staticmethod
     def backward(ctx, grad_out):
         q, k, v, o, l = ctx.saved_tensors
         D = torch.sum(o * grad_out, dim=-1)
-        scale = 1.0 / math.sqrt(k.shape[-1])
 
-        s = q @ k.transpose(-2, -1) * scale
+        has_batch_size = len(q.shape) == 4
+        if has_batch_size:
+            batch_size, num_heads, seq_length, d = q.shape
+        else:
+            num_heads, seq_length, d = q.shape
+            batch_size = 1
 
-        if ctx.is_causal:
-            causal_mask = torch.tril(torch.ones_like(s, dtype=torch.bool))
-            s = s.masked_fill(~causal_mask, float("-inf"))
+        batch_heads = batch_size * num_heads
 
-        p = torch.exp(s - l.unsqueeze(-1))
-        grad_v = p.transpose(-2, -1) @ grad_out
-        grad_p = grad_out @ v.transpose(-2, -1)
-        grad_s = p * (grad_p - D.unsqueeze(-1))
-        grad_q = grad_s @ k * scale
-        grad_k = grad_s.transpose(-2, -1) @ q * scale
+        shape = (batch_heads, seq_length, d)
+        grad_q = torch.empty(shape, device=q.device, dtype=q.dtype)
+        grad_k = torch.empty(shape, device=k.device, dtype=k.dtype)
+        grad_v = torch.empty(shape, device=v.device, dtype=v.dtype)
+
+        BLOCK_SIZE_Q, BLOCK_SIZE_K = 64, 64
+        grid = (triton.cdiv(seq_length, BLOCK_SIZE_Q), batch_heads)
+        reshape = lambda m: m.reshape((batch_heads, seq_length, d)) # noqa
+
+        flash_backward[grid](
+            grad_out,
+            D,
+            reshape(q),
+            reshape(k),
+            reshape(v),
+            o,
+            l,
+            grad_q,
+            grad_k,
+            grad_v,
+            seq_length,
+            d,
+            ctx.is_backward,
+            BLOCK_SIZE_Q,
+            BLOCK_SIZE_K,
+            
+        )
 
         return grad_q, grad_k, grad_v, None, None, None, None
 
@@ -235,7 +370,7 @@ def get_q_k_v():
     # n_heads = 12
     # d_head = 64
     # seq_length = 4096
-    
+
     n_heads = 16
     d_head = 64
     seq_length = 16384
@@ -258,12 +393,13 @@ def flash_benchmarking():
     # flash_torch = torch.compile(FlashPytorch.apply)
     # flash_torch = FlashPytorch.apply
     dummy_compiled_fn = torch.compile(dummy_attention)
-    
+
     def benchmark(fn):
         def wrap():
             o = fn(q, k, v, True)
             loss = o.sum()
             loss.backward()
+
         return wrap
 
     results = triton.testing.do_bench(benchmark(flash), rep=10000, warmup=1000)
@@ -276,10 +412,10 @@ def flash_benchmarking():
 
 if __name__ == "__main__":
     # flashattn = torch.compile(FlashAttention.apply)
-    # flashattn = FlashAttention.apply
-    # q, k, v = get_q_k_v()
-    # output = flashattn(q, k, v, True)
-    # loss = output.sum()
-    # loss.backward()
+    flashattn = FlashAttention.apply
+    q, k, v = get_q_k_v()
+    output = flashattn(q, k, v, True)
+    loss = output.sum()
+    loss.backward()
 
-    flash_benchmarking()
+    # flash_benchmarking()
