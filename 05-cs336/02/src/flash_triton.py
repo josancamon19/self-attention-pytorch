@@ -1,4 +1,5 @@
 import math
+from sympy.assumptions.ask_generated import Q
 import torch
 
 import triton
@@ -9,7 +10,7 @@ import os
 import pdb
 
 # os.environ["TRITON_INTERPRET"] = "1"
-os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
+# os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
 
 torch.manual_seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -64,11 +65,10 @@ def flash(
     BLOCK_SIZE_Q: tl.constexpr,
     BLOCK_SIZE_K: tl.constexpr,
 ):
-    q_start = tl.program_id(0)  # q_tile
+    q = tl.program_id(0)  # q_tile
     bh = tl.program_id(1)  # batch * head
 
-    # - performance nsights compute
-
+    q_start = q * BLOCK_SIZE_Q
     qm_offset = q_start + tl.arange(0, BLOCK_SIZE_Q)[:, None]
     qn_offset = tl.arange(0, head_dim)[None, :]
 
@@ -85,40 +85,38 @@ def flash(
 
     for j in range(0, tl.cdiv(seq_length, BLOCK_SIZE_K)):
         k_start = j * BLOCK_SIZE_K
-        should_process = not (is_causal and q_start > k_start + BLOCK_SIZE_K - 1)
-        # TODO: instead the for loop should be smaller
-        if should_process:
-            # this would affect once you launch more than # of SMs so they can move on to other processes
-            kvm_offset = k_start + tl.arange(0, BLOCK_SIZE_K)[:, None]
-            kvn_offset = tl.arange(0, head_dim)[None, :]
+        # this would affect once you launch more than # of SMs so they can move on to other processes
+        kvm_offset = k_start + tl.arange(0, BLOCK_SIZE_K)[:, None]
+        kvn_offset = tl.arange(0, head_dim)[None, :]
 
-            k_ptrs = k_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
-            v_ptrs = v_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
+        k_ptrs = k_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
+        v_ptrs = v_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
 
-            kv_mask = (kvm_offset < seq_length) & (kvn_offset < head_dim)
-            k_tile = tl.load(k_ptrs, mask=kv_mask, other=0.0)
-            v_tile = tl.load(v_ptrs, mask=kv_mask, other=0.0)
+        kv_mask = (kvm_offset < seq_length) & (kvn_offset < head_dim)
+        k_tile = tl.load(k_ptrs, mask=kv_mask, other=0.0)
+        v_tile = tl.load(v_ptrs, mask=kv_mask, other=0.0)
 
-            # tl.device_print("k_tile", k_tile)  # shape?
-            # tl.device_print("v_tile", v_tile)
+        # tl.device_print("k_tile", k_tile)  # shape?
+        # tl.device_print("v_tile", v_tile)
 
-            # attn_scores = tl.dot(q_tile.to(tl.float16), tl.trans(k_tile).to(tl.float16)) * scale
-            attn_scores = tl.dot(q_tile, tl.trans(k_tile)) * scale
+        # attn_scores = tl.dot(q_tile.to(tl.float16), tl.trans(k_tile).to(tl.float16)) * scale
+        attn_scores = tl.dot(q_tile, tl.trans(k_tile)) * scale
 
-            if is_causal:
-                q_indices = qm_offset  # [BLOCK_SIZE_Q, 1]
-                k_indices = k_start + tl.arange(0, BLOCK_SIZE_K)[None, :]  # [1, BLOCK_SIZE_K]
-                causal_mask = q_indices >= k_indices  # True where attention is allowed
-                attn_scores = tl.where(causal_mask, attn_scores, float("-inf"))
-            # tl.device_print("attn_scores", attn_scores)
+        if is_causal:
+            q_indices = qm_offset  # [BLOCK_SIZE_Q, 1]
+            k_indices = k_start + tl.arange(0, BLOCK_SIZE_K)[None, :]  # [1, BLOCK_SIZE_K]
+            causal_mask = q_indices >= k_indices  # True where attention is allowed
+            attn_scores = tl.where(causal_mask, attn_scores, float("-inf"))
+        # tl.device_print("attn_scores", attn_scores)
 
-            rowmax = tl.max(attn_scores, axis=1)
-            prev_mi = mi
-            mi = tl.maximum(mi, rowmax)
-            pj = tl.exp(attn_scores - mi[:, None])
-            li = tl.exp(prev_mi - mi) * li + tl.sum(pj, axis=-1)
-            # oi = tl.exp(prev_mi - mi)[:, None] * oi + tl.dot(pj.to(tl.float16), v_tile.to(tl.float16))
-            oi = tl.exp(prev_mi - mi)[:, None] * oi + tl.dot(pj.to(v_tile.dtype), v_tile)
+        rowmax = tl.max(attn_scores, axis=1)
+        prev_mi = mi
+        mi = tl.maximum(mi, rowmax)
+        pj = tl.exp(attn_scores - mi[:, None])
+        li = tl.exp(prev_mi - mi) * li + tl.sum(pj, axis=-1)
+        # oi = tl.exp(prev_mi - mi)[:, None] * oi + tl.dot(pj.to(tl.float16), v_tile.to(tl.float16))
+        # oi = tl.exp(prev_mi - mi)[:, None] * oi + tl.dot(pj, v_tile.to(tl.float32))
+        oi = tl.exp(prev_mi - mi)[:, None] * oi + tl.dot(pj.to(v_tile.dtype), v_tile)
 
     # tl.device_print("oi_before_div", oi)
     oi = oi / li[:, None]
@@ -155,11 +153,12 @@ def flash_backward(
     BLOCK_SIZE_Q: tl.constexpr,
     BLOCK_SIZE_K: tl.constexpr,
 ):
-    k_start = tl.program_id(0)  # k_tile    
+    k = tl.program_id(0)  # k_tile    
     bh = tl.program_id(1)  # batch * head
 
     # this would affect once you launch more than # of SMs so they can move on to other processes
-    kvm_offset = k_start*BLOCK_SIZE_K + tl.arange(0, BLOCK_SIZE_K)[:, None]
+    k_start = k * BLOCK_SIZE_K
+    kvm_offset = k_start + tl.arange(0, BLOCK_SIZE_K)[:, None]
     kvn_offset = tl.arange(0, head_dim)[None, :]
 
     k_ptrs = k_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
@@ -170,6 +169,12 @@ def flash_backward(
     v_tile = tl.load(v_ptrs, mask=kv_mask, other=0.0)
     
     scale = 1.0 / tl.sqrt(float(head_dim))
+    
+    # tl.device_print("k_start:", k_start)
+    # tl.device_print("scale:", scale)
+    # tl.device_print("k_tile:", k_tile)
+    # tl.device_print("v_tile:", v_tile)
+    # tl.device_print("kv_mask:", kv_mask)
     
     grad_v = tl.zeros((BLOCK_SIZE_K, head_dim), dtype=tl.float32)
     grad_k = tl.zeros((BLOCK_SIZE_K, head_dim), dtype=tl.float32)
@@ -204,7 +209,7 @@ def flash_backward(
         
         if is_causal:
             q_indices = qm_offset  # [BLOCK_SIZE_Q, 1]
-            k_indices = k_start * BLOCK_SIZE_K + tl.arange(0, BLOCK_SIZE_K)[None, :]  # [1, BLOCK_SIZE_K]
+            k_indices = k_start + tl.arange(0, BLOCK_SIZE_K)[None, :]  # [1, BLOCK_SIZE_K]
             causal_mask = q_indices >= k_indices
             s = tl.where(causal_mask, s, float("-inf"))
         
@@ -212,12 +217,12 @@ def flash_backward(
         
         grad_v += tl.dot(tl.trans(p.to(grad_out_tile.dtype)), grad_out_tile)
         grad_p = tl.dot(grad_out_tile, tl.trans(v_tile))
-        grad_s = p * (grad_p - D_tile)  * scale
+        grad_s = p * (grad_p - D_tile) * scale
         
-        grad_q_update = tl.dot(grad_s, k_tile.to(tl.float32)).to(tl.float32)
+        grad_q_update = tl.dot(grad_s, k_tile.to(tl.float32)).to(tl.float32) 
         tl.atomic_add(grad_q_ptrs, grad_q_update, mask=q_mask)
         
-        grad_k += tl.dot(tl.trans(grad_s.to(q_tile.dtype)), q_tile)
+        grad_k += tl.dot(tl.trans(grad_s.to(q_tile.dtype)), q_tile) 
     
     grad_k_ptrs = grad_k_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
     grad_v_ptrs = grad_v_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
@@ -336,7 +341,7 @@ class FlashAttention(torch.autograd.Function):
         batch_heads = batch_size * num_heads
 
         shape = (batch_heads, seq_length, d)
-        grad_q = torch.empty(shape, device=q.device, dtype=torch.float32)  # atomic ops
+        grad_q = torch.zeros(shape, device=q.device, dtype=torch.float32)  # atomic ops
         grad_k = torch.empty(shape, device=k.device, dtype=torch.float32)  # fp32 for accumulation
         grad_v = torch.empty(shape, device=v.device, dtype=torch.float32)  # fp32 for accumulation
 
@@ -344,15 +349,15 @@ class FlashAttention(torch.autograd.Function):
         grid = (triton.cdiv(seq_length, BLOCK_SIZE_K), batch_heads)
         reshape = lambda m: m.reshape((batch_heads, seq_length, d)) # noqa
 
-        pdb.set_trace()
+        # pdb.set_trace()
         flash_backward[grid](
-            grad_out,
-            D,
+            reshape(grad_out),
+            D.reshape(batch_heads, seq_length),
             reshape(q),
             reshape(k),
             reshape(v),
-            o,
-            l,
+            reshape(o),
+            l.reshape(batch_heads, seq_length),
             grad_q,
             grad_k,
             grad_v,
@@ -372,22 +377,14 @@ class FlashAttention(torch.autograd.Function):
         return grad_q.to(q.dtype), grad_k.to(k.dtype), grad_v.to(v.dtype), None, None, None, None
 
 
-def get_q_k_v():
-    # n_heads = 12
-    # d_head = 64
-    # seq_length = 4096
-
-    n_heads = 16
-    d_head = 64
-    seq_length = 16384
+def get_q_k_v(n_heads = 16, seq_length = 16384, head_dim=64, dtype=torch.float32):
     q, k, v = torch.randn(
         3,
         n_heads,
         seq_length,
-        d_head,
+        head_dim,
         device="cuda",
-        dtype=torch.bfloat16,
-        # dtype=torch.float16,
+        dtype=dtype,
         requires_grad=True,
     )
     return q, k, v
@@ -410,18 +407,75 @@ def flash_benchmarking():
 
     results = triton.testing.do_bench(benchmark(flash), rep=10000, warmup=1000)
     print("flash_triton:", results)
-    results = triton.testing.do_bench(benchmark(dummy_attention), rep=10000, warmup=100)
-    print("dummy:", results)
-    results = triton.testing.do_bench(benchmark(dummy_compiled_fn), rep=10000, warmup=100)
-    print("dummy_compiled:", results)
+    # results = triton.testing.do_bench(benchmark(dummy_attention), rep=10000, warmup=100)
+    # print("dummy:", results)
+    # results = triton.testing.do_bench(benchmark(dummy_compiled_fn), rep=10000, warmup=100)
+    # print("dummy_compiled:", results)
 
+
+def verify_correctness(is_causal: bool = True):
+    test_configs = [
+        # (n_heads, seq_length, d_head, is_causal, desc)
+        (4, 128, 64, False, "small non-causal"),
+        (4, 128, 64, True, "small causal"),
+        (8, 512, 64, False, "medium non-causal"),
+        (8, 512, 64, True, "medium causal"),
+        (12, 1024, 64, False, "large non-causal"),
+        (12, 1024, 64, True, "large causal"),
+    ]
+    for n_heads, seq_length, d_head, is_causal, desc in test_configs:
+        q, k, v = get_q_k_v(n_heads, seq_length, d_head, torch.float32)
+        
+        # Clone tensors for both implementations
+        q_flash = q.clone().detach().requires_grad_(True)
+        k_flash = k.clone().detach().requires_grad_(True)
+        v_flash = v.clone().detach().requires_grad_(True)
+        
+        q_dummy = q.clone().detach().requires_grad_(True)
+        k_dummy = k.clone().detach().requires_grad_(True)
+        v_dummy = v.clone().detach().requires_grad_(True)
+        
+        output_flash = FlashAttention.apply(q_flash, k_flash, v_flash, is_causal)
+        output_dummy = dummy_attention(q_dummy, k_dummy, v_dummy, is_causal)
+        
+        # Check forward pass
+        max_diff = torch.max(torch.abs(output_flash - output_dummy)).item()
+        rtol = 5e-3  # Relative tolerance
+        atol = 1e-3  # Absolute tolerance
+        rtol_backward = 1e-2  # More lenient for gradients
+        atol_backward = 5e-3  # More lenient for gradients
+        forward_match = torch.allclose(output_flash, output_dummy, rtol=rtol, atol=atol)
+        grad_out = torch.randn_like(output_flash)
+        
+        loss_flash = (output_flash * grad_out).sum()
+        loss_dummy = (output_dummy * grad_out).sum()
+        
+        loss_flash.backward()
+        loss_dummy.backward()
+        
+        # Check gradients
+        q_grad_diff = torch.max(torch.abs(q_flash.grad - q_dummy.grad)).item()
+        k_grad_diff = torch.max(torch.abs(k_flash.grad - k_dummy.grad)).item()
+        v_grad_diff = torch.max(torch.abs(v_flash.grad - v_dummy.grad)).item()
+        
+        q_grad_match = torch.allclose(q_flash.grad, q_dummy.grad, rtol=rtol_backward, atol=atol_backward)
+        k_grad_match = torch.allclose(k_flash.grad, k_dummy.grad, rtol=rtol_backward, atol=atol_backward)
+        v_grad_match = torch.allclose(v_flash.grad, v_dummy.grad, rtol=rtol_backward, atol=atol_backward)
+        print(f"Test case: {desc}")
+        print(f"  Shape: ({n_heads}, {seq_length}, {d_head})")
+        print(f"  Forward pass: {'✓ PASSED' if forward_match else '✗ FAILED'} (max diff: {max_diff:.2e})")
+        print(f"  Backward pass:")
+        print(f"    Q grad: {'✓ PASSED' if q_grad_match else '✗ FAILED'} (max diff: {q_grad_diff:.2e})")
+        print(f"    K grad: {'✓ PASSED' if k_grad_match else '✗ FAILED'} (max diff: {k_grad_diff:.2e})")
+        print(f"    V grad: {'✓ PASSED' if v_grad_match else '✗ FAILED'} (max diff: {v_grad_diff:.2e})")
+        print()
 
 if __name__ == "__main__":
     # flashattn = torch.compile(FlashAttention.apply)
-    flashattn = FlashAttention.apply
-    q, k, v = get_q_k_v()
-    output = flashattn(q, k, v, True)
-    loss = output.sum()
-    loss.backward()
-
-    # flash_benchmarking()
+    # flashattn = FlashAttention.apply
+    # q, k, v = get_q_k_v(2, 20, 16)
+    # output = flashattn(q, k, v, True)
+    # loss = output.sum()
+    # loss.backward()
+    # verify_correctness()
+    flash_benchmarking()
