@@ -11,10 +11,7 @@ import pdb
 
 # os.environ["TRITON_INTERPRET"] = "1"
 os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
-
 torch.manual_seed(42)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 
 def get_cuda_autotune_config():
     def config_item(q, k, ns, nw, mr= None):
@@ -22,16 +19,6 @@ def get_cuda_autotune_config():
         if mr is not None:
             config.maxnreg = mr
         return config
-
-    # configs = []
-    # for q in [64, 128, 256, 512]:
-    #     for k in [64, 128, 256, 512]:
-    #         for ns in [3, 4, 5, 6, 7]:  # , 4, 5, 6, 7
-    #             for nw in [4, 8]:  # must be power of 2 # 16, 32? caused register allocation failed
-    #                 # for mr in [None, 128, 160, 192]:  # maxnreg
-    #                 configs.append(config_item(q, k, ns, nw, None))
-    # print(len(configs))  # 192 configs, took 6.5 minutes
-    # return configs
 
     return [
         config_item(128, 256, 3, 8),
@@ -51,7 +38,7 @@ def get_cuda_autotune_config():
 # Triton autotuning for function flash finished after 740.29s;
 # best config selected: BLOCK_SIZE_Q: 64, BLOCK_SIZE_K: 64, num_warps: 4, num_ctas: 1, num_stages: 4,
 # num_buffers_warp_spec: 0, num_consumer_groups: 0, reg_dec_producer: 0, reg_inc_consumer: 0, maxnreg: None;
-# @triton.autotune(configs=get_cuda_autotune_config(), key=["q", "k", "v"])
+@triton.autotune(configs=get_cuda_autotune_config(), key=["q", "k", "v"])
 @triton.jit
 def flash(
     q_ptr,
@@ -158,7 +145,7 @@ def flash(
     li = mi + tl.log(li)
     tl.store(l_ptr + l_offset, li, mask=l_mask)
 
-# @triton.autotune(configs=get_cuda_autotune_config(), key=["q", "k", "v"])
+@triton.autotune(configs=get_cuda_autotune_config(), key=["q", "k", "v"])
 @triton.jit
 def flash_backward(
     grad_out_ptr,
@@ -177,82 +164,141 @@ def flash_backward(
     BLOCK_SIZE_Q: tl.constexpr,
     BLOCK_SIZE_K: tl.constexpr,
 ):
-    k = tl.program_id(0)  # k_tile    
+    k_block_id = tl.program_id(0)  # k_tile    
     bh = tl.program_id(1)  # batch * head
-
-    # this would affect once you launch more than # of SMs so they can move on to other processes
-    k_start = k * BLOCK_SIZE_K
-    kvm_offset = k_start + tl.arange(0, BLOCK_SIZE_K)[:, None]
-    kvn_offset = tl.arange(0, head_dim)[None, :]
-
-    k_ptrs = k_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
-    v_ptrs = v_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
-
-    kv_mask = (kvm_offset < seq_length) & (kvn_offset < head_dim)
-    k_tile = tl.load(k_ptrs, mask=kv_mask, other=0.0)
-    v_tile = tl.load(v_ptrs, mask=kv_mask, other=0.0)
+    
+    # Base offset for this batch/head
+    base_offset = bh * seq_length * head_dim
+    
+    # Create block pointers for K and V (fixed for this k_block)
+    k_block_ptr = tl.make_block_ptr(
+        base=k_ptr + base_offset,
+        shape=(seq_length, head_dim),
+        strides=(head_dim, 1),
+        offsets=(k_block_id * BLOCK_SIZE_K, 0),
+        block_shape=(BLOCK_SIZE_K, head_dim),
+        order=(1, 0)
+    )
+    
+    v_block_ptr = tl.make_block_ptr(
+        base=v_ptr + base_offset,
+        shape=(seq_length, head_dim),
+        strides=(head_dim, 1),
+        offsets=(k_block_id * BLOCK_SIZE_K, 0),
+        block_shape=(BLOCK_SIZE_K, head_dim),
+        order=(1, 0)
+    )
+    
+    # Load K and V tiles (fixed for this kernel instance)
+    k_tile = tl.load(k_block_ptr, boundary_check=(0, 1))
+    v_tile = tl.load(v_block_ptr, boundary_check=(0, 1))
     
     scale = 1.0 / tl.sqrt(float(head_dim))
     
-    # tl.device_print("k_start:", k_start)
-    # tl.device_print("scale:", scale)
-    # tl.device_print("k_tile:", k_tile)
-    # tl.device_print("v_tile:", v_tile)
-    # tl.device_print("kv_mask:", kv_mask)
-    
+    # Accumulation tiles in float32
     grad_v = tl.zeros((BLOCK_SIZE_K, head_dim), dtype=tl.float32)
     grad_k = tl.zeros((BLOCK_SIZE_K, head_dim), dtype=tl.float32)
     
-    for j in range(0, tl.cdiv(seq_length, BLOCK_SIZE_Q)):
-        q_start = j * BLOCK_SIZE_Q
-        qm_offset = q_start + tl.arange(0, BLOCK_SIZE_Q)[:, None]
-        qn_offset = tl.arange(0, head_dim)[None, :]
-
-        q_ptrs = q_ptr + bh * seq_length * head_dim + qm_offset * head_dim + qn_offset
-        o_ptrs = o_ptr + bh * seq_length * head_dim + qm_offset * head_dim + qn_offset
-        grad_out_ptrs = grad_out_ptr + bh * seq_length * head_dim + qm_offset * head_dim + qn_offset
-        grad_q_ptrs = grad_q_ptr + bh * seq_length * head_dim + qm_offset * head_dim + qn_offset
-
-        q_mask = (qm_offset < seq_length) & (qn_offset < head_dim)
-
-        q_tile = tl.load(q_ptrs, mask=q_mask, other=0.0)
-        o_tile = tl.load(o_ptrs, mask=q_mask, other=0.0)
-        grad_out_tile = tl.load(grad_out_ptrs, mask=q_mask, other=0.0)
+    # Loop over Q blocks
+    for q_block_id in range(0, tl.cdiv(seq_length, BLOCK_SIZE_Q)):
+        # Create block pointers for Q-related tensors
+        q_block_ptr = tl.make_block_ptr(
+            base=q_ptr + base_offset,
+            shape=(seq_length, head_dim),
+            strides=(head_dim, 1),
+            offsets=(q_block_id * BLOCK_SIZE_Q, 0),
+            block_shape=(BLOCK_SIZE_Q, head_dim),
+            order=(1, 0)
+        )
         
-        # Load L and D tiles - they are 1D tensors
-        l_offset = q_start + tl.arange(0, BLOCK_SIZE_Q)
-        l_mask = l_offset < seq_length
+        o_block_ptr = tl.make_block_ptr(
+            base=o_ptr + base_offset,
+            shape=(seq_length, head_dim),
+            strides=(head_dim, 1),
+            offsets=(q_block_id * BLOCK_SIZE_Q, 0),
+            block_shape=(BLOCK_SIZE_Q, head_dim),
+            order=(1, 0)
+        )
         
-        l_ptrs = l_ptr + bh * seq_length + l_offset
-        D_ptrs = D_ptr + bh * seq_length + l_offset
+        grad_out_block_ptr = tl.make_block_ptr(
+            base=grad_out_ptr + base_offset,
+            shape=(seq_length, head_dim),
+            strides=(head_dim, 1),
+            offsets=(q_block_id * BLOCK_SIZE_Q, 0),
+            block_shape=(BLOCK_SIZE_Q, head_dim),
+            order=(1, 0)
+        )
         
-        l_tile = tl.load(l_ptrs, mask=l_mask, other=0.0)[:, None]  # Shape: (BLOCK_SIZE_Q, 1)
-        D_tile = tl.load(D_ptrs, mask=l_mask, other=0.0)[:, None]  # Shape: (BLOCK_SIZE_Q, 1)
-
+        grad_q_block_ptr = tl.make_block_ptr(
+            base=grad_q_ptr + base_offset,
+            shape=(seq_length, head_dim),
+            strides=(head_dim, 1),
+            offsets=(q_block_id * BLOCK_SIZE_Q, 0),
+            block_shape=(BLOCK_SIZE_Q, head_dim),
+            order=(1, 0)
+        )
+        
+        # Load Q-related tiles
+        q_tile = tl.load(q_block_ptr, boundary_check=(0, 1))
+        o_tile = tl.load(o_block_ptr, boundary_check=(0, 1))
+        grad_out_tile = tl.load(grad_out_block_ptr, boundary_check=(0, 1))
+        
+        one_dim_offset = bh * seq_length + q_block_id * BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)
+        one_dim_mask = (q_block_id * BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)) < seq_length
+        l_tile = tl.load(l_ptr + one_dim_offset, mask=one_dim_mask, other=0.0)[:, None]  # Shape: (BLOCK_SIZE_Q, 1)
+        D_tile = tl.load(D_ptr + one_dim_offset, mask=one_dim_mask, other=0.0)[:, None]  # Shape: (BLOCK_SIZE_Q, 1)
+        
+        # Compute attention scores
         s = tl.dot(q_tile, tl.trans(k_tile)) * scale
         
         if is_causal:
-            q_indices = qm_offset  # [BLOCK_SIZE_Q, 1]
-            k_indices = k_start + tl.arange(0, BLOCK_SIZE_K)[None, :]  # [1, BLOCK_SIZE_K]
+            q_indices = q_block_id * BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)[:, None]
+            k_indices = k_block_id * BLOCK_SIZE_K + tl.arange(0, BLOCK_SIZE_K)[None, :]
             causal_mask = q_indices >= k_indices
             s = tl.where(causal_mask, s, float("-inf"))
         
         p = tl.exp(s - l_tile)
         
-        grad_v += tl.dot(tl.trans(p.to(grad_out_tile.dtype)), grad_out_tile)
+        # Compute gradients
+        grad_v += tl.dot(tl.trans(p.to(grad_out_tile.dtype)), grad_out_tile).to(tl.float32)
         grad_p = tl.dot(grad_out_tile, tl.trans(v_tile))
         grad_s = p * (grad_p - D_tile) * scale
         
-        grad_q_update = tl.dot(grad_s, k_tile.to(tl.float32)).to(tl.float32) 
-        tl.atomic_add(grad_q_ptrs, grad_q_update, mask=q_mask)
+        # Update Q gradients using atomic add
+        grad_q_update = tl.dot(grad_s, k_tile.to(tl.float32))
         
-        grad_k += tl.dot(tl.trans(grad_s.to(q_tile.dtype)), q_tile) 
+        # For atomic operations, we need to use manual pointers, not block pointers
+        q_offset = q_block_id * BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)[:, None]
+        d_offset = tl.arange(0, head_dim)[None, :]
+        grad_q_ptrs = grad_q_ptr + base_offset + q_offset * head_dim + d_offset
+        grad_q_mask = (q_offset < seq_length) & (d_offset < head_dim)
+        
+        tl.atomic_add(grad_q_ptrs, grad_q_update.to(grad_out_tile.dtype), mask=grad_q_mask)
+        
+        # Accumulate K gradients
+        grad_k += tl.dot(tl.trans(grad_s.to(q_tile.dtype)), q_tile).to(tl.float32)
     
-    grad_k_ptrs = grad_k_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
-    grad_v_ptrs = grad_v_ptr + bh * seq_length * head_dim + kvm_offset * head_dim + kvn_offset
-
-    tl.store(grad_k_ptrs, grad_k, mask=kv_mask)
-    tl.store(grad_v_ptrs, grad_v, mask=kv_mask)
+    # Store final K and V gradients using block pointers
+    grad_k_block_ptr = tl.make_block_ptr(
+        base=grad_k_ptr + base_offset,
+        shape=(seq_length, head_dim),
+        strides=(head_dim, 1),
+        offsets=(k_block_id * BLOCK_SIZE_K, 0),
+        block_shape=(BLOCK_SIZE_K, head_dim),
+        order=(1, 0)
+    )
+    
+    grad_v_block_ptr = tl.make_block_ptr(
+        base=grad_v_ptr + base_offset,
+        shape=(seq_length, head_dim),
+        strides=(head_dim, 1),
+        offsets=(k_block_id * BLOCK_SIZE_K, 0),
+        block_shape=(BLOCK_SIZE_K, head_dim),
+        order=(1, 0)
+    )
+    
+    tl.store(grad_k_block_ptr, grad_k.to(k_tile.dtype), boundary_check=(0, 1))
+    tl.store(grad_v_block_ptr, grad_v.to(v_tile.dtype), boundary_check=(0, 1))
 
 
 class FlashAttention(torch.autograd.Function):
@@ -289,9 +335,9 @@ class FlashAttention(torch.autograd.Function):
 
         q_tile_size, k_tile_size, num_warps, num_stages = 64, 64, 4, 3
         # q_tile_size, k_tile_size, num_warps, num_stages = 64, 64, 4, 4
-        grid = (triton.cdiv(seq_length, q_tile_size), batch_heads)
+        # grid = (triton.cdiv(seq_length, q_tile_size), batch_heads)
 
-        # grid = lambda meta: (triton.cdiv(seq_length, meta["BLOCK_SIZE_Q"]), batch_heads)  # noqa: E731
+        grid = lambda meta: (triton.cdiv(seq_length, meta["BLOCK_SIZE_Q"]), batch_heads)  # noqa: E731
         if debug:
             print("grid:", grid)
             print(f"q shape: {q.shape}")
@@ -309,10 +355,10 @@ class FlashAttention(torch.autograd.Function):
             seq_length=seq_length,
             head_dim=d,
             is_causal=is_causal,
-            BLOCK_SIZE_Q=q_tile_size,
-            BLOCK_SIZE_K=k_tile_size,
-            num_warps=num_warps,
-            num_stages=num_stages,
+            # BLOCK_SIZE_Q=q_tile_size,
+            # BLOCK_SIZE_K=k_tile_size,
+            # num_warps=num_warps,
+            # num_stages=num_stages,
             # num_ctas=num_ctas, # not include, worst results.
         )
         if not has_batch_size:
@@ -368,12 +414,12 @@ class FlashAttention(torch.autograd.Function):
 
         shape = (batch_heads, seq_length, d)
         grad_q = torch.zeros(shape, device=q.device, dtype=torch.float32)  # atomic ops
-        grad_k = torch.empty(shape, device=k.device, dtype=torch.float32)  # fp32 for accumulation
-        grad_v = torch.empty(shape, device=v.device, dtype=torch.float32)  # fp32 for accumulation
+        grad_k = torch.empty(shape, device=k.device, dtype=q.dtype)  # fp32 for accumulation
+        grad_v = torch.empty(shape, device=v.device, dtype=q.dtype)  # fp32 for accumulation
 
-        BLOCK_SIZE_Q, BLOCK_SIZE_K = 64, 64
-        grid = (triton.cdiv(seq_length, BLOCK_SIZE_K), batch_heads)
-        # grid = lambda meta: (triton.cdiv(seq_length, meta['BLOCK_SIZE_K']), batch_heads) # noqa
+        # BLOCK_SIZE_Q, BLOCK_SIZE_K = 64, 64
+        # grid = (triton.cdiv(seq_length, BLOCK_SIZE_K), batch_heads)
+        grid = lambda meta: (triton.cdiv(seq_length, meta['BLOCK_SIZE_K']), batch_heads) # noqa
         reshape = lambda m: m.reshape((batch_heads, seq_length, d)) # noqa
 
         # pdb.set_trace()
@@ -391,8 +437,8 @@ class FlashAttention(torch.autograd.Function):
             seq_length,
             d,
             ctx.is_causal,
-            BLOCK_SIZE_Q,
-            BLOCK_SIZE_K,
+            # BLOCK_SIZE_Q,
+            # BLOCK_SIZE_K,
         )
         
         # Reshape gradients to match input shapes
@@ -434,10 +480,10 @@ def flash_benchmarking():
 
     results = triton.testing.do_bench(benchmark(flash), rep=10000, warmup=1000)
     print("flash_triton:", results)
-    results = triton.testing.do_bench(benchmark(dummy_attention), rep=10000, warmup=100)
-    print("dummy:", results)
-    results = triton.testing.do_bench(benchmark(dummy_compiled_fn), rep=10000, warmup=100)
-    print("dummy_compiled:", results)
+    # results = triton.testing.do_bench(benchmark(dummy_attention), rep=10000, warmup=100)
+    # print("dummy:", results)
+    # results = triton.testing.do_bench(benchmark(dummy_compiled_fn), rep=10000, warmup=100)
+    # print("dummy_compiled:", results)
 
 
 def verify_correctness(dtype = torch.float32):
