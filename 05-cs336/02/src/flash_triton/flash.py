@@ -1,6 +1,6 @@
 
 import torch
-from src.flash_triton.triton_forward import flash_forward, flash_forward_tma
+from src.flash_triton.triton_forward import flash_forward_tma
 from src.flash_triton.triton_backward_2 import flash_backward_pass2_grad_kv, flash_backward_pass1_grad_q
 import triton
 

@@ -132,8 +132,8 @@ if __name__ == "__main__":
     # - skip all future masked, 15-12-10
     # - TMA from 10.25 to 10.005 (painful and almost nothing), had to remove torch.compile
     # - exp2, 9.55
+    # - Separate causal phases forward: 1.72ms → 1.45ms, 
     # TODO:
-    # - Separate the non-masked tiles from the tile diagonals, computing the first without ever comparing indices, and the second with a single comparison
     # - Use Persistent Matmul?
 
     # TODO: navigate through backward algo, and write it on your own words
