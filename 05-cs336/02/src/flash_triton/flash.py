@@ -1,7 +1,6 @@
 
 import torch
 from src.flash_triton.triton_forward import flash_forward
-from src.flash_triton.triton_backward import flash_backward
 from src.flash_triton.triton_backward_2 import flash_backward_pass2_grad_kv, flash_backward_pass1_grad_q
 import triton
 
@@ -49,6 +48,10 @@ class FlashAttention(torch.autograd.Function):
             print(f"v shape: {v.shape}")
             print(f"l shape: {l.shape}")
             print(f"o shape: {o.shape}")
+            
+        # NUM_SMS = torch.cuda.get_device_properties().multi_processor_count
+        # device_capability = torch.cuda.get_device_capability()
+        # print("NUM_SMS, device_capability", NUM_SMS, device_capability)
 
         flash_forward[grid](
             reshape(q),
@@ -178,7 +181,8 @@ class FlashAttention(torch.autograd.Function):
         reshape = lambda m: m.reshape((batch_heads, seq_length, d))
 
         # PASS 1: Compute grad_q (parallelize over Q blocks)
-        BLOCK_SIZE_Q, BLOCK_SIZE_K = 64, 64
+        # LOCK_SIZE_Q: 128, BLOCK_SIZE_K: 64, num_warps: 8, num_ctas: 1, num_stages: 5,
+        BLOCK_SIZE_Q, BLOCK_SIZE_K, num_warps, num_stages = 128, 64, 8, 5
         grid = (triton.cdiv(seq_length, BLOCK_SIZE_Q), batch_heads)
         # grid = lambda meta: (triton.cdiv(seq_length, meta['BLOCK_SIZE_Q']), batch_heads)
         flash_backward_pass1_grad_q[grid](
@@ -195,11 +199,14 @@ class FlashAttention(torch.autograd.Function):
             ctx.is_causal,
             BLOCK_SIZE_Q,
             BLOCK_SIZE_K,
+            num_warps=num_warps,
+            num_stages=num_stages,
         )
         
         # PASS 2: Compute grad_k and grad_v (parallelize over K blocks)
-        # grid_k = lambda meta: (triton.cdiv(seq_length, meta['BLOCK_SIZE_K']), batch_heads)
+        BLOCK_SIZE_Q, BLOCK_SIZE_K, num_warps, num_stages = 64, 64, 4, 3
         grid = (triton.cdiv(seq_length, BLOCK_SIZE_K), batch_heads)
+        # grid = lambda meta: (triton.cdiv(seq_length, meta['BLOCK_SIZE_K']), batch_heads)
         flash_backward_pass2_grad_kv[grid](
             reshape(grad_out),
             D.reshape(batch_heads, seq_length),
@@ -215,6 +222,8 @@ class FlashAttention(torch.autograd.Function):
             ctx.is_causal,
             BLOCK_SIZE_Q,
             BLOCK_SIZE_K,
+            num_warps=num_warps,
+            num_stages=num_stages,
         )
         
         # Reshape gradients to match input shapes

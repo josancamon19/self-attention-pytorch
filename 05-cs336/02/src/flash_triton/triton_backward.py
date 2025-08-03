@@ -3,7 +3,6 @@ import math
 import triton
 import triton.language as tl
 
-# @triton.autotune(configs=get_cuda_autotune_config(), key=["q", "k", "v"])
 @triton.jit
 def flash_backward(
     grad_out_ptr,

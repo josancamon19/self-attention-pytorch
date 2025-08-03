@@ -53,12 +53,13 @@ def flash_benchmarking():
 def verify_correctness(dtype = torch.float32):
     test_configs = [
         # (n_heads, seq_length, d_head, is_causal, desc)
-        (4, 128, 64, False, "small non-causal"),
-        (4, 128, 64, True, "small causal"),
-        (8, 512, 64, False, "medium non-causal"),
-        (8, 512, 64, True, "medium causal"),
-        (12, 1024, 64, False, "large non-causal"),
-        (12, 1024, 64, True, "large causal"),
+        # (4, 128, 64, False, "small non-causal"),
+        # (4, 128, 64, True, "small causal"),
+        # (8, 512, 64, False, "medium non-causal"),
+        # (8, 512, 64, True, "medium causal"),
+        # (12, 1024, 64, False, "large non-causal"),
+        # (12, 1024, 64, True, "large causal"),
+        (16, 16384, 64, False, "big non-causal"),
     ]
     for n_heads, seq_length, d_head, is_causal, desc in test_configs:
         q, k, v = get_q_k_v(n_heads, seq_length, d_head, dtype)
@@ -108,16 +109,17 @@ def verify_correctness(dtype = torch.float32):
         print()
 
 if __name__ == "__main__":
-    # flashattn = FlashAttention.apply
-    # q, k, v = get_q_k_v(dtype=torch.bfloat16)
-    # output = flashattn(q, k, v, True)
-    # loss = output.sum()
-    # loss.backward()
-    verify_correctness(dtype=torch.bfloat16)
-    # flash_benchmarking()
-    # fix why is so off on bfloat16 correctness, and closer to float32 ✅
-    # TODO: what's happening to so many dtype converdsions?
-    # TODO: verify stupid improvements with atomic stuff
-    # TODO: base2 ops instead of exp
-    # TODO: don't do atomic ops
+    # verify_correctness(dtype=torch.bfloat16)
+    flash_benchmarking()
+    # TODO:
+    # - Tune the tile sizes for your kernel (use Triton autotune for this!)
+    # - Tune additional Triton config parameters
+    # - Dumb initializations
+    # - Stop program instances early when doing causal masking, skipping all tiles that are always all zero
+    # - Separate the non-masked tiles from the tile diagonals, computing the first without ever comparing indices, and the second with a single comparison
+    # - Use TMA (Tensor Memory Accelerator) functionality on H100, following a similar pattern 
+    # - Use Persistent Matmul?
+    # - base2 ops instead of exp
+    # TODO: get latest torch/triton versions
+    
     # TODO: navigate through backward algo, and write it on your own words

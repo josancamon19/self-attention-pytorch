@@ -1,16 +1,8 @@
-import math
-from sympy.assumptions.ask_generated import Q
 import torch
-
 import triton
 import triton.language as tl
-
-from src.flash_torch import dummy_attention  # , FlashForward as FlashPytorch
 import os
-import pdb
 
-# os.environ["TRITON_INTERPRET"] = "1"
-os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
 torch.manual_seed(42)
 
 # @triton.autotune(configs=get_cuda_autotune_config(), key=["q", "k", "v"])
@@ -88,7 +80,6 @@ def flash_forward(
             causal_mask = q_indices >= k_indices
             attn_scores = tl.where(causal_mask, attn_scores, float("-inf"))
         
-        # Flash attention online softmax update
         rowmax = tl.max(attn_scores, axis=1)
         
         prev_mi = mi
@@ -114,8 +105,8 @@ def flash_forward(
     )
     tl.store(o_block_ptr, oi.to(q_tile.dtype), boundary_check=(0, 1))
     
-    # Store L (log sum exp)
     l_offset = bh * seq_length + q_block_id * BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)
     l_mask = (q_block_id * BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)) < seq_length
     li = mi + tl.log(li)
     tl.store(l_ptr + l_offset, li, mask=l_mask)
+    

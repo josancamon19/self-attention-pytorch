@@ -2,7 +2,9 @@ import triton
 import triton.language as tl
 
 # Lots of help from claude tbh, mostly
+from src.flash_triton.shared import get_cuda_autotune_config
 
+# @triton.autotune(configs=get_cuda_autotune_config(), key=["seq_length", "head_dim"])
 @triton.jit
 def flash_backward_pass1_grad_q(
     grad_out_ptr,
@@ -130,6 +132,7 @@ def flash_backward_pass1_grad_q(
     
     tl.store(grad_q_block_ptr, grad_q.to(q_tile.dtype), boundary_check=(0, 1))
     
+# @triton.autotune(configs=get_cuda_autotune_config(), key=["seq_length", "head_dim"])  
 @triton.jit
 def flash_backward_pass2_grad_kv(
     grad_out_ptr,
