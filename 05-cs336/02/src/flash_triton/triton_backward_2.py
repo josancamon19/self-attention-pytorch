@@ -4,9 +4,8 @@ import triton.language as tl
 # Lots of help from claude tbh, mostly
 from src.flash_triton.shared import get_cuda_autotune_config
 
-# @triton.autotune(configs=get_cuda_autotune_config(), key=["seq_length", "head_dim"])
 
-
+@triton.autotune(configs=get_cuda_autotune_config(), key=["seq_length", "head_dim"])
 @triton.jit
 def flash_backward_pass1_grad_q(
     grad_out_ptr,
@@ -89,9 +88,17 @@ def flash_backward_pass1_grad_q(
     k_tiles = tl.cdiv(seq_length, BLOCK_SIZE_K)
     
     if is_causal:
+        # For causal attention, calculate exact K block range to process
+        q_start = q_block_id * BLOCK_SIZE_Q
+        q_end = q_start + BLOCK_SIZE_Q - 1
+        
+        # Calculate the first K block that could be diagonal (overlaps with Q block)
+        first_diagonal_k = q_start // BLOCK_SIZE_K
+        # Calculate the last K block we need to process (covers q_end position)
+        last_k = tl.minimum((q_end // BLOCK_SIZE_K) + 1, k_tiles)
+        
         # Phase 1: Process past blocks (no masking needed)
-        max_past_block = q_block_id
-        for k_block_id in tl.range(0, max_past_block):
+        for k_block_id in tl.range(0, first_diagonal_k):
             # Load K and V tiles using pre-created TMA descriptors
             k_offset = k_block_id * BLOCK_SIZE_K
             k_tile = k_desc.load([k_offset, 0])
@@ -108,21 +115,19 @@ def flash_backward_pass1_grad_q(
             # Accumulate grad_q (NO ATOMICS!)
             grad_q += tl.dot(grad_s, k_tile.to(tl.float32))
 
-        # Phase 2: Process diagonal block (with masking)
-        if q_block_id < k_tiles:
+        # Phase 2: Process diagonal blocks (with masking)
+        for k_block_id in tl.range(first_diagonal_k, last_k):
             # Load K and V tiles using pre-created TMA descriptors
-            k_offset = q_block_id * BLOCK_SIZE_K
+            k_offset = k_block_id * BLOCK_SIZE_K
             k_tile = k_desc.load([k_offset, 0])
             v_tile = v_desc.load([k_offset, 0])
 
             # Compute attention scores
             s = tl.dot(q_tile, tl.trans(k_tile)) * scale
 
-            # Apply causal mask (single comparison)
-            q_indices = q_block_id * BLOCK_SIZE_Q + \
-                tl.arange(0, BLOCK_SIZE_Q)[:, None]
-            k_indices = q_block_id * BLOCK_SIZE_K + \
-                tl.arange(0, BLOCK_SIZE_K)[None, :]
+            # Apply causal mask
+            q_indices = q_start + tl.arange(0, BLOCK_SIZE_Q)[:, None]
+            k_indices = k_block_id * BLOCK_SIZE_K + tl.arange(0, BLOCK_SIZE_K)[None, :]
             causal_mask = q_indices >= k_indices
             s = tl.where(causal_mask, s, float("-inf"))
 
@@ -134,8 +139,6 @@ def flash_backward_pass1_grad_q(
 
             # Accumulate grad_q (NO ATOMICS!)
             grad_q += tl.dot(grad_s, k_tile.to(tl.float32))
-
-        # Phase 3: Future blocks are implicitly skipped (no loop needed)
 
     else:
         # Non-causal: process all blocks without masking
@@ -163,9 +166,7 @@ def flash_backward_pass1_grad_q(
     # Store grad_q using TMA descriptor
     grad_q_desc.store([q_offset, 0], grad_q.to(q_tile.dtype))
 
-# @triton.autotune(configs=get_cuda_autotune_config(), key=["seq_length", "head_dim"])
-
-
+@triton.autotune(configs=get_cuda_autotune_config(), key=["seq_length", "head_dim"])
 @triton.jit
 def flash_backward_pass2_grad_kv(
     grad_out_ptr,
@@ -247,10 +248,15 @@ def flash_backward_pass2_grad_kv(
     q_tiles = tl.cdiv(seq_length, BLOCK_SIZE_Q)
     
     if is_causal:
-        # Phase 1: Process past Q blocks (no masking needed)
-        # These are Q blocks where q_block_id < k_block_id  
-        max_past_q_block = k_block_id
-        for q_block_id in tl.range(0, max_past_q_block):
+        # For causal attention, calculate exact Q block range that can attend to this K block
+        k_start = k_block_id * BLOCK_SIZE_K
+        k_end = k_start + BLOCK_SIZE_K - 1
+        
+        # Calculate the first Q block that could be diagonal (overlaps with K block)
+        first_diagonal_q = k_start // BLOCK_SIZE_Q
+        
+        # Phase 1: Process past Q blocks (attend to all K positions, no masking needed)
+        for q_block_id in tl.range(k_block_id + 1, q_tiles):
             # Load Q and grad_out tiles using pre-created TMA descriptors
             q_offset_loop = q_block_id * BLOCK_SIZE_Q
             q_tile = q_desc.load([q_offset_loop, 0])
@@ -277,19 +283,21 @@ def flash_backward_pass2_grad_kv(
             grad_s = p * (grad_p - D_tile) * scale
             grad_k += tl.dot(tl.trans(grad_s.to(q_tile.dtype)),
                              q_tile).to(tl.float32)
-
-        # Phase 2: Process diagonal Q block (with masking)
-        # This is when q_block_id == k_block_id
-        if k_block_id < q_tiles:
+        
+        # Phase 2: Process diagonal blocks (with masking)
+        last_diagonal_q = tl.minimum(k_block_id + 1, q_tiles)
+        for q_block_id in tl.range(first_diagonal_q, last_diagonal_q):
+            q_start = q_block_id * BLOCK_SIZE_Q
+            
             # Load Q and grad_out tiles using pre-created TMA descriptors
-            q_offset_loop = k_block_id * BLOCK_SIZE_Q
+            q_offset_loop = q_block_id * BLOCK_SIZE_Q
             q_tile = q_desc.load([q_offset_loop, 0])
             grad_out_tile = grad_out_desc.load([q_offset_loop, 0])
 
             # Load 1D tensors
-            one_dim_offset = bh * seq_length + k_block_id * \
+            one_dim_offset = bh * seq_length + q_block_id * \
                 BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)
-            one_dim_mask = (k_block_id * BLOCK_SIZE_Q +
+            one_dim_mask = (q_block_id * BLOCK_SIZE_Q +
                             tl.arange(0, BLOCK_SIZE_Q)) < seq_length
             l_tile = tl.load(l_ptr + one_dim_offset,
                              mask=one_dim_mask, other=0.0)[:, None]
@@ -298,15 +306,13 @@ def flash_backward_pass2_grad_kv(
 
             # Compute attention scores
             s = tl.dot(q_tile, tl.trans(k_tile)) * scale
-
-            # Apply causal mask (single comparison)
-            q_indices = k_block_id * BLOCK_SIZE_Q + \
-                tl.arange(0, BLOCK_SIZE_Q)[:, None]
-            k_indices = k_block_id * BLOCK_SIZE_K + \
-                tl.arange(0, BLOCK_SIZE_K)[None, :]
+            
+            # Apply causal mask
+            q_indices = q_start + tl.arange(0, BLOCK_SIZE_Q)[:, None]
+            k_indices = k_start + tl.arange(0, BLOCK_SIZE_K)[None, :]
             causal_mask = q_indices >= k_indices
             s = tl.where(causal_mask, s, float("-inf"))
-
+            
             p = tl.math.exp2(s - l_tile)
 
             # Compute gradients and accumulate grad_k, grad_v
@@ -316,9 +322,6 @@ def flash_backward_pass2_grad_kv(
             grad_s = p * (grad_p - D_tile) * scale
             grad_k += tl.dot(tl.trans(grad_s.to(q_tile.dtype)),
                              q_tile).to(tl.float32)
-
-        # Phase 3: Future Q blocks are implicitly skipped (no loop needed)
-        # These would be Q blocks where q_block_id > k_block_id
 
     else:
         # Non-causal: process all Q blocks without masking

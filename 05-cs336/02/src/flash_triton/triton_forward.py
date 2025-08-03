@@ -20,7 +20,7 @@ def supports_warp_specialize():
 HAS_TMA = supports_tma() and hasattr(tl, "make_tensor_descriptor")
 
 # TMA-optimized Flash Attention Forward Pass
-# @triton.autotune(configs=get_cuda_autotune_config(), key=["seq_length", "head_dim"])
+@triton.autotune(configs=get_cuda_autotune_config(), key=["seq_length", "head_dim"])
 @triton.jit
 def flash_forward_tma(
     q_ptr,
@@ -89,56 +89,59 @@ def flash_forward_tma(
     k_tiles = tl.cdiv(seq_length, BLOCK_SIZE_K)
     
     if is_causal:
+        # For causal attention, calculate exact K block range to process
+        q_start = q_block_id * BLOCK_SIZE_Q
+        q_end = q_start + BLOCK_SIZE_Q - 1
+        
+        # Calculate the first K block that could be diagonal (overlaps with Q block)
+        first_diagonal_k = q_start // BLOCK_SIZE_K
+        # Calculate the last K block we need to process (covers q_end position)
+        last_k = tl.minimum((q_end // BLOCK_SIZE_K) + 1, k_tiles)
+        
         # Phase 1: Process past blocks (no masking needed)
-        # max_past_block = q_block_id
-        max_past_block = tl.minimum(q_block_id, k_tiles)
-        for k_block_id in tl.range(0, max_past_block):
+        for k_block_id in tl.range(0, first_diagonal_k):
             k_offset = k_block_id * BLOCK_SIZE_K
             k_tile = k_desc.load([k_offset, 0])
             v_tile = v_desc.load([k_offset, 0])
-
+            
             # Compute attention scores (no masking)
             attn_scores = tl.dot(q_tile, tl.trans(k_tile)) * scale
             rowmax = tl.max(attn_scores, axis=1)
-
+            
             prev_mi = mi
             mi = tl.maximum(mi, rowmax)
             pj = tl.math.exp2(attn_scores - mi[:, None])
-
+            
             rescale_factor = tl.math.exp2(prev_mi - mi)
             li = rescale_factor * li + tl.sum(pj, axis=-1)
             oi = rescale_factor[:, None] * oi + \
                 tl.dot(pj.to(v_tile.dtype), v_tile)
-
-        # Phase 2: Process diagonal block (with masking)
-        if q_block_id < k_tiles:
-            k_offset = q_block_id * BLOCK_SIZE_K
+        
+        # Phase 2: Process diagonal blocks (with masking)
+        for k_block_id in tl.range(first_diagonal_k, last_k):
+            k_offset = k_block_id * BLOCK_SIZE_K
             k_tile = k_desc.load([k_offset, 0])
             v_tile = v_desc.load([k_offset, 0])
-
+            
             # Compute attention scores
             attn_scores = tl.dot(q_tile, tl.trans(k_tile)) * scale
-
-            # Apply causal mask (single comparison)
-            q_indices = q_block_id * BLOCK_SIZE_Q + \
-                tl.arange(0, BLOCK_SIZE_Q)[:, None]
-            k_indices = q_block_id * BLOCK_SIZE_K + \
-                tl.arange(0, BLOCK_SIZE_K)[None, :]
+            
+            # Apply causal mask
+            q_indices = q_start + tl.arange(0, BLOCK_SIZE_Q)[:, None]
+            k_indices = k_block_id * BLOCK_SIZE_K + tl.arange(0, BLOCK_SIZE_K)[None, :]
             causal_mask = q_indices >= k_indices
             attn_scores = tl.where(causal_mask, attn_scores, float("-inf"))
-
+            
             rowmax = tl.max(attn_scores, axis=1)
-
+            
             prev_mi = mi
             mi = tl.maximum(mi, rowmax)
             pj = tl.math.exp2(attn_scores - mi[:, None])
-
+            
             rescale_factor = tl.math.exp2(prev_mi - mi)
             li = rescale_factor * li + tl.sum(pj, axis=-1)
             oi = rescale_factor[:, None] * oi + \
                 tl.dot(pj.to(v_tile.dtype), v_tile)
-
-        # Phase 3: Future blocks are implicitly skipped (no loop needed)
 
     else:
         # Non-causal: process all blocks without masking
