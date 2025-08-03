@@ -1,8 +1,9 @@
 
 import torch
-from src.flash_triton.triton_forward import flash_forward
+from src.flash_triton.triton_forward import flash_forward, flash_forward_tma
 from src.flash_triton.triton_backward_2 import flash_backward_pass2_grad_kv, flash_backward_pass1_grad_q
 import triton
+
 
 class FlashAttention(torch.autograd.Function):
     @staticmethod
@@ -34,7 +35,7 @@ class FlashAttention(torch.autograd.Function):
             dtype=q.dtype,
         )
 
-        reshape = lambda m: m.reshape((batch_heads, seq_length, d))  # noqa: E731
+        def reshape(m): return m.reshape((batch_heads, seq_length, d))  # noqa: E731
 
         q_tile_size, k_tile_size, num_warps, num_stages = 64, 64, 4, 3
         # q_tile_size, k_tile_size, num_warps, num_stages = 64, 64, 4, 4
@@ -48,12 +49,19 @@ class FlashAttention(torch.autograd.Function):
             print(f"v shape: {v.shape}")
             print(f"l shape: {l.shape}")
             print(f"o shape: {o.shape}")
-            
+
         # NUM_SMS = torch.cuda.get_device_properties().multi_processor_count
         # device_capability = torch.cuda.get_device_capability()
         # print("NUM_SMS, device_capability", NUM_SMS, device_capability)
 
-        flash_forward[grid](
+        # Set up TMA allocator for Triton 3.4.0 TMA functionality
+        def alloc_fn(size: int, alignment: int, stream):
+            return torch.empty(size, device="cuda", dtype=torch.int8)
+
+        triton.set_allocator(alloc_fn)
+
+        # flash_forward[grid](
+        flash_forward_tma[grid](
             reshape(q),
             reshape(k),
             reshape(v),
@@ -67,6 +75,7 @@ class FlashAttention(torch.autograd.Function):
             num_warps=num_warps,
             num_stages=num_stages,
             # num_ctas=num_ctas, # not include, worst results.
+            WARP_SPECIALIZE=False,  # TMA + warp specialization causes race conditions
         )
         if not has_batch_size:
             o = o.squeeze(0)
@@ -104,13 +113,12 @@ class FlashAttention(torch.autograd.Function):
 
     #     return grad_q, grad_k, grad_v, None, None, None, None
 
-
     # @staticmethod
     # def backward(ctx, grad_out):
     #     q, k, v, o, l = ctx.saved_tensors
     #     D = torch.sum(o * grad_out, dim=-1)
     #     grad_out = grad_out.contiguous()
-        
+
     #     has_batch_size = len(q.shape) == 4
     #     if has_batch_size:
     #         batch_size, num_heads, seq_length, d = q.shape
@@ -148,21 +156,21 @@ class FlashAttention(torch.autograd.Function):
     #         BLOCK_SIZE_Q,
     #         BLOCK_SIZE_K,
     #     )
-        
+
     #     # Reshape gradients to match input shapes
     #     if has_batch_size:
     #         grad_q = grad_q.reshape(batch_size, num_heads, seq_length, d)
     #         grad_k = grad_k.reshape(batch_size, num_heads, seq_length, d)
     #         grad_v = grad_v.reshape(batch_size, num_heads, seq_length, d)
-        
+
     #     return grad_q.to(q.dtype), grad_k.to(k.dtype), grad_v.to(v.dtype), None, None, None, None
-    
+
     @staticmethod
     def backward(ctx, grad_out):
         q, k, v, o, l = ctx.saved_tensors
         D = torch.sum(o * grad_out, dim=-1)
         grad_out = grad_out.contiguous()
-        
+
         has_batch_size = len(q.shape) == 4
         if has_batch_size:
             batch_size, num_heads, seq_length, d = q.shape
@@ -172,13 +180,13 @@ class FlashAttention(torch.autograd.Function):
 
         batch_heads = batch_size * num_heads
         shape = (batch_heads, seq_length, d)
-        
+
         # Initialize ALL gradients
         grad_q = torch.empty(shape, device=q.device, dtype=q.dtype)
         grad_k = torch.empty(shape, device=k.device, dtype=q.dtype)
         grad_v = torch.empty(shape, device=v.device, dtype=q.dtype)
 
-        reshape = lambda m: m.reshape((batch_heads, seq_length, d))
+        def reshape(m): return m.reshape((batch_heads, seq_length, d))
 
         # PASS 1: Compute grad_q (parallelize over Q blocks)
         # LOCK_SIZE_Q: 128, BLOCK_SIZE_K: 64, num_warps: 8, num_ctas: 1, num_stages: 5,
@@ -202,7 +210,7 @@ class FlashAttention(torch.autograd.Function):
             num_warps=num_warps,
             num_stages=num_stages,
         )
-        
+
         # PASS 2: Compute grad_k and grad_v (parallelize over K blocks)
         BLOCK_SIZE_Q, BLOCK_SIZE_K, num_warps, num_stages = 64, 64, 4, 3
         grid = (triton.cdiv(seq_length, BLOCK_SIZE_K), batch_heads)
@@ -225,11 +233,11 @@ class FlashAttention(torch.autograd.Function):
             num_warps=num_warps,
             num_stages=num_stages,
         )
-        
+
         # Reshape gradients to match input shapes
         if has_batch_size:
             grad_q = grad_q.reshape(batch_size, num_heads, seq_length, d)
             grad_k = grad_k.reshape(batch_size, num_heads, seq_length, d)
             grad_v = grad_v.reshape(batch_size, num_heads, seq_length, d)
-        
+
         return grad_q, grad_k, grad_v, None, None, None, None

@@ -29,7 +29,7 @@ def get_q_k_v(n_heads = 16, seq_length = 16384, head_dim=64, dtype=torch.float32
 
 def flash_benchmarking():
     q, k, v = get_q_k_v(dtype=torch.bfloat16)
-    flash = torch.compile(FlashAttention.apply)
+    flash = FlashAttention.apply  # Causing issues with TMA implementation :/
     # flash_torch = torch.compile(FlashPytorch.apply)
     # flash_torch = FlashPytorch.apply
     dummy_compiled_fn = torch.compile(dummy_attention)
@@ -59,7 +59,7 @@ def verify_correctness(dtype = torch.float32):
         # (8, 512, 64, True, "medium causal"),
         # (12, 1024, 64, False, "large non-causal"),
         # (12, 1024, 64, True, "large causal"),
-        (16, 16384, 64, False, "big non-causal"),
+        (16, 16384, 64, False, "huge causal"),
     ]
     for n_heads, seq_length, d_head, is_causal, desc in test_configs:
         q, k, v = get_q_k_v(n_heads, seq_length, d_head, dtype)
