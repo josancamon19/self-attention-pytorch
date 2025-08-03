@@ -4,6 +4,15 @@ from src.flash_triton.triton_forward import flash_forward, flash_forward_tma
 from src.flash_triton.triton_backward_2 import flash_backward_pass2_grad_kv, flash_backward_pass1_grad_q
 import triton
 
+# Set up TMA allocator for Triton 3.4.0 TMA functionality
+
+
+def alloc_fn(size: int, alignment: int, stream):
+    return torch.empty(size, device="cuda", dtype=torch.int8)
+
+
+triton.set_allocator(alloc_fn)
+
 
 class FlashAttention(torch.autograd.Function):
     @staticmethod
@@ -15,56 +24,34 @@ class FlashAttention(torch.autograd.Function):
         is_causal: bool = False,
         debug: bool = False,
     ):
-        has_batch_size = len(q.shape) == 4
-        if has_batch_size:
-            batch_size, num_heads, seq_length, d = q.shape
-        else:
-            num_heads, seq_length, d = q.shape
-            batch_size = 1
+        # has_batch_size = len(q.shape) == 4
+        # if has_batch_size:
+        #     batch_size, num_heads, seq_length, d = q.shape
+        # else:
+        num_heads, seq_length, d = q.shape
+        batch_size = 1
 
         batch_heads = batch_size * num_heads
 
-        l = torch.empty(
-            (batch_heads, seq_length),
-            device=q.device,
-            dtype=q.dtype,
-        )
-        o = torch.empty(
-            (batch_heads, seq_length, d),
-            device=q.device,
-            dtype=q.dtype,
-        )
+        l = torch.empty((batch_heads, seq_length),
+                        device=q.device, dtype=q.dtype)
+        o = torch.empty_like(q)
 
-        def reshape(m): return m.reshape((batch_heads, seq_length, d))  # noqa: E731
+        # def reshape(m): return m.reshape((batch_heads, seq_length, d))  # noqa: E731
 
         q_tile_size, k_tile_size, num_warps, num_stages = 64, 64, 4, 3
         # q_tile_size, k_tile_size, num_warps, num_stages = 128, 256, 8, 3 # autotune value performs worst (?)
         grid = (triton.cdiv(seq_length, q_tile_size), batch_heads)
-
         # grid = lambda meta: (triton.cdiv(seq_length, meta["BLOCK_SIZE_Q"]), batch_heads)  # noqa: E731
-        if debug:
-            print("grid:", grid)
-            print(f"q shape: {q.shape}")
-            print(f"k shape: {k.shape}")
-            print(f"v shape: {v.shape}")
-            print(f"l shape: {l.shape}")
-            print(f"o shape: {o.shape}")
-
-        # NUM_SMS = torch.cuda.get_device_properties().multi_processor_count
-        # device_capability = torch.cuda.get_device_capability()
-        # print("NUM_SMS, device_capability", NUM_SMS, device_capability)
-
-        # Set up TMA allocator for Triton 3.4.0 TMA functionality
-        def alloc_fn(size: int, alignment: int, stream):
-            return torch.empty(size, device="cuda", dtype=torch.int8)
-
-        triton.set_allocator(alloc_fn)
 
         # flash_forward[grid](
         flash_forward_tma[grid](
-            reshape(q),
-            reshape(k),
-            reshape(v),
+            # reshape(q),
+            # reshape(k),
+            # reshape(v),
+            q,
+            k,
+            v,
             l,
             o,
             seq_length=seq_length,
@@ -77,16 +64,10 @@ class FlashAttention(torch.autograd.Function):
             # num_ctas=num_ctas, # not include, worst results.
             # WARP_SPECIALIZE=False,  # TMA + warp specialization causes race conditions
         )
-        if not has_batch_size:
-            o = o.squeeze(0)
-            l = l.squeeze(0)
-            o = o.reshape(num_heads, seq_length, d)
-        else:
-            o = o.reshape(batch_size, num_heads, seq_length, d)
-            l = l.reshape(batch_size, num_heads, seq_length)
+        # if has_batch_size:
+        #     o = o.reshape(batch_size, num_heads, seq_length, d)
+        #     l = l.reshape(batch_size, num_heads, seq_length)
 
-        if debug:
-            print(f"output shape: {o.shape}")
         ctx.save_for_backward(q, k, v, o, l)
         ctx.is_causal = is_causal
         # pdb.set_trace()
@@ -171,22 +152,21 @@ class FlashAttention(torch.autograd.Function):
         D = torch.sum(o * grad_out, dim=-1)
         grad_out = grad_out.contiguous()
 
-        has_batch_size = len(q.shape) == 4
-        if has_batch_size:
-            batch_size, num_heads, seq_length, d = q.shape
-        else:
-            num_heads, seq_length, d = q.shape
-            batch_size = 1
-
+        # has_batch_size = len(q.shape) == 4
+        # if has_batch_size:
+        #     batch_size, num_heads, seq_length, d = q.shape
+        # else:
+        num_heads, seq_length, d = q.shape
+        batch_size = 1
         batch_heads = batch_size * num_heads
-        shape = (batch_heads, seq_length, d)
 
         # Initialize ALL gradients
-        grad_q = torch.empty(shape, device=q.device, dtype=q.dtype)
-        grad_k = torch.empty(shape, device=k.device, dtype=q.dtype)
-        grad_v = torch.empty(shape, device=v.device, dtype=q.dtype)
+        grad_q = torch.empty_like(q)
+        grad_k = torch.empty_like(k)
+        grad_v = torch.empty_like(v)
 
-        def reshape(m): return m.reshape((batch_heads, seq_length, d))
+        # def reshape(m): return m.reshape((batch_heads, seq_length, d))
+        def reshape(m): return m
 
         # PASS 1: Compute grad_q (parallelize over Q blocks)
         # LOCK_SIZE_Q: 128, BLOCK_SIZE_K: 64, num_warps: 8, num_ctas: 1, num_stages: 5,
@@ -236,9 +216,9 @@ class FlashAttention(torch.autograd.Function):
         )
 
         # Reshape gradients to match input shapes
-        if has_batch_size:
-            grad_q = grad_q.reshape(batch_size, num_heads, seq_length, d)
-            grad_k = grad_k.reshape(batch_size, num_heads, seq_length, d)
-            grad_v = grad_v.reshape(batch_size, num_heads, seq_length, d)
+        # if has_batch_size:
+        #     grad_q = grad_q.reshape(batch_size, num_heads, seq_length, d)
+        #     grad_k = grad_k.reshape(batch_size, num_heads, seq_length, d)
+        #     grad_v = grad_v.reshape(batch_size, num_heads, seq_length, d)
 
         return grad_q, grad_k, grad_v, None, None, None, None
