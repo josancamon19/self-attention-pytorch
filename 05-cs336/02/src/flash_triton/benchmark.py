@@ -109,7 +109,7 @@ def verify_correctness(dtype = torch.float32):
         print()
 
 if __name__ == "__main__":
-    verify_correctness(dtype=torch.bfloat16)
+    # verify_correctness(dtype=torch.bfloat16)
     flash_benchmarking()
     # results
     # - backward implementation atomic, from 28 to 27

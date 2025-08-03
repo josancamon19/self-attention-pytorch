@@ -38,7 +38,7 @@ class FlashAttention(torch.autograd.Function):
         def reshape(m): return m.reshape((batch_heads, seq_length, d))  # noqa: E731
 
         q_tile_size, k_tile_size, num_warps, num_stages = 64, 64, 4, 3
-        # q_tile_size, k_tile_size, num_warps, num_stages = 64, 64, 4, 4
+        # q_tile_size, k_tile_size, num_warps, num_stages = 128, 256, 8, 3 # autotune value performs worst (?)
         grid = (triton.cdiv(seq_length, q_tile_size), batch_heads)
 
         # grid = lambda meta: (triton.cdiv(seq_length, meta["BLOCK_SIZE_Q"]), batch_heads)  # noqa: E731
@@ -75,7 +75,7 @@ class FlashAttention(torch.autograd.Function):
             num_warps=num_warps,
             num_stages=num_stages,
             # num_ctas=num_ctas, # not include, worst results.
-            WARP_SPECIALIZE=False,  # TMA + warp specialization causes race conditions
+            # WARP_SPECIALIZE=False,  # TMA + warp specialization causes race conditions
         )
         if not has_batch_size:
             o = o.squeeze(0)
@@ -190,7 +190,8 @@ class FlashAttention(torch.autograd.Function):
 
         # PASS 1: Compute grad_q (parallelize over Q blocks)
         # LOCK_SIZE_Q: 128, BLOCK_SIZE_K: 64, num_warps: 8, num_ctas: 1, num_stages: 5,
-        BLOCK_SIZE_Q, BLOCK_SIZE_K, num_warps, num_stages = 128, 64, 8, 5
+        BLOCK_SIZE_Q, BLOCK_SIZE_K, num_warps, num_stages = 256, 64, 8, 5
+        # BLOCK_SIZE_Q, BLOCK_SIZE_K, num_warps, num_stages = 64, 64, 4, 3 # thought maybe defaults would be better
         grid = (triton.cdiv(seq_length, BLOCK_SIZE_Q), batch_heads)
         # grid = lambda meta: (triton.cdiv(seq_length, meta['BLOCK_SIZE_Q']), batch_heads)
         flash_backward_pass1_grad_q[grid](
