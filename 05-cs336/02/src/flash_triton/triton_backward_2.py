@@ -85,40 +85,68 @@ def flash_backward_pass1_grad_q(
     # Initialize grad_q accumulator
     grad_q = tl.zeros((BLOCK_SIZE_Q, head_dim), dtype=tl.float32)
 
-    # Loop over K blocks (no atomic operations needed!)
-    for k_block_id in tl.range(0, tl.cdiv(seq_length, BLOCK_SIZE_K)):
-        should_process = True
-        needs_masking = False
-
-        if is_causal:
-            q_start = q_block_id * BLOCK_SIZE_Q
-            q_end = (q_block_id + 1) * BLOCK_SIZE_Q - 1
-            k_start = k_block_id * BLOCK_SIZE_K
-            k_end = (k_block_id + 1) * BLOCK_SIZE_K - 1
-
-            # Skip if entire K block is "future" (all positions would be masked)
-            should_process = q_end >= k_start
-            # Need masking if there's partial overlap (diagonal blocks)
-            needs_masking = should_process and (q_start < k_end)
-
-        if should_process:
+    # Optimized causal attention: separate past, diagonal, and future blocks
+    k_tiles = tl.cdiv(seq_length, BLOCK_SIZE_K)
+    
+    if is_causal:
+        # Phase 1: Process past blocks (no masking needed)
+        max_past_block = q_block_id
+        for k_block_id in tl.range(0, max_past_block):
             # Load K and V tiles using pre-created TMA descriptors
             k_offset = k_block_id * BLOCK_SIZE_K
+            k_tile = k_desc.load([k_offset, 0])
+            v_tile = v_desc.load([k_offset, 0])
+
+            # Compute attention scores (no masking)
+            s = tl.dot(q_tile, tl.trans(k_tile)) * scale
+            p = tl.math.exp2(s - l_tile)
+
+            # Compute grad_s and accumulate grad_q
+            grad_p = tl.dot(grad_out_tile, tl.trans(v_tile))
+            grad_s = p * (grad_p - D_tile) * scale
+
+            # Accumulate grad_q (NO ATOMICS!)
+            grad_q += tl.dot(grad_s, k_tile.to(tl.float32))
+
+        # Phase 2: Process diagonal block (with masking)
+        if q_block_id < k_tiles:
+            # Load K and V tiles using pre-created TMA descriptors
+            k_offset = q_block_id * BLOCK_SIZE_K
             k_tile = k_desc.load([k_offset, 0])
             v_tile = v_desc.load([k_offset, 0])
 
             # Compute attention scores
             s = tl.dot(q_tile, tl.trans(k_tile)) * scale
 
-            # Apply causal mask
-            if needs_masking:
-                q_indices = q_block_id * BLOCK_SIZE_Q + \
-                    tl.arange(0, BLOCK_SIZE_Q)[:, None]
-                k_indices = k_block_id * BLOCK_SIZE_K + \
-                    tl.arange(0, BLOCK_SIZE_K)[None, :]
-                causal_mask = q_indices >= k_indices
-                s = tl.where(causal_mask, s, float("-inf"))
+            # Apply causal mask (single comparison)
+            q_indices = q_block_id * BLOCK_SIZE_Q + \
+                tl.arange(0, BLOCK_SIZE_Q)[:, None]
+            k_indices = q_block_id * BLOCK_SIZE_K + \
+                tl.arange(0, BLOCK_SIZE_K)[None, :]
+            causal_mask = q_indices >= k_indices
+            s = tl.where(causal_mask, s, float("-inf"))
 
+            p = tl.math.exp2(s - l_tile)
+
+            # Compute grad_s and accumulate grad_q
+            grad_p = tl.dot(grad_out_tile, tl.trans(v_tile))
+            grad_s = p * (grad_p - D_tile) * scale
+
+            # Accumulate grad_q (NO ATOMICS!)
+            grad_q += tl.dot(grad_s, k_tile.to(tl.float32))
+
+        # Phase 3: Future blocks are implicitly skipped (no loop needed)
+
+    else:
+        # Non-causal: process all blocks without masking
+        for k_block_id in tl.range(0, k_tiles):
+            # Load K and V tiles using pre-created TMA descriptors
+            k_offset = k_block_id * BLOCK_SIZE_K
+            k_tile = k_desc.load([k_offset, 0])
+            v_tile = v_desc.load([k_offset, 0])
+
+            # Compute attention scores (no masking)
+            s = tl.dot(q_tile, tl.trans(k_tile)) * scale
             p = tl.math.exp2(s - l_tile)
 
             # Compute grad_s and accumulate grad_q
@@ -215,23 +243,14 @@ def flash_backward_pass2_grad_kv(
     grad_k = tl.zeros((BLOCK_SIZE_K, head_dim), dtype=tl.float32)
     grad_v = tl.zeros((BLOCK_SIZE_K, head_dim), dtype=tl.float32)
 
-    # Loop over Q blocks
-    for q_block_id in range(0, tl.cdiv(seq_length, BLOCK_SIZE_Q)):
-        should_process = True
-        needs_masking = False
-
-        if is_causal:
-            q_start = q_block_id * BLOCK_SIZE_Q
-            q_end = (q_block_id + 1) * BLOCK_SIZE_Q - 1
-            k_start = k_block_id * BLOCK_SIZE_K
-            k_end = (k_block_id + 1) * BLOCK_SIZE_K - 1
-
-            # Skip if entire Q block is "future" relative to K block
-            should_process = q_end >= k_start
-            # Need masking if there's partial overlap (diagonal blocks)
-            needs_masking = should_process and (q_start < k_end)
-
-        if should_process:
+    # Optimized causal attention: separate past, diagonal, and future blocks
+    q_tiles = tl.cdiv(seq_length, BLOCK_SIZE_Q)
+    
+    if is_causal:
+        # Phase 1: Process past Q blocks (no masking needed)
+        # These are Q blocks where q_block_id < k_block_id  
+        max_past_q_block = k_block_id
+        for q_block_id in tl.range(0, max_past_q_block):
             # Load Q and grad_out tiles using pre-created TMA descriptors
             q_offset_loop = q_block_id * BLOCK_SIZE_Q
             q_tile = q_desc.load([q_offset_loop, 0])
@@ -247,18 +266,80 @@ def flash_backward_pass2_grad_kv(
             D_tile = tl.load(D_ptr + one_dim_offset,
                              mask=one_dim_mask, other=0.0)[:, None]
 
+            # Compute attention scores (no masking)
+            s = tl.dot(q_tile, tl.trans(k_tile)) * scale
+            p = tl.math.exp2(s - l_tile)
+
+            # Compute gradients and accumulate grad_k, grad_v
+            grad_v += tl.dot(tl.trans(p.to(grad_out_tile.dtype)),
+                             grad_out_tile).to(tl.float32)
+            grad_p = tl.dot(grad_out_tile, tl.trans(v_tile))
+            grad_s = p * (grad_p - D_tile) * scale
+            grad_k += tl.dot(tl.trans(grad_s.to(q_tile.dtype)),
+                             q_tile).to(tl.float32)
+
+        # Phase 2: Process diagonal Q block (with masking)
+        # This is when q_block_id == k_block_id
+        if k_block_id < q_tiles:
+            # Load Q and grad_out tiles using pre-created TMA descriptors
+            q_offset_loop = k_block_id * BLOCK_SIZE_Q
+            q_tile = q_desc.load([q_offset_loop, 0])
+            grad_out_tile = grad_out_desc.load([q_offset_loop, 0])
+
+            # Load 1D tensors
+            one_dim_offset = bh * seq_length + k_block_id * \
+                BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)
+            one_dim_mask = (k_block_id * BLOCK_SIZE_Q +
+                            tl.arange(0, BLOCK_SIZE_Q)) < seq_length
+            l_tile = tl.load(l_ptr + one_dim_offset,
+                             mask=one_dim_mask, other=0.0)[:, None]
+            D_tile = tl.load(D_ptr + one_dim_offset,
+                             mask=one_dim_mask, other=0.0)[:, None]
+
             # Compute attention scores
             s = tl.dot(q_tile, tl.trans(k_tile)) * scale
 
-            # Apply causal mask
-            if needs_masking:
-                q_indices = q_block_id * BLOCK_SIZE_Q + \
-                    tl.arange(0, BLOCK_SIZE_Q)[:, None]
-                k_indices = k_block_id * BLOCK_SIZE_K + \
-                    tl.arange(0, BLOCK_SIZE_K)[None, :]
-                causal_mask = q_indices >= k_indices
-                s = tl.where(causal_mask, s, float("-inf"))
+            # Apply causal mask (single comparison)
+            q_indices = k_block_id * BLOCK_SIZE_Q + \
+                tl.arange(0, BLOCK_SIZE_Q)[:, None]
+            k_indices = k_block_id * BLOCK_SIZE_K + \
+                tl.arange(0, BLOCK_SIZE_K)[None, :]
+            causal_mask = q_indices >= k_indices
+            s = tl.where(causal_mask, s, float("-inf"))
 
+            p = tl.math.exp2(s - l_tile)
+
+            # Compute gradients and accumulate grad_k, grad_v
+            grad_v += tl.dot(tl.trans(p.to(grad_out_tile.dtype)),
+                             grad_out_tile).to(tl.float32)
+            grad_p = tl.dot(grad_out_tile, tl.trans(v_tile))
+            grad_s = p * (grad_p - D_tile) * scale
+            grad_k += tl.dot(tl.trans(grad_s.to(q_tile.dtype)),
+                             q_tile).to(tl.float32)
+
+        # Phase 3: Future Q blocks are implicitly skipped (no loop needed)
+        # These would be Q blocks where q_block_id > k_block_id
+
+    else:
+        # Non-causal: process all Q blocks without masking
+        for q_block_id in tl.range(0, q_tiles):
+            # Load Q and grad_out tiles using pre-created TMA descriptors
+            q_offset_loop = q_block_id * BLOCK_SIZE_Q
+            q_tile = q_desc.load([q_offset_loop, 0])
+            grad_out_tile = grad_out_desc.load([q_offset_loop, 0])
+
+            # Load 1D tensors
+            one_dim_offset = bh * seq_length + q_block_id * \
+                BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)
+            one_dim_mask = (q_block_id * BLOCK_SIZE_Q +
+                            tl.arange(0, BLOCK_SIZE_Q)) < seq_length
+            l_tile = tl.load(l_ptr + one_dim_offset,
+                             mask=one_dim_mask, other=0.0)[:, None]
+            D_tile = tl.load(D_ptr + one_dim_offset,
+                             mask=one_dim_mask, other=0.0)[:, None]
+
+            # Compute attention scores (no masking)
+            s = tl.dot(q_tile, tl.trans(k_tile)) * scale
             p = tl.math.exp2(s - l_tile)
 
             # Compute gradients and accumulate grad_k, grad_v

@@ -57,12 +57,12 @@ def flash_benchmarking():
 def verify_correctness(dtype=torch.float32):
     test_configs = [
         # (n_heads, seq_length, d_head, is_causal, desc)
-        # (4, 128, 64, False, "small non-causal"),
-        # (4, 128, 64, True, "small causal"),
-        # (8, 512, 64, False, "medium non-causal"),
-        # (8, 512, 64, True, "medium causal"),
-        # (12, 1024, 64, False, "large non-causal"),
-        # (12, 1024, 64, True, "large causal"),
+        (4, 128, 64, False, "small non-causal"),
+        (4, 128, 64, True, "small causal"),
+        (8, 512, 64, False, "medium non-causal"),
+        (8, 512, 64, True, "medium causal"),
+        (12, 1024, 64, False, "large non-causal"),
+        (12, 1024, 64, True, "large causal"),
         (16, 16384, 64, False, "huge causal"),
     ]
     for n_heads, seq_length, d_head, is_causal, desc in test_configs:
@@ -132,8 +132,9 @@ if __name__ == "__main__":
     # - skip all future masked, 15-12-10
     # - TMA from 10.25 to 10.005 (painful and almost nothing), had to remove torch.compile
     # - exp2, 9.55
-    # - Separate causal phases forward: 1.72ms → 1.45ms, 
+    # - Separate causal phases forward: 1.72ms → 1.45ms, overall 9.6ms → 9.38ms
+    # - Separate causal phases backward: 9.38ms → 4.82ms 50% better holy shit
     # TODO:
     # - Use Persistent Matmul?
 
-    # TODO: navigate through backward algo, and write it on your own words
+    # TODO: navigate through backward algo, and write it on your own words, simplest layman way, explain it to someone

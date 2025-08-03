@@ -91,7 +91,7 @@ def flash_forward_tma(
     if is_causal:
         # Phase 1: Process past blocks (no masking needed)
         max_past_block = q_block_id
-        for k_block_id in range(0, max_past_block):
+        for k_block_id in tl.range(0, max_past_block):
             k_offset = k_block_id * BLOCK_SIZE_K
             k_tile = k_desc.load([k_offset, 0])
             v_tile = v_desc.load([k_offset, 0])
@@ -141,7 +141,7 @@ def flash_forward_tma(
 
     else:
         # Non-causal: process all blocks without masking
-        for k_block_id in tl.range(k_tiles, warp_specialize=False):
+        for k_block_id in tl.range(0, k_tiles):
             k_offset = k_block_id * BLOCK_SIZE_K
             k_tile = k_desc.load([k_offset, 0])
             v_tile = v_desc.load([k_offset, 0])
