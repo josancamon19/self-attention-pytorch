@@ -59,6 +59,7 @@ def flash_forward(
     oi = tl.zeros((BLOCK_SIZE_Q, head_dim), dtype=tl.float32)
 
     scale = 1.0 / tl.sqrt(float(head_dim))
+    scale *= 1.44269504  # 1/log(2) for base-2 exponentials
 
     # Loop over K/V blocks
     for k_block_id in range(0, tl.cdiv(seq_length, BLOCK_SIZE_K)):
@@ -118,10 +119,10 @@ def flash_forward(
 
             prev_mi = mi
             mi = tl.maximum(mi, rowmax)
-            pj = tl.exp(attn_scores - mi[:, None])
+            pj = tl.math.exp2(attn_scores - mi[:, None])
             # pj_sum = tl.sum(pj, axis=-1).to(tl.float32)
 
-            rescale_factor = tl.exp(prev_mi - mi)
+            rescale_factor = tl.math.exp2(prev_mi - mi)
             li = rescale_factor * li + tl.sum(pj, axis=-1)
             oi = rescale_factor[:, None] * oi + \
                 tl.dot(pj.to(v_tile.dtype), v_tile)
@@ -144,7 +145,7 @@ def flash_forward(
         BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)
     l_mask = (q_block_id * BLOCK_SIZE_Q +
               tl.arange(0, BLOCK_SIZE_Q)) < seq_length
-    li = mi + tl.log(li)
+    li = mi + tl.math.log2(li)
     tl.store(l_ptr + l_offset, li, mask=l_mask)
 
 
@@ -212,6 +213,7 @@ def flash_forward_tma(
     oi = tl.zeros((BLOCK_SIZE_Q, head_dim), dtype=tl.float32)
 
     scale = 1.0 / tl.sqrt(float(head_dim))
+    scale *= 1.44269504  # 1/log(2) for base-2 exponentials
 
     # Loop over K/V blocks
     k_tiles = tl.cdiv(seq_length, BLOCK_SIZE_K)
@@ -254,9 +256,9 @@ def flash_forward_tma(
 
             prev_mi = mi
             mi = tl.maximum(mi, rowmax)
-            pj = tl.exp(attn_scores - mi[:, None])
+            pj = tl.math.exp2(attn_scores - mi[:, None])
 
-            rescale_factor = tl.exp(prev_mi - mi)
+            rescale_factor = tl.math.exp2(prev_mi - mi)
             li = rescale_factor * li + tl.sum(pj, axis=-1)
             oi = rescale_factor[:, None] * oi + \
                 tl.dot(pj.to(v_tile.dtype), v_tile)
@@ -272,5 +274,5 @@ def flash_forward_tma(
         BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)
     l_mask = (q_block_id * BLOCK_SIZE_Q +
               tl.arange(0, BLOCK_SIZE_Q)) < seq_length
-    li = mi + tl.log(li)
+    li = mi + tl.math.log2(li)
     tl.store(l_ptr + l_offset, li, mask=l_mask)

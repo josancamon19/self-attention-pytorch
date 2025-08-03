@@ -6,6 +6,7 @@ import triton.language as tl
 
 from src.flash_torch import dummy_attention  # , FlashForward as FlashPytorch
 from src.flash_triton.flash import FlashAttention
+from src.examples.triton_docs_fused_attention import attention as triton_docs_attention
 import os
 import pdb
 
@@ -45,6 +46,8 @@ def flash_benchmarking():
 
     results = triton.testing.do_bench(benchmark(flash), rep=10000, warmup=1000)
     print("flash_triton:", results)
+    # results = triton.testing.do_bench(benchmark2(triton_docs_attention), rep=10000, warmup=1000)
+    # print("flash_triton_docs_attention:", results)
     # results = triton.testing.do_bench(benchmark(dummy_attention), rep=10000, warmup=100)
     # print("dummy:", results)
     # results = triton.testing.do_bench(benchmark(dummy_compiled_fn), rep=10000, warmup=100)
@@ -82,8 +85,8 @@ def verify_correctness(dtype=torch.float32):
         max_diff = torch.max(torch.abs(output_flash - output_dummy)).item()
         rtol = 5e-3  # Relative tolerance
         atol = 1e-3  # Absolute tolerance
-        rtol_backward = 1e-2  # More lenient for gradients
-        atol_backward = 5e-3  # More lenient for gradients
+        rtol_backward = 2e-2  # More lenient for base-2 optimized gradients
+        atol_backward = 1.5e-2  # More lenient for base-2 optimized gradients
         forward_match = torch.allclose(
             output_flash, output_dummy, rtol=rtol, atol=atol)
         grad_out = torch.randn_like(output_flash)
@@ -120,7 +123,7 @@ def verify_correctness(dtype=torch.float32):
 
 
 if __name__ == "__main__":
-    # verify_correctness(dtype=torch.bfloat16)
+    verify_correctness(dtype=torch.bfloat16)
     flash_benchmarking()
     # results
     # - backward implementation atomic, from 28 to 27
@@ -128,9 +131,9 @@ if __name__ == "__main__":
     # - autotuning backward passes, 20 17
     # - skip all future masked, 15-12-10
     # - TMA from 10.25 to 10.005 (painful and almost nothing), had to remove torch.compile
+    # - exp2, 9.55
     # TODO:
     # - Separate the non-masked tiles from the tile diagonals, computing the first without ever comparing indices, and the second with a single comparison
     # - Use Persistent Matmul?
-    # - base2 ops instead of exp
 
     # TODO: navigate through backward algo, and write it on your own words

@@ -80,6 +80,7 @@ def flash_backward_pass1_grad_q(
                      mask=one_dim_mask, other=0.0)[:, None]
 
     scale = 1.0 / tl.sqrt(float(head_dim))
+    scale *= 1.44269504  # 1/log(2) for base-2 exponentials
 
     # Initialize grad_q accumulator
     grad_q = tl.zeros((BLOCK_SIZE_Q, head_dim), dtype=tl.float32)
@@ -118,7 +119,7 @@ def flash_backward_pass1_grad_q(
                 causal_mask = q_indices >= k_indices
                 s = tl.where(causal_mask, s, float("-inf"))
 
-            p = tl.exp(s - l_tile)
+            p = tl.math.exp2(s - l_tile)
 
             # Compute grad_s and accumulate grad_q
             grad_p = tl.dot(grad_out_tile, tl.trans(v_tile))
@@ -126,6 +127,10 @@ def flash_backward_pass1_grad_q(
 
             # Accumulate grad_q (NO ATOMICS!)
             grad_q += tl.dot(grad_s, k_tile.to(tl.float32))
+
+    # Scale grad_q to compensate for base-2 operations (multiply by ln(2))
+    LN2 = 0.6931471824645996  # ln(2)
+    grad_q *= LN2
 
     # Store grad_q using TMA descriptor
     grad_q_desc.store([q_offset, 0], grad_q.to(q_tile.dtype))
@@ -204,6 +209,7 @@ def flash_backward_pass2_grad_kv(
     v_tile = v_desc.load([k_offset, 0])
 
     scale = 1.0 / tl.sqrt(float(head_dim))
+    scale *= 1.44269504  # 1/log(2) for base-2 exponentials
 
     # Initialize grad_k and grad_v accumulators
     grad_k = tl.zeros((BLOCK_SIZE_K, head_dim), dtype=tl.float32)
@@ -253,7 +259,7 @@ def flash_backward_pass2_grad_kv(
                 causal_mask = q_indices >= k_indices
                 s = tl.where(causal_mask, s, float("-inf"))
 
-            p = tl.exp(s - l_tile)
+            p = tl.math.exp2(s - l_tile)
 
             # Compute gradients and accumulate grad_k, grad_v
             grad_v += tl.dot(tl.trans(p.to(grad_out_tile.dtype)),
@@ -262,6 +268,10 @@ def flash_backward_pass2_grad_kv(
             grad_s = p * (grad_p - D_tile) * scale
             grad_k += tl.dot(tl.trans(grad_s.to(q_tile.dtype)),
                              q_tile).to(tl.float32)
+
+    # Scale grad_k to compensate for base-2 operations
+    # (divide by the 1/ln(2) factor since we want original sm_scale effect)
+    grad_k *= (1.0 / 1.44269504)  # multiply by ln(2)
 
     # Store grad_k and grad_v using TMA descriptors
     grad_k_desc.store([k_offset, 0], grad_k.to(k_tile.dtype))
