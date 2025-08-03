@@ -90,7 +90,8 @@ def flash_forward_tma(
     
     if is_causal:
         # Phase 1: Process past blocks (no masking needed)
-        max_past_block = q_block_id
+        # max_past_block = q_block_id
+        max_past_block = tl.minimum(q_block_id, k_tiles)
         for k_block_id in tl.range(0, max_past_block):
             k_offset = k_block_id * BLOCK_SIZE_K
             k_tile = k_desc.load([k_offset, 0])
