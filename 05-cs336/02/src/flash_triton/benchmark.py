@@ -109,13 +109,14 @@ def verify_correctness(dtype = torch.float32):
         print()
 
 if __name__ == "__main__":
-    # verify_correctness(dtype=torch.bfloat16)
+    verify_correctness(dtype=torch.bfloat16)
     flash_benchmarking()
+    # results
+    # - backward implementation atomic, from 28 to 27
+    # - backward 2 passes, from 27 to 20
+    # - autotuning backward passes, 20 17
+    # - skip all future masked, 15-12-10
     # TODO:
-    # - Tune the tile sizes for your kernel (use Triton autotune for this!)
-    # - Tune additional Triton config parameters
-    # - Dumb initializations
-    # - Stop program instances early when doing causal masking, skipping all tiles that are always all zero
     # - Separate the non-masked tiles from the tile diagonals, computing the first without ever comparing indices, and the second with a single comparison
     # - Use TMA (Tensor Memory Accelerator) functionality on H100, following a similar pattern 
     # - Use Persistent Matmul?
