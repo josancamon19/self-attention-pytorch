@@ -1,5 +1,5 @@
 import torch
-from src.flash_triton.triton_forward import flash_forward_tma
+from src.flash_triton.triton_forward import flash_forward
 from src.flash_triton.triton_backward_2 import flash_backward_pass2_grad_kv, flash_backward_pass1_grad_q
 import triton
 
@@ -43,7 +43,7 @@ class FlashAttention(torch.autograd.Function):
         grid = lambda meta: (triton.cdiv(seq_length, meta["BLOCK_SIZE_Q"]), batch_heads)  # noqa: E731
 
         # flash_forward[grid](
-        flash_forward_tma[grid](
+        flash_forward[grid](
             # reshape(q),
             # reshape(k),
             # reshape(v),
