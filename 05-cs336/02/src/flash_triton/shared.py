@@ -1,17 +1,4 @@
-import math
-from sympy.assumptions.ask_generated import Q
-import torch
-
 import triton
-import triton.language as tl
-
-from src.flash_torch import dummy_attention  # , FlashForward as FlashPytorch
-import os
-import pdb
-
-# os.environ["TRITON_INTERPRET"] = "1"
-os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
-torch.manual_seed(42)
 
 
 def get_cuda_autotune_config():

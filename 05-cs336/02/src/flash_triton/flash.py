@@ -4,17 +4,19 @@ from src.flash_triton.triton_backward_2 import flash_backward_pass2_grad_kv, fla
 import triton
 
 
-# Enable TF32 for better performance on Ampere and newer GPUs
-torch.backends.cuda.matmul.allow_tf32 = True
-torch.backends.cudnn.allow_tf32 = True
-
-
 # Set up TMA allocator for Triton 3.4.0 TMA functionality
 def alloc_fn(size: int, alignment: int, stream):
     return torch.empty(size, device="cuda", dtype=torch.int8)
 
 
 triton.set_allocator(alloc_fn)
+
+
+# def element_wise_mul_sum(a, b):
+#     return torch.sum(a * b, dim=-1)
+
+
+# element_wise_mul_sum_fn = torch.compile(element_wise_mul_sum)
 
 
 class FlashAttention(torch.autograd.Function):
@@ -41,11 +43,9 @@ class FlashAttention(torch.autograd.Function):
 
         # def reshape(m): return m.reshape((batch_heads, seq_length, d))  # noqa: E731
 
-        # q_tile_size, k_tile_size, num_warps, num_stages = 64, 64, 4, 3
-        # autotune value performs worst (?)
-        # q_tile_size, k_tile_size, num_warps, num_stages = 128, 64, 4, 4
-        # grid = (triton.cdiv(seq_length, q_tile_size), batch_heads)
-        grid = lambda meta: (triton.cdiv(seq_length, meta["BLOCK_SIZE_Q"]), batch_heads)  # noqa: E731
+        q_tile_size, k_tile_size, num_warps, num_stages = 64, 64, 4, 3
+        grid = (triton.cdiv(seq_length, q_tile_size), batch_heads)
+        # grid = lambda meta: (triton.cdiv(seq_length, meta["BLOCK_SIZE_Q"]), batch_heads)  # noqa: E731
 
         # flash_forward[grid](
         flash_forward[grid](
@@ -60,10 +60,10 @@ class FlashAttention(torch.autograd.Function):
             seq_length=seq_length,
             head_dim=d,
             is_causal=is_causal,
-            # BLOCK_SIZE_Q=q_tile_size,
-            # BLOCK_SIZE_K=k_tile_size,
-            # num_warps=num_warps,
-            # num_stages=num_stages,
+            BLOCK_SIZE_Q=q_tile_size,
+            BLOCK_SIZE_K=k_tile_size,
+            num_warps=num_warps,
+            num_stages=num_stages,
             # num_ctas=num_ctas, # not include, worst results.
             # WARP_SPECIALIZE=False,  # TMA + warp specialization causes race conditions
         )
@@ -80,6 +80,7 @@ class FlashAttention(torch.autograd.Function):
     def backward(ctx, grad_out):
         q, k, v, o, l = ctx.saved_tensors
         D = torch.sum(o * grad_out, dim=-1)
+        # D = element_wise_mul_sum_fn(o, grad_out)
         grad_out = grad_out.contiguous()
 
         # has_batch_size = len(q.shape) == 4
@@ -99,9 +100,9 @@ class FlashAttention(torch.autograd.Function):
         def reshape(m):
             return m
 
-        # BLOCK_SIZE_Q, BLOCK_SIZE_K, num_warps, num_stages = 256, 64, 8, 3  # 3 or 5
-        # grid = (triton.cdiv(seq_length, BLOCK_SIZE_Q), batch_heads)
-        grid = lambda meta: (triton.cdiv(seq_length, meta["BLOCK_SIZE_Q"]), batch_heads)  # noqa
+        BLOCK_SIZE_Q, BLOCK_SIZE_K, num_warps, num_stages = 128, 64, 4, 4  # 3 or 5
+        grid = (triton.cdiv(seq_length, BLOCK_SIZE_Q), batch_heads)
+        # grid = lambda meta: (triton.cdiv(seq_length, meta["BLOCK_SIZE_Q"]), batch_heads)  # noqa
         # Re-set allocator in case it was lost during autotuning
         triton.set_allocator(alloc_fn)
         flash_backward_pass1_grad_q[grid](
@@ -116,20 +117,21 @@ class FlashAttention(torch.autograd.Function):
             seq_length,
             d,
             ctx.is_causal,
-            # BLOCK_SIZE_Q,
-            # BLOCK_SIZE_K,
-            # num_warps=num_warps,
-            # num_stages=num_stages,
+            BLOCK_SIZE_Q,
+            BLOCK_SIZE_K,
+            num_warps=num_warps,
+            num_stages=num_stages,
         )
 
         # PASS 2: Compute grad_k and grad_v (parallelize over K blocks)
-        # BLOCK_SIZE_Q, BLOCK_SIZE_K, num_warps, num_stages = 64, 64, 4, 3
-        # grid = (triton.cdiv(seq_length, BLOCK_SIZE_K), batch_heads)
-        grid = lambda meta: (triton.cdiv(seq_length, meta["BLOCK_SIZE_K"]), batch_heads)  # noqa
+        BLOCK_SIZE_Q, BLOCK_SIZE_K, num_warps, num_stages = 64, 64, 4, 3
+        grid = (triton.cdiv(seq_length, BLOCK_SIZE_K), batch_heads)
+        # grid = lambda meta: (triton.cdiv(seq_length, meta["BLOCK_SIZE_K"]), batch_heads)  # noqa
 
         # Re-set allocator in case it was lost during autotuning
         triton.set_allocator(alloc_fn)
         flash_backward_pass2_grad_kv[grid](
+            
             reshape(grad_out),
             D.reshape(batch_heads, seq_length),
             reshape(q),
@@ -142,10 +144,10 @@ class FlashAttention(torch.autograd.Function):
             seq_length,
             d,
             ctx.is_causal,
-            # BLOCK_SIZE_Q,
-            # BLOCK_SIZE_K,
-            # num_warps=num_warps,
-            # num_stages=num_stages,
+            BLOCK_SIZE_Q,
+            BLOCK_SIZE_K,
+            num_warps=num_warps,
+            num_stages=num_stages,
         )
 
         # Reshape gradients to match input shapes

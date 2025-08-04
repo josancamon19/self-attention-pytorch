@@ -2,7 +2,6 @@ import torch
 import triton
 from src.flash_torch import dummy_attention
 from src.flash_triton.flash import FlashAttention
-from src.examples.triton_docs_fused_attention import attention as triton_docs_attention
 import os
 
 # os.environ["TRITON_INTERPRET"] = "1"
@@ -96,12 +95,20 @@ def verify_correctness(dtype=torch.float32):
         print(f"    V grad: {'✓ PASSED' if v_grad_match else '✗ FAILED'} (max diff: {v_grad_diff:.2e})")
         print()
 
+def check():
+    q, k, v = get_q_k_v(16, 16384, 64, torch.bfloat16)
+    output_flash = FlashAttention.apply(q, k, v, True)
+    loss = output_flash.sum()
+    loss.backward()
+
 
 if __name__ == "__main__":
-    verify_correctness(dtype=torch.bfloat16)
+    # check()
+    # verify_correctness(dtype=torch.bfloat16)
     flash_benchmarking()
     # TODO: ~ Use Persistent Matmul?
 
     # TODO: do benchmarks vs cuddn and flash attention standard implementations
     # TODO: check reports on ncu and analyze ops in nsys, what can be improved?
     # TODO: check some of the other leaderboard improvements
+    # sudo $(which ncu) --set full -f --export flash_attention_profile $(which python) -m src.flash_triton.benchmark
