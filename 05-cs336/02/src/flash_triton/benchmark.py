@@ -2,6 +2,7 @@ import torch
 import triton
 from src.flash_torch import dummy_attention
 from src.flash_triton.flash import FlashAttention
+from src.examples.flash_attn_3 import flash_attn_func as flash_attn_3
 import os
 
 # os.environ["TRITON_INTERPRET"] = "1"
@@ -33,8 +34,28 @@ def flash_benchmarking():
 
         return wrap
 
+    # q2, k2, v2 = torch.randn(
+    #     3,
+    #     1,
+    #     16384,
+    #     16,
+    #     64,
+    #     device="cuda",
+    #     dtype=torch.bfloat16,
+    #     requires_grad=True,
+    # )
+    # def benchmark2():
+    #     def wrap():
+    #         o = flash_attn_3(q2,k2,v2, None, True)
+    #         loss = o.sum()
+    #         loss.backward()
+
+    #     return wrap
+
     results = triton.testing.do_bench(benchmark(FlashAttention.apply), rep=10000, warmup=1000)
     print("flash_triton:", results)
+    # results = triton.testing.do_bench(benchmark2(), rep=10000, warmup=1000)
+    # print("flash_triton:", results)
     results = triton.testing.do_bench(benchmark(dummy_attention), rep=10000, warmup=100)
     print("dummy_compiled:", results)
 
