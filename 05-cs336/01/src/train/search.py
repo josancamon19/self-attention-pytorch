@@ -7,7 +7,7 @@ import torch
 import wandb
 import uuid
 
-max_time_minutes = 9  # 1min torch.compile, 4 min validation calls, at train speed is 90 minutes on time.
+max_time_minutes = 10  # let it finish the run til the end, even if it's a few more FLOPs, standardize better later
 config = {
     "batch_size": tune.grid_search([64]),
     "lr": tune.grid_search([4e-3]),  # 1e-2
@@ -15,7 +15,7 @@ config = {
     "embedding_dim": tune.grid_search([768, 1024, 1280]),
     "num_layers": tune.grid_search([6, 8, 12, 16]),
     "num_heads": tune.grid_search([8, 12, 16]),
-    "ffn_type": tune.grid_search(["relu2"]),  # "swiglu",
+    "ffn_type": tune.grid_search(["relu2", "swiglu"]),  # "swiglu",
     "qk_norm": tune.grid_search([1]),
     "qk_norm_type": tune.grid_search(["rms"]),  # l2 (default), rms
     # "tokens": tune.grid_search([2.2e9]),  # 2.2e9
