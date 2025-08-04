@@ -79,7 +79,6 @@ def flash_forward(
     oi = tl.zeros((BLOCK_SIZE_Q, head_dim), dtype=tl.float32)
 
     scale = 1.0 / tl.sqrt(float(head_dim))
-    scale *= 1.44269504  # 1/log(2) for base-2 exponentials
 
     # Optimized causal attention: separate past, diagonal, and future blocks
     k_tiles = tl.cdiv(seq_length, BLOCK_SIZE_K)
@@ -106,9 +105,9 @@ def flash_forward(
 
             prev_mi = mi
             mi = tl.maximum(mi, rowmax)
-            pj = tl.math.exp2(attn_scores - mi[:, None])
+            pj = tl.exp(attn_scores - mi[:, None])
 
-            rescale_factor = tl.math.exp2(prev_mi - mi)
+            rescale_factor = tl.exp(prev_mi - mi)
             li = rescale_factor * li + tl.sum(pj, axis=-1)
             oi = rescale_factor[:, None] * oi + tl.dot(pj.to(v_tile.dtype), v_tile)
 
@@ -131,9 +130,9 @@ def flash_forward(
 
             prev_mi = mi
             mi = tl.maximum(mi, rowmax)
-            pj = tl.math.exp2(attn_scores - mi[:, None])
+            pj = tl.exp(attn_scores - mi[:, None])
 
-            rescale_factor = tl.math.exp2(prev_mi - mi)
+            rescale_factor = tl.exp(prev_mi - mi)
             li = rescale_factor * li + tl.sum(pj, axis=-1)
             oi = rescale_factor[:, None] * oi + tl.dot(pj.to(v_tile.dtype), v_tile)
 
@@ -150,9 +149,9 @@ def flash_forward(
 
             prev_mi = mi
             mi = tl.maximum(mi, rowmax)
-            pj = tl.math.exp2(attn_scores - mi[:, None])
+            pj = tl.exp(attn_scores - mi[:, None])
 
-            rescale_factor = tl.math.exp2(prev_mi - mi)
+            rescale_factor = tl.exp(prev_mi - mi)
             li = rescale_factor * li + tl.sum(pj, axis=-1)
             oi = rescale_factor[:, None] * oi + tl.dot(pj.to(v_tile.dtype), v_tile)
 
@@ -165,5 +164,5 @@ def flash_forward(
     # Store logsumexp values (fallback to regular store for simplicity)
     l_offset = bh * seq_length + q_block_id * BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)
     l_mask = (q_block_id * BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)) < seq_length
-    li = mi + tl.math.log2(li)
+    li = mi + tl.log(li)
     tl.store(l_ptr + l_offset, li, mask=l_mask)

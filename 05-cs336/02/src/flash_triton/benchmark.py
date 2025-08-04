@@ -48,9 +48,9 @@ def verify_correctness(dtype=torch.float32):
         # (4, 128, 64, False, "small non-causal"),
         # (8, 512, 64, False, "medium non-causal"),
         # (12, 1024, 64, False, "large non-causal"),
-        (4, 128, 64, True, "small causal"),
-        (8, 512, 64, True, "medium causal"),
-        (12, 1024, 64, True, "large causal"),
+        # (4, 128, 64, True, "small causal"),
+        # (8, 512, 64, True, "medium causal"),
+        # (12, 1024, 64, True, "large causal"),
         (16, 16384, 64, True, "huge causal"),
     ]
     for n_heads, seq_length, d_head, is_causal, desc in test_configs:

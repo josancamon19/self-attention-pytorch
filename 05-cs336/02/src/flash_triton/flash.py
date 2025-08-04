@@ -4,6 +4,11 @@ from src.flash_triton.triton_backward_2 import flash_backward_pass2_grad_kv, fla
 import triton
 
 
+# Enable TF32 for better performance on Ampere and newer GPUs
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
+
 # Set up TMA allocator for Triton 3.4.0 TMA functionality
 def alloc_fn(size: int, alignment: int, stream):
     return torch.empty(size, device="cuda", dtype=torch.int8)
@@ -97,6 +102,8 @@ class FlashAttention(torch.autograd.Function):
         # BLOCK_SIZE_Q, BLOCK_SIZE_K, num_warps, num_stages = 256, 64, 8, 3  # 3 or 5
         # grid = (triton.cdiv(seq_length, BLOCK_SIZE_Q), batch_heads)
         grid = lambda meta: (triton.cdiv(seq_length, meta["BLOCK_SIZE_Q"]), batch_heads)  # noqa
+        # Re-set allocator in case it was lost during autotuning
+        triton.set_allocator(alloc_fn)
         flash_backward_pass1_grad_q[grid](
             reshape(grad_out),
             D.reshape(batch_heads, seq_length),
@@ -120,6 +127,8 @@ class FlashAttention(torch.autograd.Function):
         # grid = (triton.cdiv(seq_length, BLOCK_SIZE_K), batch_heads)
         grid = lambda meta: (triton.cdiv(seq_length, meta["BLOCK_SIZE_K"]), batch_heads)  # noqa
 
+        # Re-set allocator in case it was lost during autotuning
+        triton.set_allocator(alloc_fn)
         flash_backward_pass2_grad_kv[grid](
             reshape(grad_out),
             D.reshape(batch_heads, seq_length),
