@@ -24,6 +24,7 @@ config = {
 }
 
 # 8 minutes, D?
+# WANDB_MODE=offline python src/train/transformer.py --num-layers 6 --num-heads 12 --embedding-dim 768 -tc -tt 2e8 --ffn-type swiglu
 # 6, 768 ≈ 95M, 2e8
 # 8, 768 ≈ 105M, ≈ 1.9e8
 # 12, 768 ≈ 134M, ≈ 1.7e8
@@ -38,6 +39,21 @@ config = {
 # 8, 1280 ≈ 238M, ≈ 1.25e8
 # 12, 1280 ≈ 316M, ≈ 9e7
 # 16, 1280 ≈ 395M, ≈ 7.2e7
+
+# for --ffn-type relu2
+# 6, 768 ≈ 138M, 1.85e8
+# 8, 768 ≈ 168M, ≈ 1.6e8
+# 12, 768 ≈ 228M, ≈ 1.15e8
+# 16, 768 ≈ 288M, ≈ 9e7
+
+# 6, 1024 ≈ 225M, ≈ 1.5e8
+# 8, 1024 ≈ 279M, ≈ 1.15e8
+# 12, 1024 ≈ 386M, ≈ 8.2e7
+# 16, 1024 ≈ 493M, ≈ 6.2e7
+
+# 6, 1280 ≈ 330M, ≈ 1e8
+# 8, 1280 ≈ 412M, ≈ 8e7
+
 
 ray.init(
     runtime_env={
@@ -88,25 +104,42 @@ def train_transformer_architecture(config):
         tune.report({"valid_loss": float("inf"), "status": "head_dim < 64"})
         return
 
-    # Set tokens manually based on (layers, d_model) tuples
-    tokens_map = {  # each sweep 8 minutes
-        (6, 768): 2e8,
-        (8, 768): 1.9e8,
-        (12, 768): 1.7e8,
-        (16, 768): 1.35e8,
-        (6, 1024): 1.92e8,
-        (8, 1024): 1.7e8,
-        (12, 1024): 1.25e8,
-        (16, 1024): 9.5e7,
-        (6, 1280): 1.6e8,
-        (8, 1280): 1.25e8,
-        (12, 1280): 9e7,
-        (16, 1280): 7.2e7,
+    # Set tokens manually based on (layers, d_model, ffn_type) tuples
+    # Values found for 8 minutes training
+    tokens_map = {
+        # SwiGLU FFN type
+        ("swiglu", 6, 768): 2e8,
+        ("swiglu", 8, 768): 1.9e8,
+        ("swiglu", 12, 768): 1.7e8,
+        ("swiglu", 16, 768): 1.35e8,
+        ("swiglu", 6, 1024): 1.92e8,
+        ("swiglu", 8, 1024): 1.7e8,
+        ("swiglu", 12, 1024): 1.25e8,
+        ("swiglu", 16, 1024): 9.5e7,
+        ("swiglu", 6, 1280): 1.6e8,
+        ("swiglu", 8, 1280): 1.25e8,
+        ("swiglu", 12, 1280): 9e7,
+        ("swiglu", 16, 1280): 7.2e7,
+        
+        # ReLU2 FFN type
+        ("relu2", 6, 768): 1.85e8,
+        ("relu2", 8, 768): 1.6e8,
+        ("relu2", 12, 768): 1.15e8,
+        ("relu2", 16, 768): 9e7,
+        ("relu2", 6, 1024): 1.5e8,
+        ("relu2", 8, 1024): 1.15e8,
+        ("relu2", 12, 1024): 8.2e7,
+        ("relu2", 16, 1024): 6.2e7,
+        ("relu2", 6, 1280): 1e8,
+        ("relu2", 8, 1280): 8e7,
     }
 
-    tokens = tokens_map.get((num_layers, embedding_dim), 2e8)  # default fallback
-
     ffn_type = config.get("ffn_type", "swiglu")
+    tokens = tokens_map.get((ffn_type, num_layers, embedding_dim))  # default fallback
+    if not tokens:
+        tune.report({"valid_loss": float("inf"), "status": "invalid_config_no_tokens_mapped"})
+        return
+
     architecture = f"arch_{embedding_dim}_{config['num_layers']}_{num_heads}"
     wandb_id = f"search_{architecture}_{config['lr']}_{config['warmup_steps']}_{config['qk_norm']}_{config['qk_norm_type']}_{ffn_type}_{uuid.uuid4().hex[:8]}"
     gpu_id = config.get("gpu_id", 0)
