@@ -8,8 +8,6 @@ dependencies = [
     "numpy>=2.3.1",
     "pytest>=8.4.1",
     "torch>=2.9.0.dev20250803",
-    "torchaudio>=2.8.0.dev20250803",
-    "torchvision>=0.24.0.dev20250803",
     "triton@git+https://github.com/triton-lang/triton",
 ]
 

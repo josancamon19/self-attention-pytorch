@@ -24,8 +24,6 @@ def get_q_k_v(n_heads=16, seq_length=16384, head_dim=64, dtype=torch.float32):
 
 def flash_benchmarking():
     q, k, v = get_q_k_v(dtype=torch.bfloat16)
-    flash = FlashAttention.apply  # torch.compile Causing issues with TMA implementation :/
-    # flash_torch = torch.compile(FlashPytorch.apply)
 
     def benchmark(fn):
         def wrap():
@@ -35,10 +33,10 @@ def flash_benchmarking():
 
         return wrap
 
-    results = triton.testing.do_bench(benchmark(flash), rep=10000, warmup=1000)
+    results = triton.testing.do_bench(benchmark(FlashAttention.apply), rep=10000, warmup=1000)
     print("flash_triton:", results)
-    # results = triton.testing.do_bench(benchmark(dummy_compiled_fn), rep=10000, warmup=100)
-    # print("dummy_compiled:", results)
+    results = triton.testing.do_bench(benchmark(dummy_attention), rep=10000, warmup=100)
+    print("dummy_compiled:", results)
 
 
 def verify_correctness(dtype=torch.float32):
