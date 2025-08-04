@@ -22,12 +22,11 @@ def flash_backward_pass1_grad_q(
     BLOCK_SIZE_Q: tl.constexpr,
     BLOCK_SIZE_K: tl.constexpr,
 ):
-    q_block_id = tl.program_id(0)  # NOW PARALLELIZE OVER Q-BLOCKS
+    q_block_id = tl.program_id(0)
     bh = tl.program_id(1)  # batch * head
 
     base_offset = bh * seq_length * head_dim
 
-    # Create TMA tensor descriptors OUTSIDE loops (following tutorial pattern)
     q_desc = tl.make_tensor_descriptor(
         q_ptr + base_offset,
         shape=[seq_length, head_dim],
@@ -63,7 +62,7 @@ def flash_backward_pass1_grad_q(
         block_shape=[BLOCK_SIZE_Q, head_dim],
     )
 
-    # Load Q-related tiles using TMA descriptors
+    # Load Q block tiles
     q_offset = q_block_id * BLOCK_SIZE_Q
     q_tile = q_desc.load([q_offset, 0])
     grad_out_tile = grad_out_desc.load([q_offset, 0])

@@ -1,22 +1,5 @@
-import torch
 import triton
 import triton.language as tl
-from src.flash_triton.shared import get_cuda_autotune_config
-
-
-
-def supports_tma():
-    """Check if current GPU supports TMA (H100+)"""
-    return torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 9
-
-
-def supports_warp_specialize():
-    """Check if current GPU supports warp specialization"""
-    return torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 9
-
-
-HAS_TMA = supports_tma() and hasattr(tl, "make_tensor_descriptor")
-
 
 # TMA-optimized Flash Attention Forward Pass
 # @triton.autotune(configs=get_cuda_autotune_config(), key=["seq_length", "head_dim"])
