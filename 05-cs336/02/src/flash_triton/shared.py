@@ -13,8 +13,9 @@ import pdb
 os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
 torch.manual_seed(42)
 
+
 def get_cuda_autotune_config():
-    def config_item(q, k, ns, nw, mr= None):
+    def config_item(q, k, ns, nw, mr=None):
         config = triton.Config({"BLOCK_SIZE_Q": q, "BLOCK_SIZE_K": k}, num_stages=ns, num_warps=nw)
         if mr is not None:
             config.maxnreg = mr
