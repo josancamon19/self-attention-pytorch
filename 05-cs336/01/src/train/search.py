@@ -7,20 +7,37 @@ import torch
 import wandb
 import uuid
 
-max_time_minutes = 95  # 1min torch.compile, 4 min validation calls, at train speed is 90 minutes on time.
+max_time_minutes = 9  # 1min torch.compile, 4 min validation calls, at train speed is 90 minutes on time.
 config = {
     "batch_size": tune.grid_search([64]),
-    "embedding_dim": tune.grid_search([768]),
-    "num_layers": tune.grid_search([6]),
-    "num_heads": tune.grid_search([12]),
+    "lr": tune.grid_search([4e-3]),  # 1e-2
+    # "lr": tune.grid_search([1e-2]), # 1e-2
+    "embedding_dim": tune.grid_search([768, 1024, 1280]),
+    "num_layers": tune.grid_search([6, 8, 12, 16]),
+    "num_heads": tune.grid_search([8, 12, 16]),
     "ffn_type": tune.grid_search(["relu2"]),  # "swiglu",
-    "lr": tune.grid_search([1e-2]), # 1e-2
     "qk_norm": tune.grid_search([1]),
     "qk_norm_type": tune.grid_search(["rms"]),  # l2 (default), rms
-    "tokens": tune.grid_search([2.2e9]), # 2.2e9
-    "warmup_steps": tune.grid_search([5000]), # 300, 1200, 
+    # "tokens": tune.grid_search([2.2e9]),  # 2.2e9
+    "warmup_steps": tune.grid_search([300]),  # 300, 1200,
     # "lr_annealing_multiplier": tune.grid_search([1.0, 1.1, 1.2, 1.3])
 }
+
+# 8 minutes, D?
+# 6, 768 ≈ 95M, 2e8
+# 8, 768 ≈ 105M, ≈ 1.9e8
+# 12, 768 ≈ 134M, ≈ 1.7e8
+# 16, 768 ≈ 162M, ≈ 1.35e8
+
+# 6, 1024 ≈ 141M, ≈ 1.92e8
+# 8, 1024 ≈ 166M, ≈ 1.7e8
+# 12, 1024 ≈ 217M, ≈ 1.25e8
+# 16, 1024 ≈ 267M, ≈ 9.5e7
+
+# 6, 1280 ≈ 199M, ≈ 1.6e8
+# 8, 1280 ≈ 238M, ≈ 1.25e8
+# 12, 1280 ≈ 316M, ≈ 9e7
+# 16, 1280 ≈ 395M, ≈ 7.2e7
 
 ray.init(
     runtime_env={
@@ -60,15 +77,34 @@ ray.init(
 def train_transformer_architecture(config):
     embedding_dim = config["embedding_dim"]
     num_heads = config["num_heads"]
+    num_layers = config["num_layers"]
     head_dim = embedding_dim // num_heads
 
     if embedding_dim % num_heads != 0:
         tune.report({"valid_loss": float("inf"), "status": "embedding_dim % num_heads != 0"})
         return
 
-    if head_dim < 64:
+    if head_dim not in [64, 128]:
         tune.report({"valid_loss": float("inf"), "status": "head_dim < 64"})
         return
+
+    # Set tokens manually based on (layers, d_model) tuples
+    tokens_map = {  # each sweep 8 minutes
+        (6, 768): 2e8,
+        (8, 768): 1.9e8,
+        (12, 768): 1.7e8,
+        (16, 768): 1.35e8,
+        (6, 1024): 1.92e8,
+        (8, 1024): 1.7e8,
+        (12, 1024): 1.25e8,
+        (16, 1024): 9.5e7,
+        (6, 1280): 1.6e8,
+        (8, 1280): 1.25e8,
+        (12, 1280): 9e7,
+        (16, 1280): 7.2e7,
+    }
+
+    tokens = tokens_map.get((num_layers, embedding_dim), 2e8)  # default fallback
 
     ffn_type = config.get("ffn_type", "swiglu")
     architecture = f"arch_{embedding_dim}_{config['num_layers']}_{num_heads}"
@@ -89,7 +125,7 @@ def train_transformer_architecture(config):
         sys.executable,
         train_script,
         "--tokens",
-        str(int(config["tokens"])),
+        str(int(tokens)),
         "--embedding-dim",
         str(embedding_dim),
         "--num-layers",

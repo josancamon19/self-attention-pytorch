@@ -54,6 +54,18 @@ schedule_map = {
 }
 
 
+def estimate_tokens(seconds: int, model: Transformer, mfu = 0.24):
+    # mfu depends for model architecture, lol, anyways interesting to see, check obsidian for details on how this was estimated
+    h100_flops = 1.979e15 / 2
+    params = sum(p.numel() for p in model.parameters())
+    theoretical_flops = h100_flops * seconds
+    real_flops = theoretical_flops * mfu
+    # D = C/6N
+    tokens = real_flops / (6 * params)
+    print(f"estimate_tokens: tokens {tokens:.1e} FLOPs {real_flops:.1e}")
+    return tokens
+
+
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, choices=["tinystories", "owt"], default="owt")
@@ -81,16 +93,16 @@ def get_args():
         default_valid_dataset = ".tokenizer/owt_valid-encoded.npy"
         default_tokenizer_vocab = ".tokenizer/owt_train-vocab.json"
         default_tokenizer_merges = ".tokenizer/owt_train-merges.json"
-        training_tokens = 5e8
+        training_tokens = 2e8
 
         default_lr_min = 1e-5
         default_lr_warmup = 1200
-        default_lr_max = 7e-4
+        default_lr_max = 4e-3
         default_adam_weight_decay = 0.1  # 0.01
         default_batch_size = 64
 
         default_seq_length = 512
-        default_embedding_dim = 1280
+        default_embedding_dim = 1024
         default_num_layers = 6
         default_num_heads = 8
 
@@ -262,14 +274,16 @@ def train():
     train_data = np.load(args.train_dataset_path, mmap_mode="r")
     valid_data = np.load(args.valid_dataset_path, mmap_mode="r")
 
-    train_steps = int(args.tokens / args.seq_length / args.batch_size)
-    valid_steps = int(len(valid_data) / args.seq_length / args.batch_size)
-
     model: Transformer = Transformer.from_args(args)
     model.to(device)
 
     if args.use_torch_compile:
         model = torch.compile(model)
+
+    # if args.max_wall_time:
+    #     args.tokens = 
+    train_steps = int(args.tokens / args.seq_length / args.batch_size)
+    valid_steps = int(len(valid_data) / args.seq_length / args.batch_size)
 
     run = wandb.init(id=args.wandb_id, project="assignment-01-owt", config=vars(args))
 
@@ -278,7 +292,7 @@ def train():
 
     # param_groups = [
     #     {'params': model.embeddings.parameters(), 'lr': args.lr_max * 0.8},  # Slightly lower
-    #     {'params': model.output.parameters(), 'lr': args.lr_max * 1.2}, # Slightly higher  
+    #     {'params': model.output.parameters(), 'lr': args.lr_max * 1.2}, # Slightly higher
     #     {'params': model.transformer_layers.parameters(), 'lr': args.lr_max}
     # ]
     optim = AdamCLS(
