@@ -25,6 +25,7 @@ from src.utils import (
     # cross_entropy_loss,
 )
 from src.models.transformer import Transformer
+from src.muon import MuonWithAuxAdam
 
 os.makedirs("./.models", exist_ok=True)
 
@@ -54,7 +55,7 @@ schedule_map = {
 }
 
 
-def estimate_tokens(seconds: int, model: Transformer, mfu = 0.24):
+def estimate_tokens(seconds: int, model: Transformer, mfu=0.24):
     # mfu depends for model architecture, lol, anyways interesting to see, check obsidian for details on how this was estimated
     h100_flops = 1.979e15 / 2
     params = sum(p.numel() for p in model.parameters())
@@ -96,7 +97,7 @@ def get_args():
         training_tokens = 2e8
 
         default_lr_min = 1e-5
-        default_lr_warmup = 1200
+        default_lr_warmup = 300
         default_lr_max = 4e-3
         default_adam_weight_decay = 0.1  # 0.01
         default_batch_size = 64
@@ -104,7 +105,7 @@ def get_args():
         default_seq_length = 512
         default_embedding_dim = 1024
         default_num_layers = 6
-        default_num_heads = 8
+        default_num_heads = 16
 
     # parser.add_argument("--hf-tokenizer", action="store_true", default=False)
     parser.add_argument("--tokenizer-vocab-path", type=str, default=default_tokenizer_vocab)
@@ -143,13 +144,13 @@ def get_args():
     parser.add_argument("--pos-embedding", type=str, default="rope")  # rope, nope, sinusoidal
     parser.add_argument("--norm-type", type=str, default="rms")  # rms, layer, none
     parser.add_argument("--norm-position", type=str, default="pre")  # pre, post
-    parser.add_argument("--ffn-type", type=str, default="swiglu")  # swiglu, silu
+    parser.add_argument("--ffn-type", type=str, default="relu2")  # swiglu, silu
     parser.add_argument("--weight-tying", action="store_true", default=False)
-    parser.add_argument("--qk-norm", action="store_true", default=False)
-    parser.add_argument("--qk-norm-type", type=str, default="l2")  # l2, rms
+    parser.add_argument("--qk-norm", action="store_true", default=True)
+    parser.add_argument("--qk-norm-type", type=str, default="rms")  # l2, rms
     # Further
     parser.add_argument("-mp", "--use-mixed-precision", action="store_true", default=True)
-    parser.add_argument("-tc", "--use-torch-compile", action="store_true", default=False)
+    parser.add_argument("-tc", "--use-torch-compile", action="store_true", default=True)
 
     # ops
     parser.add_argument("-c", "--checkpoint", type=str, default=None)
@@ -263,6 +264,52 @@ def execute_validation_loss(
     return best_valid_loss
 
 
+def get_muon_optimizer(model):
+    # Separate parameters for your transformer model
+    hidden_weights = []
+    hidden_gains_biases = []
+    nonhidden_params = []
+
+    # Collect parameters from transformer blocks (the "body")
+    for block in model.blocks:
+        for param in block.parameters():
+            if param.ndim >= 2:
+                hidden_weights.append(param)
+            else:
+                hidden_gains_biases.append(param)
+
+    # Add pre-output norm parameters to hidden gains/biases
+    for param in model.pre_output_norm.parameters():
+        if param.ndim < 2:
+            hidden_gains_biases.append(param)
+
+    # Embedding and output layer parameters (equivalent to "embed" and "head")
+    nonhidden_params.extend(model.embeddings.parameters())
+    nonhidden_params.extend(model.output.parameters())
+
+    param_groups = [
+        dict(params=hidden_weights, use_muon=True, lr=0.02, weight_decay=0.1),
+        dict(
+            params=hidden_gains_biases + nonhidden_params,
+            use_muon=False,
+            lr=4e-3,
+            betas=(0.9, 0.95),
+            weight_decay=0.1,
+        ),
+    ]
+    return MuonWithAuxAdam(param_groups)
+
+
+def get_adam_optimizer(args, model):
+    AdamCLS = CustomAdamW if args.use_custom_adam else AdamW
+    return AdamCLS(
+        model.parameters(),
+        lr=args.lr_min,
+        weight_decay=args.adam_weight_decay,
+        betas=(0.9, 0.95),
+    )
+
+
 def train():
     # TODO: pass ray here to avoid bad iterations fast
     args = get_args()
@@ -278,29 +325,30 @@ def train():
     model.to(device)
 
     if args.use_torch_compile:
+        # TODO: use best performance settings here
         model = torch.compile(model)
 
-    # if args.max_wall_time:
-    #     args.tokens = 
     train_steps = int(args.tokens / args.seq_length / args.batch_size)
     valid_steps = int(len(valid_data) / args.seq_length / args.batch_size)
 
     run = wandb.init(id=args.wandb_id, project="assignment-01-owt", config=vars(args))
 
-    AdamCLS = CustomAdamW if args.use_custom_adam else AdamW
     grad_clipping_fn = clip_gradients if args.use_custom_gradient_clipping else torch.nn.utils.clip_grad_norm_
 
-    # param_groups = [
-    #     {'params': model.embeddings.parameters(), 'lr': args.lr_max * 0.8},  # Slightly lower
-    #     {'params': model.output.parameters(), 'lr': args.lr_max * 1.2}, # Slightly higher
-    #     {'params': model.transformer_layers.parameters(), 'lr': args.lr_max}
-    # ]
-    optim = AdamCLS(
-        model.parameters(),
-        lr=args.lr_min,
-        weight_decay=args.adam_weight_decay,
-        betas=(0.9, 0.95),
-    )
+    # optim = get_muon_optimizer(model)
+    optim = get_adam_optimizer(args, model)
+
+    def optim_step():
+        optim.step()
+
+    if args.use_torch_compile:
+        optim_step = torch.compile(optim_step, fullgraph=False)
+    # optim = AdamCLS(
+    #     model.parameters(),
+    #     lr=args.lr_min,
+    #     weight_decay=args.adam_weight_decay,
+    #     betas=(0.9, 0.95),
+    # )
 
     if args.checkpoint:
         load_checkpoint(model, optim, args.checkpoint)
