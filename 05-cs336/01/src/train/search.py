@@ -14,7 +14,7 @@ config = {
     # "lr": tune.grid_search([1e-2]), # 1e-2
     "embedding_dim": tune.grid_search([768, 1024]),
     "num_layers": tune.grid_search([6, 8, 12, 16]),
-    "num_heads": tune.grid_search([16]),
+    "num_heads": tune.grid_search([6, 8, 12, 16]),
     "ffn_type": tune.grid_search(["relu2"]),  # "swiglu",
     "qk_norm": tune.grid_search([1]),
     "qk_norm_type": tune.grid_search(["rms"]),  # l2 (default), rms
@@ -35,11 +35,6 @@ config = {
 # 12, 1024 ≈ 217M, ≈ 1.25e8
 # 16, 1024 ≈ 267M, ≈ 9.5e7
 
-# 6, 1280 ≈ 199M, ≈ 1.6e8
-# 8, 1280 ≈ 238M, ≈ 1.25e8
-# 12, 1280 ≈ 316M, ≈ 9e7
-# 16, 1280 ≈ 395M, ≈ 7.2e7
-
 # for --ffn-type relu2, holy fuck was using silu the whole time
 # 6, 768 ≈ 138M, 1.85e8
 # 8, 768 ≈ 168M, ≈ 1.6e8
@@ -50,9 +45,6 @@ config = {
 # 8, 1024 ≈ 279M, ≈ 1.15e8
 # 12, 1024 ≈ 386M, ≈ 8.2e7
 # 16, 1024 ≈ 493M, ≈ 6.2e7
-
-# 6, 1280 ≈ 330M, ≈ 1e8
-# 8, 1280 ≈ 412M, ≈ 8e7
 
 
 ray.init(
