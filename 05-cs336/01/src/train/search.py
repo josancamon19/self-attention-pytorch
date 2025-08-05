@@ -7,15 +7,15 @@ import torch
 import wandb
 import uuid
 
-max_time_minutes = 30  # let it finish the run til the end, even if it's a few more FLOPs, standardize better later
+max_time_minutes = 45  # let it finish the run til the end, even if it's a few more FLOPs, standardize better later
 config = {
-    "batch_size": tune.grid_search([64]),
-    "lr": tune.grid_search([4e-3]),  # 1e-2
+    "batch_size": tune.grid_search([64]), # 64 won by far
+    "lr": tune.grid_search([4e-3, 7e-3, 9e-3, 1e-2]),  # 1e-2
     # "lr": tune.grid_search([1e-2]), # 1e-2
-    "embedding_dim": tune.grid_search([768, 1024]),
+    "embedding_dim": tune.grid_search([1024]),
     "num_layers": tune.grid_search([6]),
-    "num_heads": tune.grid_search([12, 16]),
-    "ffn_type": tune.grid_search(["relu2", "swiglu"]),  # "swiglu",
+    "num_heads": tune.grid_search([16]),
+    "ffn_type": tune.grid_search(["relu2"]),  # "swiglu",
     "qk_norm": tune.grid_search([1]),
     "qk_norm_type": tune.grid_search(["rms"]),  # l2 (default), rms
     # "tokens": tune.grid_search([2.2e9]),  # 2.2e9
@@ -89,7 +89,7 @@ ray.init(
 
 # python src/train/transformer.py --num-layers 6 --num-heads 12 --embedding-dim 768 --batch-size 64 --lr-max 4e-3 --lr-warmup-steps 4000 --tokens 2.3e9 --ffn-type relu2 -tc
 
-filter_to = [(768, 6, 12), (1024, 6, 16)]
+# filter_to = [(768, 6, 12), (1024, 6, 16)]
 
 
 def train_transformer_architecture(config):
@@ -106,15 +106,15 @@ def train_transformer_architecture(config):
         tune.report({"valid_loss": float("inf"), "status": "head_dim < 64"})
         return
 
-    if (embedding_dim, num_layers, num_heads) not in filter_to:
-        tune.report({"valid_loss": float("inf"), "status": "invalid config for this run"})
-        return
+    # if (embedding_dim, num_layers, num_heads) not in filter_to:
+    #     tune.report({"valid_loss": float("inf"), "status": "invalid config for this run"})
+    #     return
 
     # Set tokens manually based on (layers, d_model, ffn_type) tuples
     # Values found for 8 minutes training
     tokens_map = {
         # SwiGLU FFN type
-        ("swiglu", 6, 768): 2e8,
+        ("swiglu", 6, 768): 2.2e8,
         ("swiglu", 8, 768): 1.9e8,
         ("swiglu", 12, 768): 1.7e8,
         ("swiglu", 16, 768): 1.35e8,
