@@ -7,14 +7,14 @@ import torch
 import wandb
 import uuid
 
-max_time_minutes = 10  # let it finish the run til the end, even if it's a few more FLOPs, standardize better later
+max_time_minutes = 30  # let it finish the run til the end, even if it's a few more FLOPs, standardize better later
 config = {
     "batch_size": tune.grid_search([64]),
     "lr": tune.grid_search([4e-3]),  # 1e-2
     # "lr": tune.grid_search([1e-2]), # 1e-2
-    "embedding_dim": tune.grid_search([768, 1024, 1280]),
-    "num_layers": tune.grid_search([6, 8, 12, 16]),
-    "num_heads": tune.grid_search([8, 12, 16]),
+    "embedding_dim": tune.grid_search([768, 1024]),
+    "num_layers": tune.grid_search([6]),
+    "num_heads": tune.grid_search([12, 16]),
     "ffn_type": tune.grid_search(["relu2", "swiglu"]),  # "swiglu",
     "qk_norm": tune.grid_search([1]),
     "qk_norm_type": tune.grid_search(["rms"]),  # l2 (default), rms
@@ -89,6 +89,8 @@ ray.init(
 
 # python src/train/transformer.py --num-layers 6 --num-heads 12 --embedding-dim 768 --batch-size 64 --lr-max 4e-3 --lr-warmup-steps 4000 --tokens 2.3e9 --ffn-type relu2 -tc
 
+filter_to = [(768, 6, 12), (1024, 6, 16)]
+
 
 def train_transformer_architecture(config):
     embedding_dim = config["embedding_dim"]
@@ -102,6 +104,10 @@ def train_transformer_architecture(config):
 
     if head_dim not in [64, 128]:
         tune.report({"valid_loss": float("inf"), "status": "head_dim < 64"})
+        return
+
+    if (embedding_dim, num_layers, num_heads) not in filter_to:
+        tune.report({"valid_loss": float("inf"), "status": "invalid config for this run"})
         return
 
     # Set tokens manually based on (layers, d_model, ffn_type) tuples
@@ -120,7 +126,6 @@ def train_transformer_architecture(config):
         ("swiglu", 8, 1280): 1.25e8,
         ("swiglu", 12, 1280): 9e7,
         ("swiglu", 16, 1280): 7.2e7,
-        
         # ReLU2 FFN type
         ("relu2", 6, 768): 1.85e8,
         ("relu2", 8, 768): 1.6e8,
@@ -139,6 +144,9 @@ def train_transformer_architecture(config):
     if not tokens:
         tune.report({"valid_loss": float("inf"), "status": "invalid_config_no_tokens_mapped"})
         return
+
+    tokens_multiplier = (max_time_minutes - 2) / 8  # estimates were made at 8 minutes
+    tokens *= tokens_multiplier
 
     architecture = f"arch_{embedding_dim}_{config['num_layers']}_{num_heads}"
     wandb_id = f"search_{architecture}_{config['lr']}_{config['warmup_steps']}_{config['qk_norm']}_{config['qk_norm_type']}_{ffn_type}_{uuid.uuid4().hex[:8]}"
