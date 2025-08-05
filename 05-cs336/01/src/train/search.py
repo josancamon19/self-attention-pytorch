@@ -7,20 +7,14 @@ import torch
 import wandb
 import uuid
 
-max_time_minutes = 10  # let it finish the run til the end, even if it's a few more FLOPs, standardize better later
+max_time_minutes = 20  # let it finish the run til the end, even if it's a few more FLOPs, standardize better later
 config = {
     "batch_size": tune.grid_search([64]), # 64 won by far
     "lr": tune.grid_search([4e-3]),  # 1e-2 # , 5e-3, 6e-3, 7e-3 # testing architectures again
-    # "lr": tune.grid_search([1e-2]), # 1e-2
     "embedding_dim": tune.grid_search([768, 1024]),
     "num_layers": tune.grid_search([6, 8, 12, 16]),
     "num_heads": tune.grid_search([6, 8, 12, 16]),
-    "ffn_type": tune.grid_search(["relu2"]),  # "swiglu",
-    "qk_norm": tune.grid_search([1]),
-    "qk_norm_type": tune.grid_search(["rms"]),  # l2 (default), rms
-    # "tokens": tune.grid_search([2.2e9]),  # 2.2e9
-    "warmup_steps": tune.grid_search([300]),  # 300, 1200,
-    # "lr_annealing_multiplier": tune.grid_search([1.0, 1.1, 1.2, 1.3])
+    "ffn_type": tune.grid_search(["relu2"]),
 }
 
 # 8 minutes, D?
@@ -35,7 +29,7 @@ config = {
 # 12, 1024 ≈ 217M, ≈ 1.25e8
 # 16, 1024 ≈ 267M, ≈ 9.5e7
 
-# for --ffn-type relu2, holy fuck was using silu the whole time
+# for --ffn-type relu2, holy fuck was using silu the whole time, both take same time ish
 # 6, 768 ≈ 138M, 1.85e8
 # 8, 768 ≈ 168M, ≈ 1.6e8
 # 12, 768 ≈ 228M, ≈ 1.15e8
@@ -89,6 +83,9 @@ def train_transformer_architecture(config):
     num_heads = config["num_heads"]
     num_layers = config["num_layers"]
     head_dim = embedding_dim // num_heads
+    ffn_type = config["ffn_type"]
+    warmup_steps = config.get('warmup_steps', 300) # no need to sweep tbh
+    batch_size = config["batch_size"]
 
     if embedding_dim % num_heads != 0:
         tune.report({"valid_loss": float("inf"), "status": "embedding_dim % num_heads != 0"})
@@ -131,7 +128,6 @@ def train_transformer_architecture(config):
         ("relu2", 8, 1280): 8e7,
     }
 
-    ffn_type = config.get("ffn_type", "swiglu")
     tokens = tokens_map.get((ffn_type, num_layers, embedding_dim))  # default fallback
     if not tokens:
         tune.report({"valid_loss": float("inf"), "status": "invalid_config_no_tokens_mapped"})
@@ -140,9 +136,8 @@ def train_transformer_architecture(config):
     tokens_multiplier = (max_time_minutes - 2) / 8  # estimates were made at 8 minutes
     tokens *= tokens_multiplier
 
-    architecture = f"arch_{embedding_dim}_{config['num_layers']}_{num_heads}"
-    wandb_id = f"search_{architecture}_{config['lr']}_{config['warmup_steps']}_{config['qk_norm']}_{config['qk_norm_type']}_{ffn_type}_{uuid.uuid4().hex[:8]}"
-    gpu_id = config.get("gpu_id", 0)
+    architecture = f"arch_{embedding_dim}_{config['num_layers']}_{num_heads}_mlp_{ffn_type}"
+    wandb_id = f"search_{architecture}_{config['lr']}_{uuid.uuid4().hex[:8]}"
 
     current_dir = os.path.dirname(os.path.abspath(__file__))  # Gets src/train/
     project_root = os.path.dirname(os.path.dirname(current_dir))  # Gets project root
@@ -165,14 +160,24 @@ def train_transformer_architecture(config):
         str(config["num_layers"]),
         "--num-heads",
         str(num_heads),
+        "--lr-warmup-steps",
+        str(warmup_steps),
+        "--lr-max",
+        str(config["lr"]), 
+        "--batch-size",
+        str(batch_size),
+        "--ffn-type",
+        ffn_type,
+        # config
         "--wandb-id",
         wandb_id,
         "--dataset",
         "owt",
         "--gpu-id",
-        str(gpu_id),
+        str(config.get("gpu_id", 0)),
         "--max-wall-time",
         str(max_time_minutes),
+        
         # relative path issues
         "--train-dataset-path",
         f"{project_root}/.tokenizer/owt_train-encoded.npy",
@@ -182,29 +187,20 @@ def train_transformer_architecture(config):
         f"{project_root}/.tokenizer/owt_train-vocab.json",
         "--tokenizer-merges-path",
         f"{project_root}/.tokenizer/owt_train-merges.json",
-        "--lr-warmup-steps",
-        # "300",  # 2% of about 15000 steps
-        str(config["warmup_steps"]),
-        "--lr-max",
-        str(config["lr"]),  # started with 3e-4
+        # default values
         "--lr-schedule",
         "cosine",
         "--adam-weight-decay",
         "0.1",
-        "--batch-size",
-        str(config["batch_size"]),
         "--use-mixed-precision",
         "--use-torch-compile",
-        "--ffn-type",
-        ffn_type,
+        "--qk-norm",
+        "--qk-norm-type",
+        "rms",
         "--lr-annealing-multiplier",
-        str(1.0),
+        "1.0",
     ]
 
-    if config.get("qk_norm"):
-        cmd.append("--qk-norm")
-        cmd.append("--qk-norm-type")
-        cmd.append(str(config["qk_norm_type"]))
 
     try:
         result = subprocess.run(
