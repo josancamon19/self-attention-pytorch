@@ -7,13 +7,13 @@ import torch
 import wandb
 import uuid
 
-max_time_minutes = 45  # let it finish the run til the end, even if it's a few more FLOPs, standardize better later
+max_time_minutes = 10  # let it finish the run til the end, even if it's a few more FLOPs, standardize better later
 config = {
     "batch_size": tune.grid_search([64]), # 64 won by far
-    "lr": tune.grid_search([4e-3, 7e-3, 9e-3, 1e-2]),  # 1e-2
+    "lr": tune.grid_search([4e-3]),  # 1e-2 # , 5e-3, 6e-3, 7e-3 # testing architectures again
     # "lr": tune.grid_search([1e-2]), # 1e-2
-    "embedding_dim": tune.grid_search([1024]),
-    "num_layers": tune.grid_search([6]),
+    "embedding_dim": tune.grid_search([768, 1024]),
+    "num_layers": tune.grid_search([6, 8, 12, 16]),
     "num_heads": tune.grid_search([16]),
     "ffn_type": tune.grid_search(["relu2"]),  # "swiglu",
     "qk_norm": tune.grid_search([1]),
@@ -40,7 +40,7 @@ config = {
 # 12, 1280 ≈ 316M, ≈ 9e7
 # 16, 1280 ≈ 395M, ≈ 7.2e7
 
-# for --ffn-type relu2
+# for --ffn-type relu2, holy fuck was using silu the whole time
 # 6, 768 ≈ 138M, 1.85e8
 # 8, 768 ≈ 168M, ≈ 1.6e8
 # 12, 768 ≈ 228M, ≈ 1.15e8

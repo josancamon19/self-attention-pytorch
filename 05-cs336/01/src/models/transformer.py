@@ -229,8 +229,8 @@ class PosWiseFFN(nn.Module):
             self.W1 = Linear(embedding_dim, dff * 4)
             self.W2 = Linear(dff * 4, embedding_dim)
         else:
-            self.W1 = Linear(embedding_dim, dff)
-            self.W2 = Linear(dff, embedding_dim)
+            self.W1 = Linear(embedding_dim, dff * 4)
+            self.W2 = Linear(dff * 4, embedding_dim)
 
     @staticmethod
     def silu(x):
@@ -239,7 +239,6 @@ class PosWiseFFN(nn.Module):
 
     @staticmethod
     def relu2(x):
-        F.rms_norm
         return torch.clamp(x, min=0) ** 2
 
     def forward(self, x):
@@ -247,7 +246,7 @@ class PosWiseFFN(nn.Module):
             w1_w3_out = self.W1_W3(x)
             w1_out, w3_out = w1_w3_out.chunk(2, dim=-1)
             return self.W2(self.silu(w1_out) * w3_out)
-        elif self.ffn_type == FFNType.SWIGLU:
+        elif self.ffn_type == FFNType.RELU2:
             return self.W2(self.relu2(self.W1(x)))
         else:  # SILU
             return self.W2(self.silu(self.W1(x)))
@@ -275,9 +274,9 @@ class MultiHeadSelfAttention(nn.Module):
         self.register_buffer("causal_mask", torch.tril(torch.ones(max_sequence_length, max_sequence_length)))
         self.scale = 1.0 / math.sqrt(self.head_size)
 
-        if self.qk_norm:
+        # if self.qk_norm:
             # self.qk_scale = nn.Parameter(torch.ones(self.head_size))
-            self.qk_scale = nn.Parameter(torch.ones(1))
+        self.qk_scale = nn.Parameter(torch.ones(1))
 
         # if pos_embedding == PosEmbeddingType.ROPE:
         self.rope = RotaryPositionalEncoding(self.head_size, max_sequence_length)
@@ -289,7 +288,7 @@ class MultiHeadSelfAttention(nn.Module):
     def _reshape_to_heads(self, batch, seq_length, tensor):
         return tensor.view(batch, seq_length, self.num_heads, self.head_size).transpose(2, 1)
 
-    def forward(self, x, padding_mask):
+    def forward(self, x, _):
         batch, seq_length = x.shape[0], x.shape[1]  # , embedding_dim
         qkv = self.QKV(x)
         q, k, v = qkv.chunk(3, dim=-1)
@@ -302,22 +301,21 @@ class MultiHeadSelfAttention(nn.Module):
         q = self.rope(q)
         k = self.rope(k)
 
-        if self.qk_norm:
-            if self.qk_norm_type == QKNormType.l2:
-                q = F.normalize(q, dim=-1)
-                k = F.normalize(k, dim=-1)
-            else:  # rms
-                q = rms_norm(q)
-                k = rms_norm(k)
-            attention_scores = q @ k.transpose(-2, -1)
-            # attention_scores *= self.qk_scale.view(-1, 1, 1, 1)
-            attention_scores *= self.qk_scale
-        else:
-            attention_scores = (q @ k.transpose(-2, -1)) * self.scale  # b, num_heads, seq_length, seq_length
+        # if self.qk_norm:
+        #     if self.qk_norm_type == QKNormType.l2:
+        #         q = F.normalize(q, dim=-1)
+        #         k = F.normalize(k, dim=-1)
+        #     else:  # rms
+        q = rms_norm(q)
+        k = rms_norm(k)
+        attention_scores = q @ k.transpose(-2, -1)
+        attention_scores *= self.qk_scale
+        # else:
+        #     attention_scores = (q @ k.transpose(-2, -1)) * self.scale  # b, num_heads, seq_length, seq_length
 
         mask = self.causal_mask[:seq_length, :seq_length]
-        if padding_mask is not None:
-            mask = (mask * padding_mask.unsqueeze(1)).unsqueeze(1)
+        # if padding_mask is not None:
+        #     mask = (mask * padding_mask.unsqueeze(1)).unsqueeze(1)
 
         attention_scores = torch.masked_fill(attention_scores, mask == 0, -float("inf"))
 
@@ -403,9 +401,9 @@ class Transformer(nn.Module):
 
         self.embeddings = Embedding(vocab_size, embedding_dim, weight_tying)
 
-        if self.pos_embedding == PosEmbeddingType.SINUSOIDAL:
-            pe = get_positional_encodings(embedding_dim, max_sequence_length)
-            self.register_buffer("pe", pe)
+        # if self.pos_embedding == PosEmbeddingType.SINUSOIDAL:
+        #     pe = get_positional_encodings(embedding_dim, max_sequence_length)
+        #     self.register_buffer("pe", pe)
 
         self.blocks = nn.ModuleList(
             TransformerBlock(
@@ -421,11 +419,11 @@ class Transformer(nn.Module):
             )
             for _ in range(num_layers)
         )
-        if self.norm_position == NormPosition.PRE:
-            self.pre_output_norm = get_norm_class(norm_type, embedding_dim)
+        # if self.norm_position == NormPosition.PRE:
+        self.pre_output_norm = get_norm_class(norm_type, embedding_dim)
 
-        if not self.weight_tying:
-            self.output = Linear(embedding_dim, vocab_size, is_out_proj=True)
+        # if not self.weight_tying:
+        self.output = Linear(embedding_dim, vocab_size, is_out_proj=True)
 
     @classmethod
     def from_args(cls, args, return_tokenizer: bool = False):
@@ -458,19 +456,19 @@ class Transformer(nn.Module):
     def forward(self, input_ids, padding_mask):
         tokens = self.embeddings(input_ids)
 
-        if self.pos_embedding == PosEmbeddingType.SINUSOIDAL:
-            tokens += self.pe[: input_ids.shape[-1], :]
+        # if self.pos_embedding == PosEmbeddingType.SINUSOIDAL:
+        #     tokens += self.pe[: input_ids.shape[-1], :]
 
         for block in self.blocks:
             tokens = block(tokens, padding_mask)
 
-        if self.norm_position == NormPosition.PRE:
-            tokens = self.pre_output_norm(tokens)
+        # if self.norm_position == NormPosition.PRE:
+        tokens = self.pre_output_norm(tokens)
 
-        if self.weight_tying:
-            output = tokens @ self.embeddings.embeddings.T
-        else:
-            output = self.output(tokens)
+        # if self.weight_tying:
+        #     output = tokens @ self.embeddings.embeddings.T
+        # else:
+        output = self.output(tokens)
         return output  # output logits
 
 
