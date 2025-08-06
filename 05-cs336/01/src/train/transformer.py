@@ -46,6 +46,8 @@ def get_model_path(step, args):
     )
 
 
+# TODO: check modded GPT, and how to sync muon with cos lr schedule, cause it's for different params?
+
 schedule_map = {
     "cosine": cos_lr_schedule,
     "linear": linear_lr_schedule,
@@ -83,6 +85,7 @@ def get_args():
         default_lr_min = 1e-5
         default_lr_warmup = 200
         default_lr_max = 3e-4
+        default_lr_max_muon = 2e-2
         default_adam_weight_decay = 0.1
         default_batch_size = 32
         default_seq_length = 256
@@ -99,6 +102,7 @@ def get_args():
         default_lr_min = 1e-5
         default_lr_warmup = 300
         default_lr_max = 4e-3
+        default_lr_max_muon = 2e-2
         default_adam_weight_decay = 0.1  # 0.01
         default_batch_size = 64
 
@@ -122,9 +126,11 @@ def get_args():
     parser.add_argument("-tt", "--tokens", type=float, default=training_tokens)
 
     parser.add_argument("--batch-size", type=int, default=default_batch_size)
+    parser.add_argument("--optimizer", type=str, default="adam")  # adam, muon
 
     parser.add_argument("--lr-min", type=float, default=default_lr_min)
     parser.add_argument("--lr-max", type=float, default=default_lr_max)
+    parser.add_argument("--lr-max-muon", type=float, default=default_lr_max_muon)
     parser.add_argument("--lr-warmup-steps", type=int, default=default_lr_warmup)
     parser.add_argument("--lr-annealing-multiplier", type=float, default=1.0)
     parser.add_argument(
@@ -133,8 +139,8 @@ def get_args():
         default="cosine",
         choices=["cosine", "linear", "sqrt", "constant"],  # "cosine_restarts"
     )
-    # parser.add_argument("--lr-cosine-restarts", type=int, default=0)
     parser.add_argument("--adam-weight-decay", type=float, default=default_adam_weight_decay)
+    parser.add_argument("--muon-weight-decay", type=float, default=default_adam_weight_decay)
 
     # compare slow down
     parser.add_argument("-uca", "--use-custom-adam", action="store_true", default=False)
@@ -264,7 +270,7 @@ def execute_validation_loss(
     return best_valid_loss
 
 
-def get_muon_optimizer(model):
+def get_muon_optimizer(args, model):
     # Separate parameters for your transformer model
     hidden_weights = []
     hidden_gains_biases = []
@@ -288,13 +294,13 @@ def get_muon_optimizer(model):
     nonhidden_params.extend(model.output.parameters())
 
     param_groups = [
-        dict(params=hidden_weights, use_muon=True, lr=0.02, weight_decay=0.1),
+        dict(params=hidden_weights, use_muon=True, lr=args.lr_max_muon, weight_decay=args.muon_weight_decay),
         dict(
             params=hidden_gains_biases + nonhidden_params,
             use_muon=False,
-            lr=4e-3,
+            lr=args.lr_min,
             betas=(0.9, 0.95),
-            weight_decay=0.1,
+            weight_decay=args.adam_weight_decay,
         ),
     ]
     return MuonWithAuxAdam(param_groups)
@@ -325,8 +331,7 @@ def train():
     model.to(device)
 
     if args.use_torch_compile:
-        # TODO: use best performance settings here
-        model = torch.compile(model)
+        model = torch.compile(model, dynamic=False)  # , mode="max-autotune")
 
     train_steps = int(args.tokens / args.seq_length / args.batch_size)
     valid_steps = int(len(valid_data) / args.seq_length / args.batch_size)
@@ -335,20 +340,15 @@ def train():
 
     grad_clipping_fn = clip_gradients if args.use_custom_gradient_clipping else torch.nn.utils.clip_grad_norm_
 
-    # optim = get_muon_optimizer(model)
-    optim = get_adam_optimizer(args, model)
+    if args.optimizer == "adam":
+        optim = get_adam_optimizer(args, model)
+    elif args.optimizer == "muon":
+        optim = get_muon_optimizer(args, model)
+    else:
+        raise Exception()
 
-    def optim_step():
-        optim.step()
-
-    if args.use_torch_compile:
-        optim_step = torch.compile(optim_step, fullgraph=False)
-    # optim = AdamCLS(
-    #     model.parameters(),
-    #     lr=args.lr_min,
-    #     weight_decay=args.adam_weight_decay,
-    #     betas=(0.9, 0.95),
-    # )
+    # notes by compiling .compile on optimizer ops, got from 8 it/s to 8.2 it/s
+    # by compiling max-autotune, same, no improvement, and takes a lot to init
 
     if args.checkpoint:
         load_checkpoint(model, optim, args.checkpoint)
@@ -396,8 +396,13 @@ def train():
         loss_history.append(loss.item())
 
         lr = lr_schedule_fn(args.lr_min, args.lr_max, args.lr_warmup_steps, annealing_steps, step)
+        lr_muon = (
+            lr_schedule_fn(args.lr_min, args.lr_max_muon, args.lr_warmup_steps, annealing_steps, step)
+            if args.optimizer == "muon"
+            else 0
+        )
         for param_group in optim.param_groups:
-            param_group["lr"] = lr
+            param_group["lr"] = lr_muon if param_group.get("use_muon") else lr
 
         optim.step()
 

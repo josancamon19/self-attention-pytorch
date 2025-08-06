@@ -1,6 +1,6 @@
 import torch
 
-
+@torch.compile
 def zeropower_via_newtonschulz5(G, steps: int):
     """
     Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
@@ -44,7 +44,7 @@ def muon_update(grad, momentum, beta=0.95, ns_steps=5, nesterov=True):
     return update
 
 
-
+@torch.compile
 def adam_update(grad, buf1, buf2, step, betas, eps):
     buf1.lerp_(grad, 1 - betas[0])
     buf2.lerp_(grad.square(), 1 - betas[1])

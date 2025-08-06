@@ -9,7 +9,7 @@ import uuid
 
 max_time_minutes = 20  # let it finish the run til the end, even if it's a few more FLOPs, standardize better later
 config = {
-    "batch_size": tune.grid_search([64]), # 64 won by far
+    "batch_size": tune.grid_search([64]),  # 64 won by far
     "lr": tune.grid_search([4e-3]),  # 1e-2 # , 5e-3, 6e-3, 7e-3 # testing architectures again
     "embedding_dim": tune.grid_search([768, 1024]),
     "num_layers": tune.grid_search([6, 8, 12, 16]),
@@ -84,7 +84,7 @@ def train_transformer_architecture(config):
     num_layers = config["num_layers"]
     head_dim = embedding_dim // num_heads
     ffn_type = config["ffn_type"]
-    warmup_steps = config.get('warmup_steps', 300) # no need to sweep tbh
+    warmup_steps = config.get("warmup_steps", 300)  # no need to sweep tbh
     batch_size = config["batch_size"]
 
     if embedding_dim % num_heads != 0:
@@ -163,7 +163,7 @@ def train_transformer_architecture(config):
         "--lr-warmup-steps",
         str(warmup_steps),
         "--lr-max",
-        str(config["lr"]), 
+        str(config["lr"]),
         "--batch-size",
         str(batch_size),
         "--ffn-type",
@@ -177,7 +177,6 @@ def train_transformer_architecture(config):
         str(config.get("gpu_id", 0)),
         "--max-wall-time",
         str(max_time_minutes),
-        
         # relative path issues
         "--train-dataset-path",
         f"{project_root}/.tokenizer/owt_train-encoded.npy",
@@ -200,7 +199,6 @@ def train_transformer_architecture(config):
         "--lr-annealing-multiplier",
         "1.0",
     ]
-
 
     try:
         result = subprocess.run(
