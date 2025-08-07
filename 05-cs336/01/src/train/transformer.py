@@ -4,7 +4,6 @@ import torch
 from tqdm import tqdm
 import time
 
-from src.models.tokenizer import Tokenizer
 from torch.optim import AdamW
 import torch.nn.functional as F
 import os
@@ -214,20 +213,6 @@ def compute_batch_loss(model, args, batch):
     with torch.autocast("cuda", dtype=torch.bfloat16, enabled=args.use_mixed_precision):
         input_ids, labels = batch
         output = model(input_ids, None)
-
-        # if torch.isnan(output).any():
-        #     print("[NaN DETECTED] Model output contains NaN values!")
-        #     print(f"[NaN DETECTED] Output shape: {output.shape}")
-        #     print(f"[NaN DETECTED] NaN count: {torch.isnan(output).sum().item()}")
-        #     # Check which parameters have NaN
-        #     for name, param in model.named_parameters():
-        #         if torch.isnan(param).any():
-        #             print(f"[NaN DETECTED] Parameter {name} has NaN values")
-
-        # if torch.isinf(output).any():
-        #     print("[INF DETECTED] Model output contains Inf values!")
-        #     print(f"[INF DETECTED] Output range: [{output.min().item():.4f}, {output.max().item():.4f}]")
-
         output_flatten = output.view(-1, output.shape[-1])
         labels = labels.contiguous().view(-1)
         loss = F.cross_entropy(output_flatten, labels)
@@ -317,7 +302,6 @@ def get_adam_optimizer(args, model):
 
 
 def train():
-    # TODO: pass ray here to avoid bad iterations fast
     args = get_args()
     print("[train]: ", vars(args))
     device = torch.device(f"cuda:{args.gpu_id}" if torch.cuda.is_available() else "cpu")
@@ -349,6 +333,7 @@ def train():
 
     # notes by compiling .compile on optimizer ops, got from 8 it/s to 8.2 it/s
     # by compiling max-autotune, same, no improvement, and takes a lot to init
+    # removing wandb logs, seem to take keep it 8.2 it/s more constantly
 
     if args.checkpoint:
         load_checkpoint(model, optim, args.checkpoint)
@@ -368,30 +353,20 @@ def train():
     max_wall_seconds = args.max_wall_time * 60 if args.max_wall_time else None
     annealing_steps = int(train_steps * args.lr_annealing_multiplier)
 
-    for step in tqdm(range(1, train_steps + 1), total=train_steps, desc="training-steps"):
+    progress_bar = tqdm(range(1, train_steps + 1), total=train_steps, desc="training-steps")
+    for step in progress_bar:
         batch = data_loading(train_data, args.batch_size, args.seq_length, device)
         optim.zero_grad()
         # loss = compute_inputs_loss(model, args, (inputs[step - 1, ...], labels[step - 1, ...]))
         loss = compute_batch_loss(model, args, batch)
         train_loss += loss.item()
         loss.backward()
+        progress_bar.set_postfix({"train_loss": f"{(train_loss / step):.4f}"})
 
         if step == 1:
             initial_loss = loss.item()
 
         grad_norm = grad_clipping_fn(model.parameters(), max_norm=1.0)
-
-        # if torch.isnan(grad_norm) or torch.isinf(grad_norm):
-        #     print(f"[GRAD NaN/INF] Step {step}: Gradient norm is {grad_norm.item()}")
-        #     # Check individual parameter gradients
-        #     for name, param in model.named_parameters():
-        #         if param.grad is not None:
-        #             param_grad_norm = torch.linalg.vector_norm(param.grad)
-        #             if torch.isnan(param_grad_norm) or torch.isinf(param_grad_norm):
-        #                 print(f"[GRAD NaN/INF] Parameter {name} grad norm: {param_grad_norm.item()}")
-
-        #     raise Exception("grad_norm has nan's")
-
         gradient_norms.append(grad_norm.item())
         loss_history.append(loss.item())
 

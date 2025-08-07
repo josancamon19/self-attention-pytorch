@@ -88,7 +88,7 @@ def flash_forward(
 
             prev_mi = mi
             mi = tl.maximum(mi, rowmax)
-            pj = tl.math.exp2(attn_scores - mi[:, None])
+            pj = tl.math.exp2(attn_scores - mi[:, None]).to(v_tile.dtype)
 
             rescale_factor = tl.math.exp2(prev_mi - mi)
             li = rescale_factor * li + tl.sum(pj, axis=-1)

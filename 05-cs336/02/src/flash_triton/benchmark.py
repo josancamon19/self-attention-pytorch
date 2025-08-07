@@ -116,7 +116,8 @@ def verify_correctness(dtype=torch.float32):
 
 def check():
     q, k, v = get_q_k_v(16, 16384, 64, torch.bfloat16)
-    output_flash = FlashAttention.apply(q, k, v, True)
+    flas_fn = torch.compile(FlashAttention.apply)
+    output_flash = flas_fn(q, k, v, True)
     loss = output_flash.sum()
     loss.backward()
 
