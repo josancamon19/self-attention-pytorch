@@ -56,8 +56,8 @@ def flash_benchmarking():
     print("flash_triton:", results)
     # results = triton.testing.do_bench(benchmark2(), rep=10000, warmup=1000)
     # print("flash_triton:", results)
-    results = triton.testing.do_bench(benchmark(dummy_attention), rep=10000, warmup=100)
-    print("dummy_compiled:", results)
+    # results = triton.testing.do_bench(benchmark(dummy_attention), rep=10000, warmup=100)
+    # print("dummy_compiled:", results)
 
 
 def verify_correctness(dtype=torch.float32):
@@ -116,7 +116,8 @@ def verify_correctness(dtype=torch.float32):
 
 def check():
     q, k, v = get_q_k_v(16, 16384, 64, torch.bfloat16)
-    flas_fn = torch.compile(FlashAttention.apply)
+    # flas_fn = torch.compile(FlashAttention.apply)
+    flas_fn = FlashAttention.apply
     output_flash = flas_fn(q, k, v, True)
     loss = output_flash.sum()
     loss.backward()
