@@ -5,117 +5,118 @@
 # - RL can most times even with awesome sft data, find better policies
 # ~ not for this model sizes, the 2 processes will be treated separately
 
-import pdb
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from datasets import load_dataset
-from torch.utils.data import DataLoader, Dataset
 import torch
-
-model = AutoModelForCausalLM.from_pretrained(
-    "Qwen/Qwen2.5-Math-1.5B",
-    torch_dtype=torch.bfloat16,
-    attn_implementation="flash_attention_2",
-)
-tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-Math-1.5B")
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# Load DART-Math-Uniform dataset
-dataset = load_dataset("hkust-nlp/dart-math-uniform")
-train_dataset = dataset["train"]
-# valid_dataset = dataset["valid"]
+from torch import Tensor
 
 
-class MathDataset(Dataset):
-    def __init__(
-        self,
-        dataset,
-        tokenizer,
-        max_length=1024,
-        prompt_template_path: str = "src/prompts/r1_zero.prompt",
-    ):
-        self.dataset = dataset
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-        with open(prompt_template_path, "r") as f:
-            self.prompt_template = f.read().strip()
+# This could prob be more efficient
+def tokenize_prompt_and_output(
+    prompt_strs: list[str], output_strs: list[str], tokenizer
+):
+    p_encoded = tokenizer(prompt_strs, padding=False, truncation=False)["input_ids"]
+    out_encoded = tokenizer(output_strs, padding=False, truncation=False)["input_ids"]
 
-    def __len__(self):
-        return len(self.dataset)
+    joined: list[tuple[Tensor, Tensor]] = [
+        (torch.tensor(p), torch.tensor(out)) for p, out in zip(p_encoded, out_encoded)
+    ]
+    lengths = [(len(p), len(out)) for p, out in joined]
+    max_length = max(p + out for p, out in lengths)
 
-    def __getitem__(self, idx):
-        item = self.dataset[idx]
-        query = item["query"]
-        response = item["response"]
-        # Split on the second-to-last period
-        last_dot_idx = response.rfind(".")
-        second_last_dot_idx = response.rfind(".", 0, last_dot_idx)
-        thinking = response[:second_last_dot_idx].strip() + "."
-        answer = response[second_last_dot_idx + 1 :].strip() + "."
-        prompt = f"{self.prompt_template.replace('{question}', query)}{thinking}</think><answer>{answer}</answer>"
-        # Tokenize
-        encoding = self.tokenizer(
-            prompt,
-            truncation=True,
-            padding="max_length",
-            max_length=self.max_length,
-            return_tensors="pt",
+    masks = [
+        torch.cat(
+            [
+                torch.zeros(p_length, dtype=torch.bool),
+                torch.ones(out_length, dtype=torch.bool),
+                torch.zeros(max_length - (p_length + out_length), dtype=torch.bool),
+            ]
         )
+        for p_length, out_length in lengths
+    ]
+    # Concatenate and pad sequences
+    concatenated = []
+    for a, b in joined:
+        # Concatenate prompt + output
+        concat_seq = torch.cat([a, b])
+        # Pad to max_length
+        padding_len = max_length - len(concat_seq)
+        if padding_len > 0:
+            padded_seq = torch.cat(
+                [concat_seq, torch.full((padding_len,), tokenizer.pad_token_id)]
+            )
+        else:
+            padded_seq = concat_seq
+        concatenated.append(padded_seq)
 
-        input_ids = encoding["input_ids"].squeeze()
-        attention_mask = encoding["attention_mask"].squeeze()
+    # Stack into tensors
+    full_sequences = torch.stack(concatenated)
+    response_masks = torch.stack(masks)
 
-        return {
-            "input_ids": input_ids[:-1],
-            "attention_mask": attention_mask[:-1],
-            "labels": input_ids.clone()[1:],
-        }
+    # Create final tensors with correct shapes
+    input_ids = full_sequences[:, :-1]
+    labels = full_sequences[:, 1:]
+    response_mask = response_masks[:, 1:]  # Shift mask to align with labels
 
-
-# Create dataset and dataloader
-math_dataset = MathDataset(train_dataset, tokenizer)
-# valid_math_dataset = MathDataset(train_dataset, tokenizer)
-data_loader = DataLoader(math_dataset, batch_size=8, shuffle=True)
-# valid_data_loader = DataLoader(valid_math_dataset, batch_size=1, shuffle=False)
+    return {
+        "input_ids": input_ids,
+        "labels": labels,
+        "response_mask": response_mask,
+    }
 
 
 def compute_entropy(logits: torch.Tensor) -> torch.Tensor:
-    pass  # cross entropy? why not?
     # Logging per-token entropies. When doing RL, it is often useful to keep track of per-token entropies to
     # see if the predictive distribution of the model is becoming (over)confident. We will implement this now and
-    # compare how each of our finetuning approaches affects the model’s predictive entropy.
-    # The entropy of a discrete distribution p(x) with support Xis defined as
-    # H(p) =−
-    # x∈X
-    # p(x) log p(x).
+    # compare how each of our finetuning approaches affects the model's predictive entropy.
+
+    # entropy is the expected surprise, surprise, is the inverse of prob, which is the log, and prob is softmax of logits
+    log_p = torch.log_softmax(logits, dim=-1)
+    p = torch.exp(log_p)
+    return -torch.sum(p * log_p, dim=-1)
 
 
-def finetune():
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
-    model.train()
-    model.to(device)
-    accum_steps = 4
-    train_loss = 0
+def get_response_log_probs(
+    model: torch.nn.Module,
+    input_ids: torch.Tensor,
+    labels: torch.Tensor,
+    return_token_entropy: bool = False,
+) -> dict[str, torch.Tensor]:
+    logits = model(input_ids).logits
+    out_log_probs = torch.log_softmax(logits, dim=-1)
+    log_probs = torch.gather(out_log_probs, dim=-1, index=labels.unsqueeze(-1))
 
-    for idx, batch in enumerate(data_loader):
-        input_ids = batch["input_ids"].to(device)
-        attention_mask = batch["attention_mask"].to(device)
-        labels = batch["labels"].to(device)
-
-        outputs = model(
-            input_ids=input_ids, attention_mask=attention_mask, labels=labels
-        )
-        # pdb.set_trace()
-        loss = outputs.loss
-        train_loss += loss.item()
-        loss.backward()
-
-        if (idx + 1) % accum_steps == 0:
-            optimizer.step()
-            optimizer.zero_grad()
-
-        if idx and idx % 100 == 0:
-            print(f"Step {idx}, Loss: {(train_loss / idx + 1):.4f}")
+    output = {"log_probs": log_probs.squeeze(-1)}
+    if return_token_entropy:
+        output["token_entropy"] = compute_entropy(logits)
+    return output
 
 
-if __name__ == "__main__":
-    finetune()
+def masked_normalize(
+    tensor: torch.Tensor,
+    mask: torch.Tensor,
+    dim: int | None = None,
+    normalize_constant: float = 1.0,
+):
+    # sums over tensor elements and normalizes by a constant while respecting a boolean mask.
+    return torch.sum(tensor * mask, dim=dim) / normalize_constant
+
+
+def sft_microbatch_train_step(
+    policy_log_probs: torch.Tensor,
+    response_mask: torch.Tensor,
+    gradient_accumulation_steps: int,
+    normalize_constant: int | None = 1.0,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    loss = -masked_normalize(
+        policy_log_probs, response_mask, dim=-1, normalize_constant=normalize_constant
+    )
+
+    loss = loss.mean()
+    scaled_loss = loss / gradient_accumulation_steps
+    scaled_loss.backward()
+    metadata = {
+        "loss": loss.item(),  # Unscaled loss for logging
+        "num_masked_tokens": response_mask.sum().item(),
+        "sequence_length": policy_log_probs.shape[-1],
+        "batch_size": policy_log_probs.shape[0] if policy_log_probs.dim() > 1 else 1,
+    }
+    return (scaled_loss, metadata)
