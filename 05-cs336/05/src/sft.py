@@ -349,4 +349,7 @@ if __name__ == "__main__":
     # TODO: learning rate tuning, and batch size, how much memory is being used, cos lr schedule
     # TODO: validate the think, answer tags in the responses
     # TODO: saving the model
-    # TODO: making a full run, can you get >20%? results 
+    # TODO: making a full run, can you get >20%? results ~ what about loss per token, how that affects
+    # TODO: make it easy to test other datasets
+    # TODO: how was this 2.5B model trained? hasn't it seen all math datasets already?
+    # TODO: derive cross entropy loss, and nll
