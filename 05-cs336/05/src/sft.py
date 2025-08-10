@@ -5,10 +5,14 @@
 # - RL can most times even with awesome sft data, find better policies
 # ~ not for this model sizes, the 2 processes will be treated separately
 
-import pdb
 import torch
 import random
 from torch import Tensor
+from tqdm import tqdm
+from vllm.sampling_params import SamplingParams
+
+# from src.drgrpo_grader import r1_zero_reward_fn
+from src.eval import evaluate_model, compute_eval_stats
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -215,8 +219,8 @@ def load_policy_into_vllm_instance(policy: PreTrainedModel, llm: LLM):
 def init_wandb():
     # Setup wandb metrics
     wandb.init("josancamon19-cifrato", "assignment-05")
-    wandb.define_metric("train_step")  # the x‑axis for training
-    wandb.define_metric("eval_step")  # the x‑axis for evaluation
+    # wandb.define_metric("train_step")  # the x‑axis for training
+    # wandb.define_metric("eval_step")  # the x‑axis for evaluation
     # everything that starts with train/ is tied to train_step
     wandb.define_metric("train/*", step_metric="train_step")
     # everything that starts with eval/ is tied to eval_step
@@ -232,9 +236,8 @@ def get_model_and_tokenizer(model_name: str = "Qwen/Qwen2.5-Math-1.5B"):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model.config.pad_token_id = tokenizer.pad_token_id
     # depends on template
-    tokenizer.add_tokens(["<think>", "</think>", "<answer>", "</answer>"])
-    # Resize model embeddings to account for new tokens
-    model.resize_token_embeddings(len(tokenizer))
+    # tokenizer.add_tokens(["<think>", "</think>", "<answer>", "</answer>"])
+    # model.resize_token_embeddings(len(tokenizer))
     model = model.to(device)
     model.train()
     return model, tokenizer
@@ -245,6 +248,7 @@ def get_dataset_set(
     prompt_template_path: str = "src/prompts/r1_zero.prompt",
     dataset: str = "gsm8k",
     subset: str = "train",  # train | test
+    return_raw: bool = False,
 ):
     with open(prompt_template_path, "r") as f:
         prompt_template = f.read().strip()
@@ -252,7 +256,7 @@ def get_dataset_set(
     with open(f"data/{dataset}/{subset}.jsonl", "r") as f:
         dataset = [json.loads(line.strip()) for line in f]
 
-    prompts, outputs = [], []
+    prompts, outputs, ground_truths = [], [], []
     for item in dataset:
         question = item["question"]
         thinking = item["answer"]
@@ -261,27 +265,59 @@ def get_dataset_set(
         output = f"{thinking}</think><answer>{gt_answer}</answer>"
         prompts.append(prompt)
         outputs.append(output)
+        ground_truths.append(gt_answer)
         # could batch this, but meh
 
     tokenized = tokenize_prompt_and_output(prompts, outputs, tokenizer)
-    return (
+    output = [
         tokenized["input_ids"],
         tokenized["labels"],
         tokenized["response_mask"],
+    ]
+    if return_raw:
+        output.append((prompts, ground_truths))
+    return output
+
+
+def compute_val_loss(model, v_input_ids, v_labels, v_masks, micro_batch_size=16):
+    num = 0.0
+    den = 0
+    with torch.inference_mode():
+        for j in range(0, v_input_ids.size(0), micro_batch_size):
+            bi = v_input_ids[j : j + micro_batch_size].to(device)
+            bl = v_labels[j : j + micro_batch_size].to(device)
+            bm = v_masks[j : j + micro_batch_size].to(device)
+
+            out = get_response_log_probs(model, bi, bl, return_token_entropy=False)
+            log_probs = out["log_probs"]  # [B, T]
+            num += (-(log_probs * bm)).sum().item()  # total NLL over masked tokens
+            den += bm.sum().item()  # total masked tokens
+
+    return num / max(1, den)  # average NLL per masked token
+
+
+def compute_reasoning_val_loss(llm, prompts, ground_truths):
+    sampling_params = SamplingParams(
+        temperature=0.0,
+        top_p=1.0,
+        max_tokens=1024,
+        stop=["</answer>"],
+        include_stop_str_in_output=True,
     )
+    results = evaluate_model(llm, sampling_params, prompts, ground_truths)
+    return compute_eval_stats(results, False)
 
 
-# gradient clipping with value 1.0
 def run_sft():
-    # TODO: why not cross entropy loss here, if we are doing SFT, like just simple finetuning? it's working on dummy.py
-    # I guess is different if you are doing a cold start(?) cause the, is the same thing, just more control, need better probability foundations
     init_wandb()
     model, tokenizer = get_model_and_tokenizer()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5)
-    # eval_llm = init_vllm()
+    eval_llm = init_vllm(device="cuda:1")
 
     t_input_ids, t_labels, t_masks = get_dataset_set(tokenizer, subset="train")
-    v_input_ids, v_labels, v_masks = get_dataset_set(tokenizer, subset="test")  # val
+    v_input_ids, v_labels, v_masks, (val_prompts, val_gt) = get_dataset_set(
+        tokenizer, subset="test", return_raw=True
+    )
 
     micro_batch_size = 16
     gradient_accumulation_steps = 4
@@ -291,63 +327,109 @@ def run_sft():
     batch_loss = 0
     batch_entropy = 0
     train_loss = 0
-
-    microbatch_steps = 0
     optimizer_steps = 0
 
     # epoch/step handling
     epochs = 5
-    microbatches_per_epoch = (len(t_input_ids) // micro_batch_size) + 1
+    microbatches_per_epoch = (
+        len(t_input_ids) + micro_batch_size - 1
+    ) // micro_batch_size
+    total_microbatches = microbatches_per_epoch * epochs
     indices = [i for i in range(len(t_input_ids))]
 
-    for i in range(microbatches_per_epoch * epochs):
-        batch_indices = random.choices(indices, k=micro_batch_size)
-        batch_input_ids = t_input_ids[batch_indices].to(device)
-        batch_labels = t_labels[batch_indices].to(device)
-        batch_masks = t_masks[batch_indices].to(device)
+    with tqdm(total=total_microbatches, dynamic_ncols=True) as pbar:
+        for i in range(total_microbatches):
+            current_epoch = (i // microbatches_per_epoch) + 1
+            ga_step = (i % gradient_accumulation_steps) + 1
+            pbar.set_description(f"Epoch {current_epoch}/{epochs}")
 
-        output = get_response_log_probs(model, batch_input_ids, batch_labels, True)
-        log_probs, token_entropy = output["log_probs"], output["token_entropy"]
-        loss, metadata = sft_microbatch_train_step(
-            log_probs, batch_masks, gradient_accumulation_steps
-        )
-        print(loss, metadata, i + 1)
-        batch_loss += loss
-        batch_entropy += token_entropy[batch_masks].mean().item()
-        microbatch_steps += 1
+            if i % microbatches_per_epoch == 0:
+                random.shuffle(indices)
+            # Per-epoch slice
+            epoch_i = i % microbatches_per_epoch
+            start = epoch_i * micro_batch_size
+            end = min(start + micro_batch_size, len(indices))
+            if end <= start:
+                pbar.update(1)
+                continue
+            batch_indices = indices[start:end]
+            batch_input_ids = t_input_ids[batch_indices].to(device)
+            batch_labels = t_labels[batch_indices].to(device)
+            batch_masks = t_masks[batch_indices].to(device)
 
-        if microbatch_steps % gradient_accumulation_steps == 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
-            optimizer.zero_grad()
+            output = get_response_log_probs(model, batch_input_ids, batch_labels, True)
+            log_probs, token_entropy = output["log_probs"], output["token_entropy"]
+            loss, metadata = sft_microbatch_train_step(
+                log_probs, batch_masks, gradient_accumulation_steps
+            )
+            batch_loss += loss.item()
+            batch_entropy += token_entropy[batch_masks].mean().item()
 
-            optimizer_steps += 1
-            train_loss += batch_loss
+            if (i + 1) % gradient_accumulation_steps == 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()
+                optimizer.zero_grad()
 
-            wandb.log(
-                {
-                    "train/batch_loss": batch_loss,
-                    "train/loss": train_loss / optimizer_steps,
-                    "train/avg_token_entropy": batch_entropy
-                    / gradient_accumulation_steps,
-                },
+                optimizer_steps += 1
+                train_loss += batch_loss
+
+                wandb.log(
+                    {
+                        "train/batch_loss": batch_loss,
+                        "train/loss": train_loss / optimizer_steps,
+                        "train/avg_token_entropy": batch_entropy
+                        / gradient_accumulation_steps,
+                        "train_step": optimizer_steps,
+                    },
+                    step=optimizer_steps,
+                )
+                batch_loss = 0.0
+                batch_entropy = 0.0
+
+            avg_train_loss = (
+                (train_loss / optimizer_steps) if optimizer_steps > 0 else 0.0
+            )
+            pbar.set_postfix(
+                train_loss=f"{avg_train_loss:.4f}",
+                epoch=current_epoch,
+                ga=f"{ga_step}/{gradient_accumulation_steps}",
                 step=optimizer_steps,
             )
-            batch_loss = 0
-            batch_entropy = 0
+            pbar.update(1)
 
-        # if i % 500 == 0:
-        #     with torch.inference_mode():
-        #         load_policy_into_vllm_instance(model, eval_llm)
-        #         indices = random.choice()
+            # when i == 0, both will trigger just to understand the baseline
+            if i % 100 == 0:
+                val_loss = compute_val_loss(
+                    model, v_input_ids, v_labels, v_masks, micro_batch_size
+                )
+                # should use also seq based val loss, but do token just to see
+                # TODO: also doesn't matter this type of loss, cause we wanna check formatting and
+                # - why does it matter for SFT? I guess it's all we can do to try to insert the reward of predicting the right response, otherwise is RL
+                wandb.log(
+                    {"eval/loss": val_loss, "eval_step": optimizer_steps},
+                    step=optimizer_steps,
+                )
+
+            if i % 200 == 0:
+                with torch.inference_mode():
+                    load_policy_into_vllm_instance(model, eval_llm)
+                    format_accuracy, answer_accuracy, overall_accuracy = (
+                        compute_reasoning_val_loss(eval_llm, val_prompts, val_gt)
+                    )
+                    wandb.log(
+                        {
+                            "eval/format_accuracy": format_accuracy,
+                            "eval/answer_accuracy": answer_accuracy,
+                            "eval/overall_accuracy": overall_accuracy,
+                            "eval_step": optimizer_steps,
+                        },
+                        step=optimizer_steps,
+                    )
 
 
 if __name__ == "__main__":
     run_sft()
-    # TODO: test the model first on gsm8k val without training
-    # TODO: eval loop every few hundered steps
     # TODO: learning rate tuning, and batch size, how much memory is being used, cos lr schedule
-    # TODO: validate the think, answer tags in the responses
     # TODO: saving the model
     # TODO: making a full run, can you get >20%? results ~ what about loss per token, how that affects
     # TODO: make it easy to test other datasets

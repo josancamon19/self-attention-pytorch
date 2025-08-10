@@ -1,6 +1,7 @@
 from vllm import LLM, SamplingParams
 from src.drgrpo_grader import r1_zero_reward_fn
 import json
+from tqdm.auto import tqdm
 
 sampling_params = SamplingParams(
     temperature=1.0,
@@ -26,7 +27,7 @@ sampling_params = SamplingParams(
 # Task 1, write a script to evaluate qwen 2.5 Math 1.5B zero shto performance on the dataset
 
 
-def evaluate_model(
+def evaluate_model_against_dataset(
     model: str = "Qwen/Qwen2.5-Math-1.5B",
     dataset_path: str = "data/gsm8k/test.jsonl",
     prompt_template_path: str = "src/prompts/r1_zero.prompt",
@@ -53,15 +54,29 @@ def evaluate_model(
 
     # Generate responses
     print(f"Evaluating {len(prompts)} examples...")
+    results = evaluate_model(llm, sampling_params, prompts, ground_truths)
+    compute_eval_stats(results)
+
+
+def evaluate_model(llm, sampling_params, prompts, ground_truths):
     outputs = llm.generate(prompts, sampling_params)
 
     # Evaluate responses
     results = []
-    for output, gt in zip(outputs, ground_truths):
+    for output, gt in tqdm(
+        list(zip(outputs, ground_truths)),
+        total=len(ground_truths),
+        desc="Scoring",
+        dynamic_ncols=True,
+        disable=True,
+    ):
         response = output.outputs[0].text
         reward_result = r1_zero_reward_fn(response, gt, fast=True)
         results.append(reward_result)
+    return results
 
+
+def compute_eval_stats(results, print_results: bool = True):
     # Calculate statistics
     total_examples = len(results)
     format_correct = sum(1 for r in results if r["format_reward"] > 0)
@@ -71,13 +86,15 @@ def evaluate_model(
     format_accuracy = format_correct / total_examples * 100
     answer_accuracy = answer_correct / total_examples * 100
     overall_accuracy = overall_correct / total_examples * 100
+    if not print_results:
+        return format_accuracy, answer_accuracy, overall_accuracy
 
     # Print statistics
     print("\n" + "=" * 50)
     print("EVALUATION RESULTS")
     print("=" * 50)
-    print(f"Model: {model}")
-    print(f"Dataset: {dataset_path}")
+    # print(f"Model: {model}")
+    # print(f"Dataset: {dataset_path}")
     print(f"Total examples: {total_examples}")
     print("-" * 50)
     print(
@@ -90,15 +107,16 @@ def evaluate_model(
         f"Overall accuracy: {overall_correct}/{total_examples} ({overall_accuracy:.2f}%)"
     )
     print("=" * 50)
+    return format_accuracy, answer_accuracy, overall_accuracy
 
 
-if __name__ == "__main__":
-    evaluate_model()
-    # Model: Qwen/Qwen2.5-Math-1.5B
-    # Dataset: data/gsm8k/test.jsonl
-    # Total examples: 1319
-    # --------------------------------------------------
-    # Format accuracy: 258/1319 (19.56%)
-    # Answer accuracy: 32/1319 (2.43%)
-    # Overall accuracy: 32/1319 (2.43%)
-    # ==================================================
+# if __name__ == "__main__":
+#     evaluate_model()
+# Model: Qwen/Qwen2.5-Math-1.5B
+# Dataset: data/gsm8k/test.jsonl
+# Total examples: 1319
+# --------------------------------------------------
+# Format accuracy: 258/1319 (19.56%)
+# Answer accuracy: 32/1319 (2.43%)
+# Overall accuracy: 32/1319 (2.43%)
+# ==================================================
