@@ -10,9 +10,7 @@ import random
 from torch import Tensor
 from tqdm import tqdm
 from vllm.sampling_params import SamplingParams
-
-# from src.drgrpo_grader import r1_zero_reward_fn
-from src.eval import evaluate_model, compute_eval_stats
+from src.a_eval import evaluate_model, compute_eval_stats
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

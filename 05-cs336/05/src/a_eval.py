@@ -3,14 +3,6 @@ from src.drgrpo_grader import r1_zero_reward_fn
 import json
 from tqdm.auto import tqdm
 
-sampling_params = SamplingParams(
-    temperature=1.0,
-    top_p=1.0,
-    max_tokens=1024,
-    stop=["</answer>"],
-    include_stop_str_in_output=True,
-)
-
 
 # • Qwen 2.5 Math 1.5B Base (for reasoning experiments):
 # /data/a5-alignment/models/Qwen2.5-Math-1.5B
@@ -31,6 +23,7 @@ def evaluate_model_against_dataset(
     model: str = "Qwen/Qwen2.5-Math-1.5B",
     dataset_path: str = "data/gsm8k/test.jsonl",
     prompt_template_path: str = "src/prompts/r1_zero.prompt",
+    sampling_temperature: float = 0.0,
 ):
     llm = LLM(model=model)
 
@@ -54,6 +47,13 @@ def evaluate_model_against_dataset(
 
     # Generate responses
     print(f"Evaluating {len(prompts)} examples...")
+    sampling_params = SamplingParams(
+        temperature=sampling_temperature,
+        top_p=1.0,
+        max_tokens=1024,
+        stop=["</answer>"],
+        include_stop_str_in_output=True,
+    )
     results = evaluate_model(llm, sampling_params, prompts, ground_truths)
     compute_eval_stats(results)
 
@@ -110,8 +110,8 @@ def compute_eval_stats(results, print_results: bool = True):
     return format_accuracy, answer_accuracy, overall_accuracy
 
 
-# if __name__ == "__main__":
-#     evaluate_model()
+if __name__ == "__main__":
+    evaluate_model_against_dataset()
 # Model: Qwen/Qwen2.5-Math-1.5B
 # Dataset: data/gsm8k/test.jsonl
 # Total examples: 1319
