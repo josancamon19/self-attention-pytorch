@@ -5,9 +5,10 @@
 # - RL can most times even with awesome sft data, find better policies
 # ~ not for this model sizes, the 2 processes will be treated separately
 
+import pdb
 import torch
-from torch import Tensor
 import random
+from torch import Tensor
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -83,7 +84,16 @@ def get_response_log_probs(
     labels: torch.Tensor,
     return_token_entropy: bool = False,
 ) -> dict[str, torch.Tensor]:
-    logits = model(input_ids).logits
+    # Build attention mask from model pad token id if available
+    pad_id = getattr(model.config, "pad_token_id", None)
+    if pad_id is not None:
+        # one thing is the loss padding, and the attention padding, as I need static shapes for batching
+        # padding was added manually in the encode func above, thus we need to retrieve that attn mask now, to avoid computing attn
+        # on dumb tokens
+        attention_mask = (input_ids != pad_id).to(input_ids.device)
+        logits = model(input_ids=input_ids, attention_mask=attention_mask).logits
+    else:
+        logits = model(input_ids=input_ids).logits
     out_log_probs = torch.log_softmax(logits, dim=-1)
     log_probs = torch.gather(out_log_probs, dim=-1, index=labels.unsqueeze(-1))
 
@@ -109,19 +119,30 @@ def sft_microbatch_train_step(
     gradient_accumulation_steps: int,
     normalize_constant: int | None = 1.0,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-    # loss is for optimizing the maximum likelihood estimation, so we do - log likelihood, which is sum of sum(p * logp)
-    loss = -masked_normalize(
+    loss_per_sequence = -masked_normalize(
         policy_log_probs, response_mask, dim=-1, normalize_constant=normalize_constant
-    )
+    )  # [-4.4235,  2.0203]
+    # non padding tokens per sequence
 
-    loss = loss.mean()
+    # Correct ? ❌
+    # # how much of the loss to attribute to each sequence given how many non padded tokens it has # [0.6, 0.8]
+    # tokens_per_sequence = response_mask.sum(dim=-1).clamp_min(1) # 6,8
+    # valid_tokens_ratio_per_seq = tokens_per_sequence / policy_log_probs.shape[-1]
+    # # correctly attribute loss per sequence
+    # loss = loss_per_sequence * valid_tokens_ratio_per_seq # [-2.6541,  1.6163]
+    # loss = loss.mean()  # avg loss per sequence # -0.5189
+    # pdb.set_trace()
+    # NVM, loss of a microbatch is a lost per sequence avg, we are already ignoring padding on loss_per_sequence, thus this ratio doesn't make sense
+
+    # Passes the test ✅ but is wrong? = this one means we are attributing loss to padding tokens as well?
+    loss = loss_per_sequence.mean()  # avg loss per sequence # -1.2016
+
+    # we'd do this same at batch level, so this portion is 1/nth of total loss of a batch
     scaled_loss = loss / gradient_accumulation_steps
     scaled_loss.backward()
     metadata = {
-        "loss": loss.item(),  # Unscaled loss for logging
+        "avg_loss_per_sequence": loss.item(),
         "num_masked_tokens": response_mask.sum().item(),
-        "sequence_length": policy_log_probs.shape[-1],
-        "batch_size": policy_log_probs.shape[0] if policy_log_probs.dim() > 1 else 1,
     }
     return (scaled_loss, metadata)
 
@@ -193,7 +214,7 @@ def load_policy_into_vllm_instance(policy: PreTrainedModel, llm: LLM):
 
 def init_wandb():
     # Setup wandb metrics
-    wandb.init("josancamon19", "assignment-05")
+    wandb.init("josancamon19-cifrato", "assignment-05")
     wandb.define_metric("train_step")  # the x‑axis for training
     wandb.define_metric("eval_step")  # the x‑axis for evaluation
     # everything that starts with train/ is tied to train_step
@@ -202,22 +223,20 @@ def init_wandb():
     wandb.define_metric("eval/*", step_metric="eval_step")
 
 
-def get_model_and_tokenizer(model: str = "Qwen/Qwen2.5-Math-1.5B"):
+def get_model_and_tokenizer(model_name: str = "Qwen/Qwen2.5-Math-1.5B"):
     model = AutoModelForCausalLM.from_pretrained(
-        model,
+        model_name,
         torch_dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
     )
-    tokenizer = AutoTokenizer.from_pretrained(model)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model.config.pad_token_id = tokenizer.pad_token_id
     # depends on template
-    tokenizer.add_special_tokens(
-        {
-            "think_start_tag": "<think>",
-            "think_closing_tag": "</think>",
-            "answer_start_tag": "<answer>",
-            "answer_closing_tag": "</answer>",
-        }
-    )
+    tokenizer.add_tokens(["<think>", "</think>", "<answer>", "</answer>"])
+    # Resize model embeddings to account for new tokens
+    model.resize_token_embeddings(len(tokenizer))
+    model = model.to(device)
+    model.train()
     return model, tokenizer
 
 
@@ -233,7 +252,7 @@ def get_dataset_set(
     with open(f"data/{dataset}/{subset}.jsonl", "r") as f:
         dataset = [json.loads(line.strip()) for line in f]
 
-    prompts, outputs = []
+    prompts, outputs = [], []
     for item in dataset:
         question = item["question"]
         thinking = item["answer"]
@@ -258,58 +277,76 @@ def run_sft():
     # I guess is different if you are doing a cold start(?) cause the, is the same thing, just more control, need better probability foundations
     init_wandb()
     model, tokenizer = get_model_and_tokenizer()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5)
     # eval_llm = init_vllm()
-
-    model.to(device)
 
     t_input_ids, t_labels, t_masks = get_dataset_set(tokenizer, subset="train")
     v_input_ids, v_labels, v_masks = get_dataset_set(tokenizer, subset="test")  # val
 
-    batch_size = 16
-    learning_rate = 1e-5
+    micro_batch_size = 16
     gradient_accumulation_steps = 4
-    normalize_constant = 1.0
-    # effective batch size = 16 * 4
-
-    optimizer = torch.optim.AdamW(model.parameters(), learning_rate)
+    # effective_batch_size = micro_batch_size * gradient_accumulation_steps # 16*4 = 64
 
     # logging
+    batch_loss = 0
+    batch_entropy = 0
     train_loss = 0
-    avg_token_entropy = 0
 
-    for i in range(0, len(t_input_ids), batch_size):
-        j = min(len(t_input_ids), i + batch_size)
-        batch_input_ids = t_input_ids[i:j].to(device)
-        batch_labels = t_labels[i:j].to(device)
-        batch_masks = t_masks[i:j].to(device)
+    microbatch_steps = 0
+    optimizer_steps = 0
+
+    # epoch/step handling
+    epochs = 5
+    microbatches_per_epoch = (len(t_input_ids) // micro_batch_size) + 1
+    indices = [i for i in range(len(t_input_ids))]
+
+    for i in range(microbatches_per_epoch * epochs):
+        batch_indices = random.choices(indices, k=micro_batch_size)
+        batch_input_ids = t_input_ids[batch_indices].to(device)
+        batch_labels = t_labels[batch_indices].to(device)
+        batch_masks = t_masks[batch_indices].to(device)
 
         output = get_response_log_probs(model, batch_input_ids, batch_labels, True)
         log_probs, token_entropy = output["log_probs"], output["token_entropy"]
         loss, metadata = sft_microbatch_train_step(
-            log_probs,
-            t_masks[i:j],
-            gradient_accumulation_steps,
-            normalize_constant,
+            log_probs, batch_masks, gradient_accumulation_steps
         )
-        train_loss += loss.item()
-        avg_token_entropy += token_entropy[batch_masks].mean().item()
+        print(loss, metadata, i + 1)
+        batch_loss += loss
+        batch_entropy += token_entropy[batch_masks].mean().item()
+        microbatch_steps += 1
 
-        if i + 1 % gradient_accumulation_steps == 0:
+        if microbatch_steps % gradient_accumulation_steps == 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             optimizer.zero_grad()
 
-        if i + 1 % 25 == 0:
+            optimizer_steps += 1
+            train_loss += batch_loss
+
             wandb.log(
                 {
-                    "train/loss": train_loss / i,
-                    "train/avg_token_entropy": avg_token_entropy / i,
-                    "train_step": i,
+                    "train/batch_loss": batch_loss,
+                    "train/loss": train_loss / optimizer_steps,
+                    "train/avg_token_entropy": batch_entropy
+                    / gradient_accumulation_steps,
                 },
-                step=i,
+                step=optimizer_steps,
             )
+            batch_loss = 0
+            batch_entropy = 0
 
         # if i % 500 == 0:
         #     with torch.inference_mode():
         #         load_policy_into_vllm_instance(model, eval_llm)
         #         indices = random.choice()
+
+
+if __name__ == "__main__":
+    run_sft()
+    # TODO: test the model first on gsm8k val without training
+    # TODO: eval loop every few hundered steps
+    # TODO: learning rate tuning, and batch size, how much memory is being used, cos lr schedule
+    # TODO: validate the think, answer tags in the responses
+    # TODO: saving the model
+    # TODO: making a full run, can you get >20%? results 
