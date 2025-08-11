@@ -71,8 +71,7 @@ def load_mmlu_csv(csv_path):
 
 
 def mmlu_baseline(
-    # model: str = "meta-llama/Llama-3.1-8B",
-    model: str = "Qwen/Qwen3-8B-Base",
+    model: str = "meta-llama/Llama-3.1-8B",
     data_dir: str = "data/mmlu/dev",
     prompt_template_path: str = "src/prompts/zero_shot_system_prompt.prompt",
 ):
@@ -276,7 +275,7 @@ Please evaluate which response is better based on helpfulness, accuracy, clarity
 
 
 def alpaca_eval_baseline(
-    target_model: str = "Qwen/Qwen3-8B-Base",
+    target_model: str = "meta-llama/Llama-3.1-8B",
     evaluator_model: str = "Qwen/Qwen3-14B",
     dataset_path: str = "data/alpaca_eval/alpaca_eval.jsonl",
     sampling_temperature: float = 0.0,
@@ -483,7 +482,7 @@ def create_vllm_with_fallback(model_name, device="cuda:0", fallback_device="cuda
 
 
 def safety_baseline(
-    target_model: str = "Qwen/Qwen3-8B-Base",
+    target_model: str = "meta-llama/Llama-3.1-8B",
     annotator_model: str = "Qwen/Qwen3-14B",
     dataset_path: str = "data/simple_safety_tests/simple_safety_tests.csv",
     sampling_temperature: float = 0.0,
@@ -680,16 +679,16 @@ def safety_baseline(
 
 if __name__ == "__main__":
     # Run evaluations
-    # print("Running MMLU baseline...")
-    # mmlu_results = mmlu_baseline()
+    print("Running MMLU baseline...")
+    mmlu_results = mmlu_baseline()
 
-    # print("Running GSM8K baseline...")
-    # gsm8k_results = gsm8k_baseline()
+    print("Running GSM8K baseline...")
+    gsm8k_results = gsm8k_baseline()
 
-    # print("Running Alpaca Eval baseline...")
-    # alpaca_results = alpaca_eval_baseline(
-    #     generate_responses=False, evaluate_responses=True
-    # )
+    print("Running Alpaca Eval baseline...")
+    alpaca_results = alpaca_eval_baseline(
+        generate_responses=False, evaluate_responses=True
+    )
 
     print("Running Safety baseline...")
     safety_results = safety_baseline(generate_responses=True, evaluate_responses=True)

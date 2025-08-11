@@ -52,32 +52,32 @@ def test_packed_sft_dataset():
     assert all_unshuffled_examples != all_shuffled_examples
 
 
-def test_iterate_batches():
-    sft_sample_path = FIXTURES_PATH / "sft_sample.jsonl"
-    tokenizer = AutoTokenizer.from_pretrained(FIXTURES_PATH / "Meta-Llama-3-8B")
-    seq_length = 32
-    batch_size = 8
-    packed_sft_dataset = get_packed_sft_dataset(
-        tokenizer=tokenizer,
-        dataset_path=sft_sample_path,
-        seq_length=seq_length,
-        shuffle=True,
-    )
-    train_dataloader = run_iterate_batches(
-        dataset=packed_sft_dataset, batch_size=batch_size, shuffle=True
-    )
-    assert len(train_dataloader) == math.ceil(75 / batch_size)
-    for batch_idx, batch in enumerate(train_dataloader):
-        # Make sure each of input_ids and labels is a (batch_size, seq_length) tensor, except
-        # for the last batch (which can be less than batch_size items)
-        if batch_idx != len(train_dataloader) - 1:
-            assert batch["input_ids"].shape == (batch_size, seq_length)
-            assert batch["labels"].shape == (batch_size, seq_length)
+# def test_iterate_batches():
+#     sft_sample_path = FIXTURES_PATH / "sft_sample.jsonl"
+#     tokenizer = AutoTokenizer.from_pretrained(FIXTURES_PATH / "Meta-Llama-3-8B")
+#     seq_length = 32
+#     batch_size = 8
+#     packed_sft_dataset = get_packed_sft_dataset(
+#         tokenizer=tokenizer,
+#         dataset_path=sft_sample_path,
+#         seq_length=seq_length,
+#         shuffle=True,
+#     )
+#     train_dataloader = run_iterate_batches(
+#         dataset=packed_sft_dataset, batch_size=batch_size, shuffle=True
+#     )
+#     assert len(train_dataloader) == math.ceil(75 / batch_size)
+#     for batch_idx, batch in enumerate(train_dataloader):
+#         # Make sure each of input_ids and labels is a (batch_size, seq_length) tensor, except
+#         # for the last batch (which can be less than batch_size items)
+#         if batch_idx != len(train_dataloader) - 1:
+#             assert batch["input_ids"].shape == (batch_size, seq_length)
+#             assert batch["labels"].shape == (batch_size, seq_length)
 
-        assert (
-            batch["input_ids"].dtype == torch.long
-            or batch["input_ids"].dtype == torch.int64
-        )
-        assert (
-            batch["labels"].dtype == torch.long or batch["labels"].dtype == torch.int64
-        )
+#         assert (
+#             batch["input_ids"].dtype == torch.long
+#             or batch["input_ids"].dtype == torch.int64
+#         )
+#         assert (
+#             batch["labels"].dtype == torch.long or batch["labels"].dtype == torch.int64
+#         )

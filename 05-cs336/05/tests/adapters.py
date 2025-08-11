@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Literal
 
+from src.f_part2_sft import UltraChatDataset
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset
@@ -353,7 +354,7 @@ def get_packed_sft_dataset(
         "input_ids" contains the token IDs for the language modeling inputs, and "labels" contains
         the token IDs for the language modeling labels.
     """
-    raise NotImplementedError
+    return UltraChatDataset(tokenizer, dataset_path, seq_length, shuffle)
 
 
 def run_iterate_batches(
