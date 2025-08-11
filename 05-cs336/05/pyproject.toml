@@ -5,7 +5,7 @@ description = "CS 336 Spring 2025 Assignment 5: Alignment"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"  # Python 3.13 not yet supported for some deps
 dependencies = [
-    "accelerate>=1.5.2",
+    "accelerate>=1.10.0",
     "alpaca-eval",
     "flash-attn==2.7.4.post1",
     "jupyter>=1.1.1",
@@ -15,9 +15,9 @@ dependencies = [
     "pytest>=8.3.5",
     "torch",
     "tqdm>=4.67.1",
-    "transformers>=4.50.0",
+    "transformers>=4.55.0",
     "typer>=0.15.4",
-    "vllm==0.7.2",
+    "vllm==0.10.0",
     "wandb>=0.19.8",
     "xopen>=2.0.2",
 ]

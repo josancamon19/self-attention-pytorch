@@ -438,4 +438,3 @@ if __name__ == "__main__":
     # TODO: making a full run, can you get >20%? results ~ what about loss per token, how that affects
     # TODO: make it easy to test other datasets
     # TODO: how was this 2.5B model trained? hasn't it seen all math datasets already?
-    # TODO: derive cross entropy loss, and nll
