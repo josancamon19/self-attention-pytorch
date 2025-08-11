@@ -91,7 +91,7 @@ def get_response_log_probs(
     if pad_id is not None:
         # one thing is the loss padding, and the attention padding, as I need static shapes for batching
         # padding was added manually in the encode func above, thus we need to retrieve that attn mask now, to avoid computing attn
-        # on dumb tokens
+        # on pad tokens
         attention_mask = (input_ids != pad_id).to(input_ids.device)
         logits = model(input_ids=input_ids, attention_mask=attention_mask).logits
     else:
@@ -294,10 +294,16 @@ def compute_val_loss(model, v_input_ids, v_labels, v_masks, micro_batch_size=16)
     return num / max(1, den)  # average NLL per masked token
 
 
-def compute_reasoning_val_loss(llm, prompts, ground_truths):
+def compute_reasoning_val_loss(
+    llm,
+    prompts,
+    ground_truths,
+    temperature: float = 0.0,
+    top_p: float = 0.0,
+):
     sampling_params = SamplingParams(
-        temperature=0.0,
-        top_p=1.0,
+        temperature=temperature,
+        top_p=top_p,
         max_tokens=1024,
         stop=["</answer>"],
         include_stop_str_in_output=True,
