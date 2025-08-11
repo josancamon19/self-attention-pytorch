@@ -91,7 +91,7 @@ def get_response_log_probs(
     if pad_id is not None:
         # one thing is the loss padding, and the attention padding, as I need static shapes for batching
         # padding was added manually in the encode func above, thus we need to retrieve that attn mask now, to avoid computing attn
-        # on pad tokens
+        # on dumb tokens
         attention_mask = (input_ids != pad_id).to(input_ids.device)
         logits = model(input_ids=input_ids, attention_mask=attention_mask).logits
     else:
