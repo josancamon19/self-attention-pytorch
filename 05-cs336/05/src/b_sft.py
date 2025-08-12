@@ -268,13 +268,8 @@ def get_dataset_set(
 
     prompts, outputs, ground_truths = [], [], []
 
-    # Load prompt template only for datasets that need it
-    prompt_template = None
-    if dataset == EvalDataset.GSM8K or (
-        dataset == EvalDataset.MATH and subset != "train"
-    ):
-        with open(prompt_template_path, "r") as f:
-            prompt_template = f.read().strip()
+    with open(prompt_template_path, "r") as f:
+        prompt_template = f.read().strip()
 
     for item in dataset_items:
         if dataset == EvalDataset.MATH:
@@ -314,6 +309,7 @@ def get_dataset_set(
     # print(f"Average output length: {avg_output_len:.2f}, max: {max_output_len}")
     # print(f"Max prompt+output length: {max_total_len}")
     # print(f"Number with prompt+output length > 2000: {over_2000}")
+    # print(f"Number of items: {len(dataset_items)}")
     tokenized = tokenize_prompt_and_output(prompts, outputs, tokenizer)
     output = [
         tokenized["input_ids"],
