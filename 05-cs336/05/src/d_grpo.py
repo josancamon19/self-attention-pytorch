@@ -192,9 +192,6 @@ def log_step(
         "generation/avg_length": avg_response_length,
         "generation/min_length": response_lengths.min().item(),
         "generation/max_length": response_lengths.max().item(),
-        # Training progress
-        "train/rollout_step": i,
-        "train/optimizer_step": optimizer_steps,
     }
 
     # Add grpo_clip specific metrics
@@ -268,27 +265,45 @@ def run_validation(
             wandb.log(val_log_dict, step=optimizer_steps)
 
             # Log a few example generations
-            if i % (log_eval_every * 1) == 0:
-                examples_table = wandb.Table(
-                    columns=[
-                        "prompt",
-                        "response",
-                        "ground_truth",
-                        "reward",
-                        "format_reward",
-                        "answer_reward",
-                    ]
+            examples_table = wandb.Table(
+                columns=[
+                    "prompt",
+                    "response",
+                    "ground_truth",
+                    "reward",
+                    "format_reward",
+                    "answer_reward",
+                ]
+            )
+            
+            print(f"\n{'='*80}")
+            print(f"VALIDATION EXAMPLES - Step {i} (Optimizer Step {optimizer_steps})")
+            print(f"{'='*80}")
+            
+            for idx in range(min(5, len(val_responses))):
+                # Convert any tensor values to Python types for wandb
+                reward_val = float(val_rewards[idx]) if hasattr(val_rewards[idx], 'item') else val_rewards[idx]
+                format_reward_val = float(val_format_rewards[idx]) if hasattr(val_format_rewards[idx], 'item') else val_format_rewards[idx]
+                answer_reward_val = float(val_answer_rewards[idx]) if hasattr(val_answer_rewards[idx], 'item') else val_answer_rewards[idx]
+                
+                examples_table.add_data(
+                    val_batch_prompts[idx],
+                    val_responses[idx],
+                    val_batch_gt[idx],
+                    reward_val,
+                    format_reward_val,
+                    answer_reward_val,
                 )
-                for idx in range(min(5, len(val_responses))):
-                    examples_table.add_data(
-                        val_batch_prompts[idx],
-                        val_responses[idx],
-                        val_batch_gt[idx],
-                        val_rewards[idx],
-                        val_format_rewards[idx],
-                        val_answer_rewards[idx],
-                    )
-                wandb.log({"eval/examples": examples_table}, step=optimizer_steps)
+                
+                # Console logging for each example
+                print(f"\n--- Example {idx + 1} ---")
+                print(f"Prompt: {val_batch_prompts[idx][:200]}{'...' if len(val_batch_prompts[idx]) > 200 else ''}")
+                print(f"Response: {val_responses[idx][:300]}{'...' if len(val_responses[idx]) > 300 else ''}")
+                print(f"Ground Truth: {val_batch_gt[idx][:100]}{'...' if len(val_batch_gt[idx]) > 100 else ''}")
+                print(f"Rewards → Total: {reward_val:.3f}, Format: {format_reward_val:.3f}, Answer: {answer_reward_val:.3f}")
+            
+            print(f"{'='*80}\n")
+            wandb.log({"eval/examples": examples_table}, step=optimizer_steps)
 
 
 def compute_old_log_probs(
@@ -361,11 +376,21 @@ def obtain_step_grouped_rollouts(
     indices,
     n_prompts_per_rollout_batch,
     llm,
-    sampling_params,
+    sampling_temperature,
+    sampling_min_tokens,
+    sampling_max_tokens,
     group_size,
     prompts,
     ground_truths,
 ):
+    sampling_params = SamplingParams(
+        temperature=sampling_temperature,
+        min_tokens=sampling_min_tokens,
+        max_tokens=sampling_max_tokens,
+        stop=["</answer>"],
+        include_stop_str_in_output=True,
+        n=group_size,
+    )
     batch_indices = random.sample(indices, k=n_prompts_per_rollout_batch)
     batch_prompts = [prompts[j] for j in batch_indices]
     req_outputs = llm.generate(batch_prompts, sampling_params)
@@ -400,7 +425,6 @@ def train(
         vllm_gpu_memory_utilization = 0.6
         # Reduce micro batch size and increase gradient accumulation to maintain effective batch size
         adjusted_gradient_accumulation_steps = gradient_accumulation_steps * 2
-        print("Single GPU detected: Using memory-efficient settings")
         print(
             f"Adjusted gradient_accumulation_steps: {gradient_accumulation_steps} -> {adjusted_gradient_accumulation_steps}"
         )
@@ -409,15 +433,6 @@ def train(
         vllm_gpu_memory_utilization = 0.85
         adjusted_gradient_accumulation_steps = gradient_accumulation_steps
         print("Multi-GPU detected: Using standard settings")
-
-    sampling_params = SamplingParams(
-        temperature=sampling_temperature,
-        min_tokens=sampling_min_tokens,
-        max_tokens=sampling_max_tokens,
-        stop=["</answer>"],
-        include_stop_str_in_output=True,
-        n=group_size,
-    )
 
     # Logging frequencies
     log_train_every: int = 1  # Log training metrics every optimizer step
@@ -473,7 +488,9 @@ def train(
             indices,
             n_prompts_per_rollout_batch,
             llm,
-            sampling_params,
+            sampling_temperature,
+            sampling_min_tokens,
+            sampling_max_tokens,
             group_size,
             t_prompts,
             t_gt,
