@@ -24,6 +24,8 @@ from src.b_sft import (
     sft_microbatch_train_step,
 )
 
+from src.e_part2_baselines import extract_answer_letter, extract_final_number
+
 
 def run_tokenize_prompt_and_output(
     prompt_strs: list[str],
@@ -403,7 +405,7 @@ def run_parse_mmlu_response(
         str (one of "A", "B", "C", or "D") if the model output can be parsed into a prediction,
         else None.
     """
-    raise NotImplementedError
+    return extract_answer_letter(model_output)
 
 
 def run_parse_gsm8k_response(
@@ -420,7 +422,7 @@ def run_parse_gsm8k_response(
         str with the predicted numeric answer if the model output can be parsed into a prediction,
         else None.
     """
-    raise NotImplementedError
+    return extract_final_number(model_output)
 
 
 def run_compute_per_instance_dpo_loss(

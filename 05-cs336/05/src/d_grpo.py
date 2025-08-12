@@ -1,4 +1,5 @@
 import random
+from torch._tensor import Tensor
 from typing import Any, Literal
 import numpy as np
 import wandb
@@ -83,7 +84,7 @@ def compute_naive_policy_gradient_loss(
     policy_log_probs: torch.Tensor,
 ) -> torch.Tensor:
     # pdb.set_trace()
-    return -raw_rewards_or_advantages.unsqueeze(-1) * policy_log_probs  # .unsqueeze(-1)
+    return -raw_rewards_or_advantages * policy_log_probs  # .unsqueeze(-1)
 
 
 def compute_grpo_clip_loss(
@@ -92,11 +93,11 @@ def compute_grpo_clip_loss(
     old_log_probs: torch.Tensor,
     cliprange: float,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-    ratio = torch.exp(policy_log_probs - old_log_probs)
+    ratio: Tensor = torch.exp(policy_log_probs - old_log_probs)
     clipped_ratio = torch.clamp(ratio, 1 - cliprange, 1 + cliprange)
-    unclipped_loss = -ratio * advantages
-    clipped_loss = -clipped_ratio * advantages
-    output = torch.minimum(unclipped_loss, clipped_loss)
+    unclipped_loss = ratio * advantages
+    clipped_loss = clipped_ratio * advantages
+    output = -torch.minimum(unclipped_loss, clipped_loss)
 
     # Compute relevant stats
     clipped_mask = ratio != clipped_ratio
