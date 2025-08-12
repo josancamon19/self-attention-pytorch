@@ -7,12 +7,23 @@
 
 import torch
 import random
+import enum
 from torch import Tensor
 from tqdm import tqdm
 from vllm.sampling_params import SamplingParams
 from src.a_eval import evaluate_model, compute_eval_stats
+import os
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+os.makedirs(".checkpoints", exist_ok=True)
+
+
+class EvalDataset(enum.Enum):
+    GSM8K = "gsm8k"
+    MATH = "math"
+
+
+datasets = {"gsm8k": "data/gsm8k/test.jsonl", "math": "data/math/validation.jsonl"}
 
 
 # This could prob be more efficient
@@ -177,7 +188,7 @@ import json  # noqa: E402
 
 def init_vllm(
     model_id: str = "Qwen/Qwen2.5-Math-1.5B",
-    device: str = "cuda",
+    device: str = "cuda:1",
     seed: int = 42,
     gpu_memory_utilization: float = 0.85,
 ):
@@ -195,6 +206,7 @@ def init_vllm(
         "vllm.worker.worker.Worker._assert_memory_footprint_increased_during_profiling",
         return_value=None,
     )
+
     with world_size_patch, profiling_patch:
         return LLM(
             model=model_id,
@@ -230,6 +242,7 @@ def get_model_and_tokenizer(model_name: str = "Qwen/Qwen2.5-Math-1.5B"):
         model_name,
         torch_dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
+        device_map="cuda:0",
     )
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model.config.pad_token_id = tokenizer.pad_token_id
@@ -244,28 +257,63 @@ def get_model_and_tokenizer(model_name: str = "Qwen/Qwen2.5-Math-1.5B"):
 def get_dataset_set(
     tokenizer,
     prompt_template_path: str = "src/prompts/r1_zero.prompt",
-    dataset: str = "gsm8k",
-    subset: str = "train",  # train | test
+    dataset: EvalDataset = EvalDataset.GSM8K,
+    subset: str = "train",  # train | test | sft (train)
     return_raw: bool = False,
 ):
-    with open(prompt_template_path, "r") as f:
-        prompt_template = f.read().strip()
+    dataset_path = f"data/{dataset.value}/{subset}.jsonl"
 
-    with open(f"data/{dataset}/{subset}.jsonl", "r") as f:
-        dataset = [json.loads(line.strip()) for line in f]
+    with open(dataset_path, "r") as f:
+        dataset_items = [json.loads(line.strip()) for line in f]
 
     prompts, outputs, ground_truths = [], [], []
-    for item in dataset:
-        question = item["question"]
-        thinking = item["answer"]
-        gt_answer = thinking.split("#### ")[-1].strip()
-        prompt = f"{prompt_template.replace('{question}', question)}"
-        output = f"{thinking}</think><answer>{gt_answer}</answer>"
-        prompts.append(prompt)
-        outputs.append(output)
-        ground_truths.append(gt_answer)
-        # could batch this, but meh
 
+    # Load prompt template only for datasets that need it
+    prompt_template = None
+    if dataset == EvalDataset.GSM8K or (
+        dataset == EvalDataset.MATH and subset != "train"
+    ):
+        with open(prompt_template_path, "r") as f:
+            prompt_template = f.read().strip()
+
+    for item in dataset_items:
+        if dataset == EvalDataset.MATH:
+            if subset == "sft":
+                if len(item["prompt"]) + len(item["response"]) > 2000:
+                    continue  # OOM
+                prompts.append(item["prompt"])
+                outputs.append(item["response"])
+                ground_truths.append(item["ground_truth"])
+            else:  # train / test
+                # probably never use this for train, but also is strange to perform validation on a different prompt? maybe not.
+                prompt = prompt_template.replace("{question}", item["problem"])
+                output = (
+                    f"nothing here matters</think><answer>{item['answer']}</answer>"
+                )
+                if len(prompt) + len(output) > 2000:
+                    continue  # OOM
+                prompts.append(prompt)
+                outputs.append(output)
+                ground_truths.append(item["answer"])
+        else:  # GSM8K
+            gt_answer = item["answer"].split("#### ")[-1].strip()
+
+            prompt = prompt_template.replace("{question}", item["question"])
+            output = f"{item['answer']}</think><answer>{gt_answer}</answer>"
+            prompts.append(prompt)
+            outputs.append(output)
+            ground_truths.append(gt_answer)
+
+    # avg_prompt_len = sum(len(p) for p in prompts) / len(prompts) if prompts else 0
+    # avg_output_len = sum(len(o) for o in outputs) / len(outputs) if outputs else 0
+    # max_prompt_len = max((len(p) for p in prompts), default=0)
+    # max_output_len = max((len(o) for o in outputs), default=0)
+    # max_total_len = max((len(p) + len(o) for p, o in zip(prompts, outputs)), default=0)
+    # over_2000 = sum(1 for p, o in zip(prompts, outputs) if len(p) + len(o) > 2000)
+    # print(f"Average prompt length: {avg_prompt_len:.2f}, max: {max_prompt_len}")
+    # print(f"Average output length: {avg_output_len:.2f}, max: {max_output_len}")
+    # print(f"Max prompt+output length: {max_total_len}")
+    # print(f"Number with prompt+output length > 2000: {over_2000}")
     tokenized = tokenize_prompt_and_output(prompts, outputs, tokenizer)
     output = [
         tokenized["input_ids"],
@@ -298,31 +346,38 @@ def compute_reasoning_val_loss(
     llm,
     prompts,
     ground_truths,
-    temperature: float = 0.0,
-    top_p: float = 0.0,
+    temperature: float = 1.0,
+    top_p: float = 1,
 ):
     sampling_params = SamplingParams(
         temperature=temperature,
         top_p=top_p,
-        max_tokens=1024,
+        max_tokens=512,
         stop=["</answer>"],
         include_stop_str_in_output=True,
     )
-    results = evaluate_model(llm, sampling_params, prompts, ground_truths)
+    indices = set(random.choices([i for i in range(len(prompts))], k=len(prompts)))
+    results = evaluate_model(
+        llm,
+        sampling_params,
+        [p for i, p in enumerate(prompts) if i in indices],
+        [gt for i, gt in enumerate(ground_truths) if i in indices],
+    )
     return compute_eval_stats(results, False)
 
 
-def run_sft():
+def run_sft(dataset: EvalDataset = EvalDataset.GSM8K):
     init_wandb()
     model, tokenizer = get_model_and_tokenizer()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5)
-    eval_llm = init_vllm(device="cuda:1")
 
-    t_input_ids, t_labels, t_masks = get_dataset_set(tokenizer, subset="train")
-    v_input_ids, v_labels, v_masks, (val_prompts, val_gt) = get_dataset_set(
-        tokenizer, subset="test", return_raw=True
+    t_input_ids, t_labels, t_masks = get_dataset_set(
+        tokenizer, dataset=dataset, subset="sft" if dataset.value == "math" else "train"
     )
-
+    v_input_ids, v_labels, v_masks, (val_prompts, val_gt) = get_dataset_set(
+        tokenizer, dataset=dataset, subset="test", return_raw=True
+    )
+    eval_llm = init_vllm()
     micro_batch_size = 16
     gradient_accumulation_steps = 4
     # effective_batch_size = micro_batch_size * gradient_accumulation_steps # 16*4 = 64
@@ -402,19 +457,17 @@ def run_sft():
             pbar.update(1)
 
             # when i == 0, both will trigger just to understand the baseline
-            if i % 100 == 0:
+            # no reasoning trace on math, so this would be meaningless
+            if dataset != EvalDataset.MATH and i % 100 == 0:
                 val_loss = compute_val_loss(
                     model, v_input_ids, v_labels, v_masks, micro_batch_size
                 )
-                # should use also seq based val loss, but do token just to see
-                # TODO: also doesn't matter this type of loss, cause we wanna check formatting and
-                # - why does it matter for SFT? I guess it's all we can do to try to insert the reward of predicting the right response, otherwise is RL
                 wandb.log(
                     {"eval/loss": val_loss, "eval_step": optimizer_steps},
                     step=optimizer_steps,
                 )
 
-            if i % 200 == 0:
+            if i % 100 == 0:
                 with torch.inference_mode():
                     load_policy_into_vllm_instance(model, eval_llm)
                     format_accuracy, answer_accuracy, overall_accuracy = (
@@ -429,12 +482,14 @@ def run_sft():
                         },
                         step=optimizer_steps,
                     )
+            if i % 100 == 0 and i > 0:  # Save every 500 steps
+                model.save_pretrained(f".checkpoints/step_{optimizer_steps}")
+                tokenizer.save_pretrained(f".checkpoints/step_{optimizer_steps}")
 
 
 if __name__ == "__main__":
-    run_sft()
+    run_sft(EvalDataset.MATH)
     # TODO: learning rate tuning, and batch size, how much memory is being used, cos lr schedule
     # TODO: saving the model
     # TODO: making a full run, can you get >20%? results ~ what about loss per token, how that affects
-    # TODO: make it easy to test other datasets
     # TODO: how was this 2.5B model trained? hasn't it seen all math datasets already?
