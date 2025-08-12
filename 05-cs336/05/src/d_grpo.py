@@ -268,7 +268,7 @@ def run_validation(
             wandb.log(val_log_dict, step=optimizer_steps)
 
             # Log a few example generations
-            if i % (log_eval_every * 2) == 0:
+            if i % (log_eval_every * 1) == 0:
                 examples_table = wandb.Table(
                     columns=[
                         "prompt",
@@ -302,7 +302,7 @@ def compute_old_log_probs(
             out = get_response_log_probs(old_policy, bi, bl, False)
             old_log_probs.append(out["log_probs"].detach())
         old_log_probs = torch.cat(old_log_probs, dim=0)
-    return
+    return old_log_probs
 
 
 def process_batch(
@@ -371,7 +371,7 @@ def obtain_step_grouped_rollouts(
     req_outputs = llm.generate(batch_prompts, sampling_params)
     responses = [o.text for ro in req_outputs for o in ro.outputs]
 
-    # needed to compute grouped rewards easily, just repeating data
+    # just repeating data, util variables
     batch_gt = [ground_truths[j] for j in batch_indices]
     prompts_rep = [p for p in batch_prompts for _ in range(group_size)]
     gt_rep = [g for g in batch_gt for _ in range(group_size)]
@@ -388,14 +388,28 @@ def train(
     epochs_per_rollout_batch: int = 1,  # On-policy
     train_batch_size: int = 256,  # On-policy
     gradient_accumulation_steps: int = 128,
-    loss_type: Literal[
-        "no_baseline",
-        "reinforce_with_baseline",
-        "grpo_clip",
-    ] = "reinforce_with_baseline",
+    loss_type: str = "reinforce_with_baseline",  # "no_baseline", "reinforce_with_baseline" "grpo_clip"
     use_std_normalization: bool = True,
-    min_lr: float = 1e-5,
+    max_lr: float = 1e-5,
 ):
+    num_gpus = torch.cuda.device_count()
+    print(f"Detected {num_gpus} GPU(s)")
+
+    if num_gpus == 1:
+        vllm_device = "cuda:0"
+        vllm_gpu_memory_utilization = 0.6
+        # Reduce micro batch size and increase gradient accumulation to maintain effective batch size
+        adjusted_gradient_accumulation_steps = gradient_accumulation_steps * 2
+        print("Single GPU detected: Using memory-efficient settings")
+        print(
+            f"Adjusted gradient_accumulation_steps: {gradient_accumulation_steps} -> {adjusted_gradient_accumulation_steps}"
+        )
+    else:
+        vllm_device = "cuda:1"
+        vllm_gpu_memory_utilization = 0.85
+        adjusted_gradient_accumulation_steps = gradient_accumulation_steps
+        print("Multi-GPU detected: Using standard settings")
+
     sampling_params = SamplingParams(
         temperature=sampling_temperature,
         min_tokens=sampling_min_tokens,
@@ -407,13 +421,13 @@ def train(
 
     # Logging frequencies
     log_train_every: int = 1  # Log training metrics every optimizer step
-    log_eval_every: int = 10  # Log validation metrics every N steps
+    log_eval_every: int = 5  # Log validation metrics every N steps
     save_checkpoint_every: int = 50  # Save model checkpoints
 
-    assert train_batch_size % gradient_accumulation_steps == 0, (
-        "train_batch_size must be divisible by gradient_accumulation_steps"
+    assert train_batch_size % adjusted_gradient_accumulation_steps == 0, (
+        "train_batch_size must be divisible by adjusted_gradient_accumulation_steps"
     )
-    micro_train_batch_size = train_batch_size // gradient_accumulation_steps
+    micro_train_batch_size = train_batch_size // adjusted_gradient_accumulation_steps
     assert rollout_batch_size % group_size == 0, (
         "rollout_batch_size must be divisible by group_size"
     )
@@ -426,7 +440,7 @@ def train(
     # with this implementation, grpo clip should only be used when off policy
     # in the off policy setting with multiple epochs of grad updates per rollout batch, it'd be wasteful to recomp old log probs for each epoch, you can reuse them
 
-    wandb.init(project="josancamon19-cifrato", name="assignment-05", config=locals())
+    wandb.init(project="assignment-05-grpo", config=locals())
     model, tokenizer = get_model_and_tokenizer()
 
     *_, (t_prompts, t_gt) = get_dataset_set(
@@ -436,9 +450,11 @@ def train(
         tokenizer, dataset=EvalDataset.MATH, subset="test", return_raw=True
     )
 
-    llm: Any = init_vllm(device="cuda:1", gpu_memory_utilization=0.85)
+    llm: Any = init_vllm(
+        device=vllm_device, gpu_memory_utilization=vllm_gpu_memory_utilization
+    )
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=min_lr, weight_decay=0.0, betas=(0.9, 0.95)
+        model.parameters(), lr=max_lr, weight_decay=0.0, betas=(0.9, 0.95)
     )
     num_optimizer_steps = n_grpo_steps * epochs_per_rollout_batch
     warmup_steps = max(50, int(0.05 * num_optimizer_steps))
@@ -498,7 +514,7 @@ def train(
                 advantages,
                 old_log_probs,
                 grpo_microbatch_train_step,
-                gradient_accumulation_steps,
+                adjusted_gradient_accumulation_steps,
                 loss_type,
             )
 
