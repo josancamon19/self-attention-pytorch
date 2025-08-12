@@ -98,7 +98,13 @@ def get_response_log_probs(
     return_token_entropy: bool = False,
 ) -> dict[str, torch.Tensor]:
     # Build attention mask from model pad token id if available
-    pad_id = getattr(model.config, "pad_token_id", None)
+    # Handle torch.compile wrapped models by accessing the original model's config
+    if hasattr(model, '_orig_mod'):
+        config = model._orig_mod.config
+    else:
+        config = model.config
+        
+    pad_id = getattr(config, "pad_token_id", None)
     if pad_id is not None:
         # one thing is the loss padding, and the attention padding, as I need static shapes for batching
         # padding was added manually in the encode func above, thus we need to retrieve that attn mask now, to avoid computing attn
@@ -221,7 +227,14 @@ def load_policy_into_vllm_instance(policy: PreTrainedModel, llm: LLM):
     """
     Copied from https://github.com/huggingface/trl/blob/22759c820867c8659d00082ba8cf004e963873c1/trl/trainer/grpo_trainer.py#L670.
     """
-    state_dict = policy.state_dict()
+    # Handle torch.compile wrapped models by accessing the original model
+    if hasattr(policy, '_orig_mod'):
+        # For torch.compile wrapped models, get state_dict from the original model
+        state_dict = policy._orig_mod.state_dict()
+    else:
+        # For non-compiled models
+        state_dict = policy.state_dict()
+        
     llm_model = llm.llm_engine.model_executor.driver_worker.model_runner.model
     llm_model.load_weights(state_dict.items())
 
@@ -247,6 +260,8 @@ def get_model_and_tokenizer(model_name: str = "Qwen/Qwen2.5-Math-1.5B"):
     # model.resize_token_embeddings(len(tokenizer))
     model = model.to(device)
     model.train()
+    # Compile the model with specific options to avoid NameError issues
+    model = torch.compile(model, mode="reduce-overhead", fullgraph=False)
     return model, tokenizer
 
 

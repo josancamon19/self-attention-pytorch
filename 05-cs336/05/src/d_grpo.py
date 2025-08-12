@@ -16,6 +16,7 @@ from src.b_sft import (
 from src.drgrpo_grader import r1_zero_reward_fn
 import torch
 from vllm.sampling_params import SamplingParams
+import pdb
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -56,13 +57,15 @@ def compute_group_normalized_rewards(
         },
     )
 
-
 def compute_naive_policy_gradient_loss(
     raw_rewards_or_advantages: torch.Tensor,
     policy_log_probs: torch.Tensor,
+    unsqueeze_fix: bool = False
 ) -> torch.Tensor:
-    # pdb.set_trace()
-    return -raw_rewards_or_advantages * policy_log_probs  # .unsqueeze(-1)
+    if unsqueeze_fix:
+        # the test has no batch_size, so when batch size != 1, training fails
+        return -raw_rewards_or_advantages.unsqueeze(-1) * policy_log_probs  
+    return -raw_rewards_or_advantages * policy_log_probs  
 
 
 def compute_grpo_clip_loss(
@@ -97,12 +100,13 @@ def compute_policy_gradient_loss(
     advantages: torch.Tensor | None = None,
     old_log_probs: torch.Tensor | None = None,
     cliprange: float | None = None,
+    unsqueeze_fix : bool = False,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     if loss_type == "no_baseline":
-        loss = compute_naive_policy_gradient_loss(raw_rewards, policy_log_probs)
+        loss = compute_naive_policy_gradient_loss(raw_rewards, policy_log_probs,unsqueeze_fix)
         return loss, {}
     elif loss_type == "reinforce_with_baseline":
-        loss = compute_naive_policy_gradient_loss(advantages, policy_log_probs)
+        loss = compute_naive_policy_gradient_loss(advantages, policy_log_probs,unsqueeze_fix)
         return loss, {}
     elif loss_type == "grpo_clip":
         return compute_grpo_clip_loss(
@@ -130,6 +134,7 @@ def grpo_microbatch_train_step(
     advantages: torch.Tensor | None = None,
     old_log_probs: torch.Tensor | None = None,
     cliprange: float | None = None,
+    unsqueeze_fix: bool = False
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     loss, metadata = compute_policy_gradient_loss(
         policy_log_probs=policy_log_probs,
@@ -138,6 +143,7 @@ def grpo_microbatch_train_step(
         advantages=advantages,
         old_log_probs=old_log_probs,
         cliprange=cliprange,
+        unsqueeze_fix=unsqueeze_fix,
     )
 
     loss_per_sequence = masked_mean(loss, response_mask)
@@ -329,7 +335,6 @@ def process_batch(
     raw_rewards,
     advantages,
     old_log_probs,
-    grpo_microbatch_train_step,
     gradient_accumulation_steps,
     loss_type,
 ):
@@ -360,6 +365,7 @@ def process_batch(
             micro_advantages,
             micro_old_log_probs,
             0.2,
+            True,
         )
 
         batch_loss += scaled_loss.item() * gradient_accumulation_steps
@@ -412,26 +418,26 @@ def train(
     sampling_max_tokens: int = 1024,
     epochs_per_rollout_batch: int = 1,  # On-policy
     train_batch_size: int = 256,  # On-policy
-    gradient_accumulation_steps: int = 128,
     loss_type: str = "reinforce_with_baseline",  # "no_baseline", "reinforce_with_baseline" "grpo_clip"
     use_std_normalization: bool = True,
     max_lr: float = 1e-5,
 ):
     num_gpus = torch.cuda.device_count()
     print(f"Detected {num_gpus} GPU(s)")
+    gradient_accumulation_steps: int = 128
 
     if num_gpus == 1:
         vllm_device = "cuda:0"
         vllm_gpu_memory_utilization = 0.6
         # Reduce micro batch size and increase gradient accumulation to maintain effective batch size
-        adjusted_gradient_accumulation_steps = gradient_accumulation_steps * 2
+        adjusted_gradient_accumulation_steps = gradient_accumulation_steps * 2 # 1 micro
         print(
             f"Adjusted gradient_accumulation_steps: {gradient_accumulation_steps} -> {adjusted_gradient_accumulation_steps}"
         )
     else:
         vllm_device = "cuda:1"
         vllm_gpu_memory_utilization = 0.85
-        adjusted_gradient_accumulation_steps = gradient_accumulation_steps
+        adjusted_gradient_accumulation_steps = gradient_accumulation_steps // 4 # I think can go higher on this only 27GB
         print("Multi-GPU detected: Using standard settings")
 
     # Logging frequencies
@@ -530,7 +536,6 @@ def train(
                 raw_rewards,
                 advantages,
                 old_log_probs,
-                grpo_microbatch_train_step,
                 adjusted_gradient_accumulation_steps,
                 loss_type,
             )
@@ -571,7 +576,7 @@ def train(
 
         # Save checkpoints
         if i % save_checkpoint_every == 0 and i > 0:
-            checkpoint_path = f"checkpoints/grpo_step_{i}_opt_{optimizer_steps}"
+            checkpoint_path = f".checkpoints/grpo_step_{i}_opt_{optimizer_steps}"
             model.save_pretrained(checkpoint_path)
             tokenizer.save_pretrained(checkpoint_path)
             print(f"Saved checkpoint to {checkpoint_path}")
@@ -579,5 +584,5 @@ def train(
 
 if __name__ == "__main__":
     import typer
-
+    
     typer.run(train)
