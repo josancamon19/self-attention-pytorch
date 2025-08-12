@@ -229,11 +229,7 @@ def load_policy_into_vllm_instance(policy: PreTrainedModel, llm: LLM):
 def init_wandb():
     # Setup wandb metrics
     wandb.init("josancamon19-cifrato", "assignment-05")
-    # wandb.define_metric("train_step")  # the x‑axis for training
-    # wandb.define_metric("eval_step")  # the x‑axis for evaluation
-    # everything that starts with train/ is tied to train_step
     wandb.define_metric("train/*", step_metric="train_step")
-    # everything that starts with eval/ is tied to eval_step
     wandb.define_metric("eval/*", step_metric="eval_step")
 
 
