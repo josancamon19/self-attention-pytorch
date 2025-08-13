@@ -244,7 +244,9 @@ def log_step(
     }
 
     # Add grpo_clip specific metrics
-    if loss_type == "grpo_clip" and batch_metadata["clipped_frac"]:
+    if (loss_type == "grpo_clip" or loss_type == "grpo_no_clip") and batch_metadata[
+        "clipped_frac"
+    ]:
         log_dict.update(
             {
                 "train/clip_fraction": np.mean(batch_metadata["clipped_frac"]),
@@ -455,7 +457,7 @@ def process_batch(
         batch_loss += scaled_loss.item() * gradient_accumulation_steps
 
         # Accumulate metadata if using grpo_clip
-        if loss_type == "grpo_clip" and micro_metadata:
+        if (loss_type == "grpo_clip" or loss_type == "grpo_no_clip") and micro_metadata:
             for key in ["clipped_frac", "ratio_mean", "ratio_std"]:
                 if key in micro_metadata:
                     batch_metadata[key].append(micro_metadata[key])
@@ -509,7 +511,7 @@ def train(
     cliprange: float = 0.2,  # only grpo_clip
     prompt_template: str = "r1_zero.prompt",  # "question_only.prompt"
 ):
-    if epochs_per_rollout_batch > 1 and loss_type != "grpo_clip":
+    if epochs_per_rollout_batch > 1 and loss_type not in ["grpo_clip", "grpo_no_clip"]:
         raise Exception(
             "this is prob very unstable, so double check it's what you want."
         )
@@ -652,7 +654,7 @@ def train(
                 batch_labels,
                 micro_train_batch_size,
             )
-            if loss_type == "grpo_clip"
+            if (loss_type == "grpo_clip" or loss_type == "grpo_no_clip") 
             else None
         )
 
@@ -736,10 +738,11 @@ def run_tune():
             # true makes easy/hard responses to have too much effect
             "use_std_normalization": tune.grid_search([False]),
             "loss_length_normalization": tune.grid_search([False]),
-            "loss_type": tune.grid_search(["grpo_clip"]),  # TODO: grpo_no_clip
+            "loss_type": tune.grid_search(["grpo_clip"]),
             # somewhere between 3 and 4
             "epochs_per_rollout_batch": tune.grid_search([3]),
-            "cliprange": tune.grid_search([0.1, 0.3, 0.4]),  # default was 0.2
+            "cliprange": tune.grid_search([0.2]),  # default was 0.2, tried 0.1 0.3 0.4
+            # 0.4 performs best, but theory is it will plateau faster? hwo to determine this?
         }
         # TODO: prompt oblation, using {question} only vs r1, check reward function changes, check metrics and explain findings
         # TODO: leaderboard submissions ≈ t=1.0, 1024 seq_length, train/validation.jsonl, can filter train set, or do curr learning,
