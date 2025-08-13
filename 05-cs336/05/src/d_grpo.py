@@ -4,6 +4,7 @@ from typing import Any, Literal
 import numpy as np
 from transformers import get_cosine_schedule_with_warmup
 import wandb
+import os
 from src.b_sft import (
     EvalDataset,
     get_dataset_set,
@@ -215,6 +216,19 @@ def log_step(
         f"Step {i}: avg_reward={raw_rewards.mean().item():.3f}, loss={batch_loss / n_microbatches_per_rollout_batch:.4f}, success_rate={success_rate:.2%}"
     )
 
+    # Optionally report to Ray Tune if running under Tune
+    try:
+        # Newer Ray versions prefer session.report, but tune.report is kept for backwards compatibility
+        from ray import tune  # type: ignore
+        tune.report(
+            train_loss=float(batch_loss / n_microbatches_per_rollout_batch),
+            reward_mean=float(raw_rewards.mean().item()),
+            success_rate=float(success_rate),
+        )
+    except Exception:
+        # No-op if Ray Tune isn't installed or we're not in a Tune trial
+        pass
+
 
 def run_validation(
     i,
@@ -416,11 +430,11 @@ def train(
     sampling_temperature: float = 1.0,
     sampling_min_tokens: int = 4,
     sampling_max_tokens: int = 1024,
-    epochs_per_rollout_batch: int = 1,  # On-policy
+    epochs_per_rollout_batch: int = 1,  # On-policy # TODO: why 1?
     train_batch_size: int = 256,  # On-policy
     loss_type: str = "reinforce_with_baseline",  # "no_baseline", "reinforce_with_baseline" "grpo_clip"
     use_std_normalization: bool = True,
-    max_lr: float = 1e-5,
+    max_lr: float = 2e-5,
 ):
     num_gpus = torch.cuda.device_count()
     print(f"Detected {num_gpus} GPU(s)")
@@ -430,14 +444,14 @@ def train(
         vllm_device = "cuda:0"
         vllm_gpu_memory_utilization = 0.6
         # Reduce micro batch size and increase gradient accumulation to maintain effective batch size
-        adjusted_gradient_accumulation_steps = gradient_accumulation_steps * 2 # 1 micro
+        adjusted_gradient_accumulation_steps = gradient_accumulation_steps * 2 # 1 batch size
         print(
             f"Adjusted gradient_accumulation_steps: {gradient_accumulation_steps} -> {adjusted_gradient_accumulation_steps}"
         )
     else:
         vllm_device = "cuda:1"
         vllm_gpu_memory_utilization = 0.85
-        adjusted_gradient_accumulation_steps = gradient_accumulation_steps // 4 # I think can go higher on this only 27GB
+        adjusted_gradient_accumulation_steps = gradient_accumulation_steps // 4 # use cuda:0 more
         print("Multi-GPU detected: Using standard settings")
 
     # Logging frequencies
@@ -461,7 +475,14 @@ def train(
     # with this implementation, grpo clip should only be used when off policy
     # in the off policy setting with multiple epochs of grad updates per rollout batch, it'd be wasteful to recomp old log probs for each epoch, you can reuse them
 
-    wandb.init(project="assignment-05-grpo", config=locals())
+    # Build a descriptive W&B run name reflecting key ablations
+    lr_str = f"{max_lr:.0e}" if max_lr < 1e-3 else str(max_lr)
+    std_str = "std" if use_std_normalization else "nostd"
+    base_run_name = f"lr-{lr_str}_gs-{group_size}_{std_str}_loss-{loss_type}"
+    # If running under Ray Tune, append the trial name/id to make names unique
+    trial_suffix = os.getenv("TUNE_TRIAL_NAME") or os.getenv("TUNE_TRIAL_ID") or ""
+    run_name = f"{base_run_name}_{trial_suffix}" if trial_suffix else base_run_name
+    wandb.init(project="assignment-05-grpo", name=run_name, config=locals())
     model, tokenizer = get_model_and_tokenizer()
 
     *_, (t_prompts, t_gt) = get_dataset_set(
@@ -582,7 +603,65 @@ def train(
             print(f"Saved checkpoint to {checkpoint_path}")
 
 
+def run_tune():
+    """Run a minimal Ray Tune grid search over a few key hyperparameters."""
+    try:
+        import torch
+        from ray import tune
+        # Initialize Ray automatically; in local mode this is a no-op if already initialized
+        import ray
+        if not ray.is_initialized():
+            ray.init(ignore_reinit_error=True)
+
+        # Search space (minimal grid)
+        search_space = {
+            "max_lr": tune.grid_search([2e-5]), # 2e-5, 3e-5 still allow for tunning, 2e-5 works well
+            # "group_size": tune.grid_search([4, 8, 16]),
+            # "use_std_normalization": tune.grid_search([True, False]),
+            "group_size": tune.grid_search([8]),
+            "use_std_normalization": tune.grid_search([True]),
+            "loss_type": tune.grid_search(["no_baseline"]),
+            # "loss_type": tune.grid_search([
+            #     "no_baseline",
+            #     "reinforce_with_baseline",
+            #     "grpo_clip",
+            # ]),
+        }
+
+        def _train_fn(config):
+            # Keep other defaults; override only what we're tuning
+            train(
+                max_lr=config["max_lr"],
+                group_size=config["group_size"],
+                use_std_normalization=config["use_std_normalization"],
+                loss_type=config["loss_type"],
+                n_grpo_steps=70,
+            )
+
+        # num_gpus = torch.cuda.device_count()
+        # resources = {"gpu": 2} if num_gpus > 1 else {"gpu": 1}
+        resources = {"gpu": 1} # in parallel is prob faster
+
+        tune.run(
+            _train_fn,
+            config=search_space,
+            resources_per_trial=resources,
+            name="grpo_grid_search",
+        )
+    except ModuleNotFoundError as e:
+        missing = str(e).split("'")[-2]
+        print(
+            f"Missing dependency '{missing}'. Install Ray Tune with:\n  uv add 'ray[tune]'\nThen run: python -m src.d_grpo --tune"
+        )
+    except Exception as e:
+        print(f"Ray Tune failed to start: {e}")
+
+
 if __name__ == "__main__":
-    import typer
-    
-    typer.run(train)
+    import sys
+    if "--tune" in sys.argv:
+        sys.argv = [arg for arg in sys.argv if arg != "--tune"]
+        run_tune()
+    else:
+        import typer
+        typer.run(train)

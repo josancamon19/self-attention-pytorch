@@ -21,6 +21,7 @@ dependencies = [
     "wandb>=0.19.8",
     "xopen>=2.0.2",
     "setuptools>=79.0.1",
+    "ray[tune]>=2.48.0",
 ]
 
 [tool.setuptools.packages.find]

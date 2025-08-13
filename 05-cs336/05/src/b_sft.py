@@ -13,6 +13,7 @@ from tqdm import tqdm
 from vllm.sampling_params import SamplingParams
 from src.a_eval import evaluate_model, compute_eval_stats
 import os
+from pathlib import Path
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 os.makedirs(".checkpoints", exist_ok=True)
@@ -261,7 +262,7 @@ def get_model_and_tokenizer(model_name: str = "Qwen/Qwen2.5-Math-1.5B"):
     model = model.to(device)
     model.train()
     # Compile the model with specific options to avoid NameError issues
-    model = torch.compile(model, mode="reduce-overhead", fullgraph=False)
+    # model = torch.compile(model, mode="reduce-overhead", fullgraph=False)
     return model, tokenizer
 
 
@@ -272,7 +273,11 @@ def get_dataset_set(
     subset: str = "train",  # train | test | sft (train)
     return_raw: bool = False,
 ):
-    dataset_path = f"data/{dataset.value}/{subset}.jsonl"
+    # Resolve paths relative to the repository root to work under Ray trials
+    repo_root = Path(__file__).resolve().parent.parent
+    dataset_path = repo_root / f"data/{dataset.value}/{subset}.jsonl"
+    if not Path(prompt_template_path).is_absolute():
+        prompt_template_path = str(repo_root / prompt_template_path)
 
     with open(dataset_path, "r") as f:
         dataset_items = [json.loads(line.strip()) for line in f]
