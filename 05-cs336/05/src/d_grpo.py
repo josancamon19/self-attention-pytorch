@@ -75,10 +75,16 @@ def compute_grpo_clip_loss(
     policy_log_probs: torch.Tensor,
     old_log_probs: torch.Tensor,
     cliprange: float,
+    unsqueeze_fix: bool = False,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     ratio: Tensor = torch.exp(policy_log_probs - old_log_probs)
     clipped_ratio = torch.clamp(ratio, 1 - cliprange, 1 + cliprange)
-    unclipped_loss = ratio * advantages
+    # pdb.set_trace()
+    if unsqueeze_fix:
+        advantages = advantages.unsqueeze(-1)
+    # TODO: wtf why is this failing again? fix + run again
+
+    unclipped_loss = ratio * advantages  # (8, 1404) * (8,)
     clipped_loss = clipped_ratio * advantages
     output = -torch.minimum(unclipped_loss, clipped_loss)
 
@@ -120,6 +126,7 @@ def compute_policy_gradient_loss(
             policy_log_probs=policy_log_probs,
             old_log_probs=old_log_probs,
             cliprange=cliprange,
+            unsqueeze_fix=unsqueeze_fix,
         )
 
 
@@ -137,7 +144,7 @@ def masked_mean(
     masked = tensor * mask
     if length_normalized:
         # response length will not bias results
-        denom = mask.sum(dim=dim).clamp_min(eps)
+        denom = mask.sum(dim=dim)# .clamp_min(eps)
         return masked.sum(dim=dim) / denom
     else:
         # sum each non masked token, so longer responses will bias the result
@@ -149,7 +156,7 @@ def grpo_microbatch_train_step(
     response_mask: torch.Tensor,
     gradient_accumulation_steps: int,
     loss_type: Literal["no_baseline", "reinforce_with_baseline", "grpo_clip"],
-    loss_length_normalization: bool = False,
+    loss_length_normalization: bool = True,
     raw_rewards: torch.Tensor | None = None,
     advantages: torch.Tensor | None = None,
     old_log_probs: torch.Tensor | None = None,
@@ -394,6 +401,7 @@ def process_batch(
     gradient_accumulation_steps,
     loss_type,
     loss_length_normalization,
+    cliprange,
 ):
     # Tracking metrics for this batch
     batch_loss = 0.0
@@ -411,7 +419,11 @@ def process_batch(
         # Slice rewards/advantages for this microbatch
         micro_rewards = raw_rewards[j : j + micro_train_batch_size]
         micro_advantages = advantages[j : j + micro_train_batch_size]
-        micro_old_log_probs = old_log_probs[j : j + micro_train_batch_size]
+        micro_old_log_probs = (
+            None
+            if old_log_probs is None
+            else old_log_probs[j : j + micro_train_batch_size]
+        )
 
         scaled_loss, micro_metadata = grpo_microbatch_train_step(
             log_probs,
@@ -422,7 +434,7 @@ def process_batch(
             micro_rewards,
             micro_advantages,
             micro_old_log_probs,
-            0.2,
+            cliprange,
             True,
         )
 
@@ -477,9 +489,10 @@ def train(
     epochs_per_rollout_batch: int = 1,  # On-policy = 1
     train_batch_size: int = 256,  # On-policy
     loss_type: str = "reinforce_with_baseline",  # "no_baseline", "reinforce_with_baseline" "grpo_clip"
-    loss_length_normalization: bool = True,
-    use_std_normalization: bool = True,
+    loss_length_normalization: bool = False,
+    use_std_normalization: bool = False,
     max_lr: float = 2e-5,
+    cliprange: float = 0.2,  # only grpo_clip
 ):
     num_gpus = torch.cuda.device_count()
     print(f"Detected {num_gpus} GPU(s)")
@@ -529,14 +542,17 @@ def train(
     # with this implementation, grpo clip should only be used when off policy
     # in the off policy setting with multiple epochs of grad updates per rollout batch, it'd be wasteful to recomp old log probs for each epoch, you can reuse them
 
-    # Build a descriptive W&B run name reflecting key ablations
+    # ===== run_id =====
     lr_str = f"{max_lr:.0e}" if max_lr < 1e-3 else str(max_lr)
     std_str = "std" if use_std_normalization else "nostd"
     len_norm_str = "lenorm" if loss_length_normalization else "nolenorm"
-    base_run_name = f"lr-{lr_str}_gs-{group_size}_ep-{epochs_per_rollout_batch}_{std_str}_{len_norm_str}_loss-{loss_type}"
+    cliprange_str = f"clip-{cliprange}" if cliprange is not None else "noclip"
+    base_run_name = f"lr-{lr_str}_gs-{group_size}_ep-{epochs_per_rollout_batch}_{std_str}_{len_norm_str}_{cliprange_str}_loss-{loss_type}"
     # If running under Ray Tune, append the trial name/id to make names unique
     trial_suffix = os.getenv("TUNE_TRIAL_NAME") or os.getenv("TUNE_TRIAL_ID") or ""
     run_name = f"{base_run_name}_{trial_suffix}" if trial_suffix else base_run_name
+    # ===== run_id =====
+
     wandb.init(project="assignment-05-grpo", name=run_name, config=locals())
     model, tokenizer = get_model_and_tokenizer()
 
@@ -594,11 +610,15 @@ def train(
         batch_masks = tokenized["response_mask"].to(device)
 
         # needed for the ratio in grpo clip only
-        old_log_probs = compute_old_log_probs(
-            model,
-            batch_input_ids,
-            batch_labels,
-            micro_train_batch_size,
+        old_log_probs = (
+            compute_old_log_probs(
+                model,
+                batch_input_ids,
+                batch_labels,
+                micro_train_batch_size,
+            )
+            if loss_type == "grpo_clip"
+            else None
         )
 
         for epoch in range(epochs_per_rollout_batch):
@@ -616,6 +636,7 @@ def train(
                 adjusted_gradient_accumulation_steps,
                 loss_type,
                 loss_length_normalization,
+                cliprange,
             )
 
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -676,19 +697,28 @@ def run_tune():
         search_space = {
             # 2e-5, 3e-5 still allow for tunning, 2e-5 works well, didn't make a full run
             "max_lr": tune.grid_search([2e-5]),
-            "group_size": tune.grid_search([8]),
-            # "group_size": tune.grid_search([8]),
+            "group_size": tune.grid_search([8]),  # 4, 16?
             # true makes easy/hard responses to have too much effect
             "use_std_normalization": tune.grid_search([False]),
             "loss_length_normalization": tune.grid_search([False]),
             "loss_type": tune.grid_search(["grpo_clip"]),
-            "epochs_per_rollout_batch": tune.grid_search([2, 3, 4, 5]),
-            # "loss_type": tune.grid_search([
-            #     "no_baseline",
-            #     "reinforce_with_baseline",
-            #     "grpo_clip",
-            # ]),
+            # do 1 instead of 5, just to get an idea
+            "epochs_per_rollout_batch": tune.grid_search([1, 2, 3, 4]),
+            "cliprange": tune.grid_search([0.2]),
         }
+        # TODO: do oblation of epochs per rollout
+        # TODO: oblations over clip range
+        # TODO: implement grpo no clip and run a train, just to see what happens
+        # TODO: prompt oblation, using {question} only vs r1, check reward function changes, check metrics and explain findings
+        # TODO: leaderboard submissions ≈ t=1.0, 1024 seq_length, train/validation.jsonl, can filter train set, or do curr learning,
+        #   validation must use r1_zero_reward_fn, you can create another reward func for training.
+        #   suggests/allows multiple model copies
+        #   suggests systems improvements, idle gpu all the time, what to do? lower precision for rollouts, torch.compile
+        #   better ways to parallelize
+        #   suggests to check repos/libraries verl, trl, torchtune, oat
+        #   experiment with kl divergence? not included here, check https://arxiv.org/abs/2503.20783, says no, but maybe
+        #   should use all validation examples
+        #   resouces: 4h 2xH100
 
         def _train_fn(config):
             # Keep other defaults; override only what we're tuning
@@ -699,6 +729,7 @@ def run_tune():
                 loss_type=config["loss_type"],
                 loss_length_normalization=config["loss_length_normalization"],
                 epochs_per_rollout_batch=config["epochs_per_rollout_batch"],
+                cliprange=config["cliprange"],
                 n_grpo_steps=70,
             )
 
@@ -731,3 +762,4 @@ if __name__ == "__main__":
         import typer
 
         typer.run(train)
+        # train(loss_type="grpo_clip")
