@@ -457,4 +457,14 @@ def run_compute_per_instance_dpo_loss(
     Returns:
         torch.Tensor with the DPO loss for this example.
     """
-    raise NotImplementedError
+    from src.g_dpo import per_instance_dpo_loss
+
+    return per_instance_dpo_loss(
+        model=lm,
+        model_ref=lm_ref,
+        tokenizer=tokenizer,
+        beta=beta,
+        prompt=prompt,
+        resp_chose=response_chosen,
+        resp_rejected=response_rejected,
+    )
