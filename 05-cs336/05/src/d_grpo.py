@@ -104,10 +104,10 @@ def compute_policy_gradient_loss(
     unsqueeze_fix : bool = False,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     if loss_type == "no_baseline":
-        loss = compute_naive_policy_gradient_loss(raw_rewards, policy_log_probs,unsqueeze_fix)
+        loss = compute_naive_policy_gradient_loss(raw_rewards, policy_log_probs, unsqueeze_fix)
         return loss, {}
     elif loss_type == "reinforce_with_baseline":
-        loss = compute_naive_policy_gradient_loss(advantages, policy_log_probs,unsqueeze_fix)
+        loss = compute_naive_policy_gradient_loss(advantages, policy_log_probs, unsqueeze_fix)
         return loss, {}
     elif loss_type == "grpo_clip":
         return compute_grpo_clip_loss(
@@ -119,11 +119,24 @@ def compute_policy_gradient_loss(
 
 
 def masked_mean(
-    tensor: torch.Tensor, mask: torch.Tensor, dim: int | None = None
+    tensor: torch.Tensor, 
+    mask: torch.Tensor, 
+    dim: int | None = 1,
+    length_normalized: bool = True,
+    eps: float = 1e-8,
 ) -> torch.Tensor:
+    """
+    The loss scale between normalizations will be considerably different, tho loss doesn't mean anything here so it's fine
+    another way of doing non length normalized loss is by dividing by a constant, which could be seq_length
+    """
     masked = tensor * mask
-    total = mask.sum(dim=dim)
-    return masked.sum(dim=dim) / total
+    if length_normalized:
+        # response length will not bias results
+        denom = mask.sum(dim=dim).clamp_min(eps)
+        return masked.sum(dim=dim) / denom
+    else:
+        # sum each non masked token, so longer responses will bias the result
+        return masked.sum(dim=dim)
 
 
 def grpo_microbatch_train_step(
@@ -131,11 +144,12 @@ def grpo_microbatch_train_step(
     response_mask: torch.Tensor,
     gradient_accumulation_steps: int,
     loss_type: Literal["no_baseline", "reinforce_with_baseline", "grpo_clip"],
+    loss_length_normalization: bool = False,
     raw_rewards: torch.Tensor | None = None,
     advantages: torch.Tensor | None = None,
     old_log_probs: torch.Tensor | None = None,
     cliprange: float | None = None,
-    unsqueeze_fix: bool = False
+    unsqueeze_fix: bool = False,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     loss, metadata = compute_policy_gradient_loss(
         policy_log_probs=policy_log_probs,
@@ -147,8 +161,8 @@ def grpo_microbatch_train_step(
         unsqueeze_fix=unsqueeze_fix,
     )
 
-    loss_per_sequence = masked_mean(loss, response_mask)
-    scaled_loss = loss_per_sequence / gradient_accumulation_steps
+    avg_loss_per_sequence = masked_mean(loss, response_mask, length_normalized=loss_length_normalization) # 1 dim
+    scaled_loss = avg_loss_per_sequence / gradient_accumulation_steps
     scaled_loss.backward()
     return scaled_loss, metadata
 
@@ -351,6 +365,7 @@ def process_batch(
     old_log_probs,
     gradient_accumulation_steps,
     loss_type,
+    loss_length_normalization,
 ):
     # Tracking metrics for this batch
     batch_loss = 0.0
@@ -375,6 +390,7 @@ def process_batch(
             bm,
             gradient_accumulation_steps,
             loss_type,
+            loss_length_normalization,
             micro_rewards,
             micro_advantages,
             micro_old_log_probs,
@@ -433,6 +449,7 @@ def train(
     epochs_per_rollout_batch: int = 1,  # On-policy # TODO: why 1?
     train_batch_size: int = 256,  # On-policy
     loss_type: str = "reinforce_with_baseline",  # "no_baseline", "reinforce_with_baseline" "grpo_clip"
+    loss_length_normalization: bool = True,
     use_std_normalization: bool = True,
     max_lr: float = 2e-5,
 ):
@@ -478,7 +495,8 @@ def train(
     # Build a descriptive W&B run name reflecting key ablations
     lr_str = f"{max_lr:.0e}" if max_lr < 1e-3 else str(max_lr)
     std_str = "std" if use_std_normalization else "nostd"
-    base_run_name = f"lr-{lr_str}_gs-{group_size}_{std_str}_loss-{loss_type}"
+    len_norm_str = "lenorm" if loss_length_normalization else "nolenorm"
+    base_run_name = f"lr-{lr_str}_gs-{group_size}_{std_str}_{len_norm_str}_loss-{loss_type}"
     # If running under Ray Tune, append the trial name/id to make names unique
     trial_suffix = os.getenv("TUNE_TRIAL_NAME") or os.getenv("TUNE_TRIAL_ID") or ""
     run_name = f"{base_run_name}_{trial_suffix}" if trial_suffix else base_run_name
@@ -499,7 +517,8 @@ def train(
         model.parameters(), lr=max_lr, weight_decay=0.0, betas=(0.9, 0.95)
     )
     num_optimizer_steps = n_grpo_steps * epochs_per_rollout_batch
-    warmup_steps = max(50, int(0.05 * num_optimizer_steps))
+    # warmup_steps = max(50, int(0.05 * num_optimizer_steps)) # was 25% !!
+    warmup_steps = int(0.1 * num_optimizer_steps) # 10% by default?
     scheduler = get_cosine_schedule_with_warmup(
         optimizer, warmup_steps, num_optimizer_steps
     )
@@ -559,6 +578,7 @@ def train(
                 old_log_probs,
                 adjusted_gradient_accumulation_steps,
                 loss_type,
+                loss_length_normalization,
             )
 
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -615,12 +635,12 @@ def run_tune():
 
         # Search space (minimal grid)
         search_space = {
-            "max_lr": tune.grid_search([2e-5]), # 2e-5, 3e-5 still allow for tunning, 2e-5 works well
+            "max_lr": tune.grid_search([2e-5]), # 2e-5, 3e-5 still allow for tunning, 2e-5 works well, didn't make a full run
             # "group_size": tune.grid_search([4, 8, 16]),
-            # "use_std_normalization": tune.grid_search([True, False]),
             "group_size": tune.grid_search([8]),
             "use_std_normalization": tune.grid_search([True]),
-            "loss_type": tune.grid_search(["no_baseline"]),
+            "loss_type": tune.grid_search(["no_baseline", "reinforce_with_baseline"]),
+            "loss_length_normalization": tune.grid_search([False]),
             # "loss_type": tune.grid_search([
             #     "no_baseline",
             #     "reinforce_with_baseline",
@@ -635,6 +655,7 @@ def run_tune():
                 group_size=config["group_size"],
                 use_std_normalization=config["use_std_normalization"],
                 loss_type=config["loss_type"],
+                loss_length_normalization=config["loss_length_normalization"],
                 n_grpo_steps=70,
             )
 
