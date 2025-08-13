@@ -14,7 +14,7 @@ from src.b_sft import (
     load_policy_into_vllm_instance,
     tokenize_prompt_and_output,
 )
-from src.drgrpo_grader import r1_zero_reward_fn
+from src.drgrpo_grader import question_only_reward_fn, r1_zero_reward_fn
 import torch
 from vllm.sampling_params import SamplingParams
 import pdb
@@ -76,6 +76,7 @@ def compute_grpo_clip_loss(
     old_log_probs: torch.Tensor,
     cliprange: float,
     unsqueeze_fix: bool = False,
+    no_clipping: bool = False,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     ratio: Tensor = torch.exp(policy_log_probs - old_log_probs)
     clipped_ratio = torch.clamp(ratio, 1 - cliprange, 1 + cliprange)
@@ -85,7 +86,7 @@ def compute_grpo_clip_loss(
     # TODO: wtf why is this failing again? fix + run again
 
     unclipped_loss = ratio * advantages  # (8, 1404) * (8,)
-    clipped_loss = clipped_ratio * advantages
+    clipped_loss = clipped_ratio * advantages if not no_clipping else unclipped_loss
     output = -torch.minimum(unclipped_loss, clipped_loss)
 
     # Compute relevant stats
@@ -103,7 +104,9 @@ def compute_grpo_clip_loss(
 
 def compute_policy_gradient_loss(
     policy_log_probs: torch.Tensor,
-    loss_type: Literal["no_baseline", "reinforce_with_baseline", "grpo_clip"],
+    loss_type: Literal[
+        "no_baseline", "reinforce_with_baseline", "grpo_clip", "grpo_no_clip"
+    ],
     raw_rewards: torch.Tensor | None = None,
     advantages: torch.Tensor | None = None,
     old_log_probs: torch.Tensor | None = None,
@@ -128,6 +131,15 @@ def compute_policy_gradient_loss(
             cliprange=cliprange,
             unsqueeze_fix=unsqueeze_fix,
         )
+    elif loss_type == "grpo_no_clip":
+        return compute_grpo_clip_loss(
+            advantages=advantages,
+            policy_log_probs=policy_log_probs,
+            old_log_probs=old_log_probs,
+            cliprange=cliprange,
+            unsqueeze_fix=unsqueeze_fix,
+            no_clipping=True,
+        )
 
 
 def masked_mean(
@@ -144,7 +156,7 @@ def masked_mean(
     masked = tensor * mask
     if length_normalized:
         # response length will not bias results
-        denom = mask.sum(dim=dim)# .clamp_min(eps)
+        denom = mask.sum(dim=dim)  # .clamp_min(eps)
         return masked.sum(dim=dim) / denom
     else:
         # sum each non masked token, so longer responses will bias the result
@@ -155,7 +167,9 @@ def grpo_microbatch_train_step(
     policy_log_probs: torch.Tensor,
     response_mask: torch.Tensor,
     gradient_accumulation_steps: int,
-    loss_type: Literal["no_baseline", "reinforce_with_baseline", "grpo_clip"],
+    loss_type: Literal[
+        "no_baseline", "reinforce_with_baseline", "grpo_clip", "grpo_no_clip"
+    ],
     loss_length_normalization: bool = True,
     raw_rewards: torch.Tensor | None = None,
     advantages: torch.Tensor | None = None,
@@ -488,21 +502,31 @@ def train(
     sampling_max_tokens: int = 1024,
     epochs_per_rollout_batch: int = 1,  # On-policy = 1
     train_batch_size: int = 256,  # On-policy
-    loss_type: str = "reinforce_with_baseline",  # "no_baseline", "reinforce_with_baseline" "grpo_clip"
+    loss_type: str = "reinforce_with_baseline",  # "no_baseline", "reinforce_with_baseline" "grpo_clip" "grpo_no_clip"
     loss_length_normalization: bool = False,
     use_std_normalization: bool = False,
     max_lr: float = 2e-5,
     cliprange: float = 0.2,  # only grpo_clip
+    prompt_template: str = "r1_zero.prompt",  # "question_only.prompt"
 ):
-    num_gpus = torch.cuda.device_count()
-    print(f"Detected {num_gpus} GPU(s)")
-    gradient_accumulation_steps: int = 128
-
     if epochs_per_rollout_batch > 1 and loss_type != "grpo_clip":
         raise Exception(
             "this is prob very unstable, so double check it's what you want."
         )
+    assert loss_type in [
+        "no_baseline",
+        "reinforce_with_baseline",
+        "grpo_clip",
+        "grpo_no_clip",
+    ], f"Invalid loss_type: {loss_type}"
 
+    assert prompt_template in ["r1_zero.prompt", "question_only.prompt"], (
+        f"Invalid prompt_template {prompt_template}"
+    )
+
+    num_gpus = torch.cuda.device_count()
+    print(f"Detected {num_gpus} GPU(s)")
+    gradient_accumulation_steps: int = 128
     if num_gpus == 1:
         vllm_device = "cuda:0"
         vllm_gpu_memory_utilization = 0.6
@@ -556,11 +580,20 @@ def train(
     wandb.init(project="assignment-05-grpo", name=run_name, config=locals())
     model, tokenizer = get_model_and_tokenizer()
 
+    prompt_path = f"src/prompts/{prompt_template}"
     *_, (t_prompts, t_gt) = get_dataset_set(
-        tokenizer, dataset=EvalDataset.MATH, subset="train", return_raw=True
+        tokenizer,
+        dataset=EvalDataset.MATH,
+        subset="train",
+        return_raw=True,
+        prompt_template_path=prompt_path,
     )
     *_, (v_prompts, v_gt) = get_dataset_set(
-        tokenizer, dataset=EvalDataset.MATH, subset="test", return_raw=True
+        tokenizer,
+        dataset=EvalDataset.MATH,
+        subset="test",
+        return_raw=True,
+        prompt_template_path=prompt_path,
     )
 
     llm: Any = init_vllm(
@@ -596,7 +629,9 @@ def train(
         )
 
         advantages, raw_rewards, metadata = compute_group_normalized_rewards(
-            r1_zero_reward_fn,
+            r1_zero_reward_fn
+            if prompt_template == "r1_zero.prompt"
+            else question_only_reward_fn,
             responses,
             gt_rep,
             group_size,
@@ -701,14 +736,11 @@ def run_tune():
             # true makes easy/hard responses to have too much effect
             "use_std_normalization": tune.grid_search([False]),
             "loss_length_normalization": tune.grid_search([False]),
-            "loss_type": tune.grid_search(["grpo_clip"]),
-            # do 1 instead of 5, just to get an idea
-            "epochs_per_rollout_batch": tune.grid_search([1, 2, 3, 4]),
-            "cliprange": tune.grid_search([0.2]),
+            "loss_type": tune.grid_search(["grpo_clip"]),  # TODO: grpo_no_clip
+            # somewhere between 3 and 4
+            "epochs_per_rollout_batch": tune.grid_search([3]),
+            "cliprange": tune.grid_search([0.1, 0.3, 0.4]),  # default was 0.2
         }
-        # TODO: do oblation of epochs per rollout
-        # TODO: oblations over clip range
-        # TODO: implement grpo no clip and run a train, just to see what happens
         # TODO: prompt oblation, using {question} only vs r1, check reward function changes, check metrics and explain findings
         # TODO: leaderboard submissions ≈ t=1.0, 1024 seq_length, train/validation.jsonl, can filter train set, or do curr learning,
         #   validation must use r1_zero_reward_fn, you can create another reward func for training.

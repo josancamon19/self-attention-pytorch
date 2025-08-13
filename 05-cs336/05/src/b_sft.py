@@ -100,11 +100,11 @@ def get_response_log_probs(
 ) -> dict[str, torch.Tensor]:
     # Build attention mask from model pad token id if available
     # Handle torch.compile wrapped models by accessing the original model's config
-    if hasattr(model, '_orig_mod'):
+    if hasattr(model, "_orig_mod"):
         config = model._orig_mod.config
     else:
         config = model.config
-        
+
     pad_id = getattr(config, "pad_token_id", None)
     if pad_id is not None:
         # one thing is the loss padding, and the attention padding, as I need static shapes for batching
@@ -229,13 +229,13 @@ def load_policy_into_vllm_instance(policy: PreTrainedModel, llm: LLM):
     Copied from https://github.com/huggingface/trl/blob/22759c820867c8659d00082ba8cf004e963873c1/trl/trainer/grpo_trainer.py#L670.
     """
     # Handle torch.compile wrapped models by accessing the original model
-    if hasattr(policy, '_orig_mod'):
+    if hasattr(policy, "_orig_mod"):
         # For torch.compile wrapped models, get state_dict from the original model
         state_dict = policy._orig_mod.state_dict()
     else:
         # For non-compiled models
         state_dict = policy.state_dict()
-        
+
     llm_model = llm.llm_engine.model_executor.driver_worker.model_runner.model
     llm_model.load_weights(state_dict.items())
 
@@ -296,7 +296,6 @@ def get_dataset_set(
                 outputs.append(item["response"])
                 ground_truths.append(item["ground_truth"])
             else:  # train / test
-                # probably never use this for train, but also is strange to perform validation on a different prompt? maybe not.
                 prompt = prompt_template.replace("{question}", item["problem"])
                 output = (
                     f"nothing here matters</think><answer>{item['answer']}</answer>"
@@ -307,6 +306,8 @@ def get_dataset_set(
                 outputs.append(output)
                 ground_truths.append(item["answer"])
         else:  # GSM8K
+            assert prompt_template == "src/prompts/r1_zero.prompt"
+
             gt_answer = item["answer"].split("#### ")[-1].strip()
 
             prompt = prompt_template.replace("{question}", item["question"])
