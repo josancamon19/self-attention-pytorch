@@ -58,15 +58,16 @@ def compute_group_normalized_rewards(
         },
     )
 
+
 def compute_naive_policy_gradient_loss(
     raw_rewards_or_advantages: torch.Tensor,
     policy_log_probs: torch.Tensor,
-    unsqueeze_fix: bool = False
+    unsqueeze_fix: bool = False,
 ) -> torch.Tensor:
     if unsqueeze_fix:
         # the test has no batch_size, so when batch size != 1, training fails
-        return -raw_rewards_or_advantages.unsqueeze(-1) * policy_log_probs  
-    return -raw_rewards_or_advantages * policy_log_probs  
+        return -raw_rewards_or_advantages.unsqueeze(-1) * policy_log_probs
+    return -raw_rewards_or_advantages * policy_log_probs
 
 
 def compute_grpo_clip_loss(
@@ -101,13 +102,17 @@ def compute_policy_gradient_loss(
     advantages: torch.Tensor | None = None,
     old_log_probs: torch.Tensor | None = None,
     cliprange: float | None = None,
-    unsqueeze_fix : bool = False,
+    unsqueeze_fix: bool = False,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     if loss_type == "no_baseline":
-        loss = compute_naive_policy_gradient_loss(raw_rewards, policy_log_probs, unsqueeze_fix)
+        loss = compute_naive_policy_gradient_loss(
+            raw_rewards, policy_log_probs, unsqueeze_fix
+        )
         return loss, {}
     elif loss_type == "reinforce_with_baseline":
-        loss = compute_naive_policy_gradient_loss(advantages, policy_log_probs, unsqueeze_fix)
+        loss = compute_naive_policy_gradient_loss(
+            advantages, policy_log_probs, unsqueeze_fix
+        )
         return loss, {}
     elif loss_type == "grpo_clip":
         return compute_grpo_clip_loss(
@@ -119,9 +124,9 @@ def compute_policy_gradient_loss(
 
 
 def masked_mean(
-    tensor: torch.Tensor, 
-    mask: torch.Tensor, 
-    dim: int | None = 1,
+    tensor: torch.Tensor,
+    mask: torch.Tensor,
+    dim: int | None = None,
     length_normalized: bool = True,
     eps: float = 1e-8,
 ) -> torch.Tensor:
@@ -161,7 +166,9 @@ def grpo_microbatch_train_step(
         unsqueeze_fix=unsqueeze_fix,
     )
 
-    avg_loss_per_sequence = masked_mean(loss, response_mask, length_normalized=loss_length_normalization) # 1 dim
+    avg_loss_per_sequence = masked_mean(
+        loss, response_mask, length_normalized=loss_length_normalization
+    )  # 1 dim
     scaled_loss = avg_loss_per_sequence / gradient_accumulation_steps
     scaled_loss.backward()
     return scaled_loss, metadata
@@ -234,6 +241,7 @@ def log_step(
     try:
         # Newer Ray versions prefer session.report, but tune.report is kept for backwards compatibility
         from ray import tune  # type: ignore
+
         tune.report(
             train_loss=float(batch_loss / n_microbatches_per_rollout_batch),
             reward_mean=float(raw_rewards.mean().item()),
@@ -309,17 +317,29 @@ def run_validation(
                     "answer_reward",
                 ]
             )
-            
-            print(f"\n{'='*80}")
+
+            print(f"\n{'=' * 80}")
             print(f"VALIDATION EXAMPLES - Step {i} (Optimizer Step {optimizer_steps})")
-            print(f"{'='*80}")
-            
+            print(f"{'=' * 80}")
+
             for idx in range(min(5, len(val_responses))):
                 # Convert any tensor values to Python types for wandb
-                reward_val = float(val_rewards[idx]) if hasattr(val_rewards[idx], 'item') else val_rewards[idx]
-                format_reward_val = float(val_format_rewards[idx]) if hasattr(val_format_rewards[idx], 'item') else val_format_rewards[idx]
-                answer_reward_val = float(val_answer_rewards[idx]) if hasattr(val_answer_rewards[idx], 'item') else val_answer_rewards[idx]
-                
+                reward_val = (
+                    float(val_rewards[idx])
+                    if hasattr(val_rewards[idx], "item")
+                    else val_rewards[idx]
+                )
+                format_reward_val = (
+                    float(val_format_rewards[idx])
+                    if hasattr(val_format_rewards[idx], "item")
+                    else val_format_rewards[idx]
+                )
+                answer_reward_val = (
+                    float(val_answer_rewards[idx])
+                    if hasattr(val_answer_rewards[idx], "item")
+                    else val_answer_rewards[idx]
+                )
+
                 examples_table.add_data(
                     val_batch_prompts[idx],
                     val_responses[idx],
@@ -328,15 +348,23 @@ def run_validation(
                     format_reward_val,
                     answer_reward_val,
                 )
-                
+
                 # Console logging for each example
                 print(f"\n--- Example {idx + 1} ---")
-                print(f"Prompt: {val_batch_prompts[idx][:200]}{'...' if len(val_batch_prompts[idx]) > 200 else ''}")
-                print(f"Response: {val_responses[idx][:300]}{'...' if len(val_responses[idx]) > 300 else ''}")
-                print(f"Ground Truth: {val_batch_gt[idx][:100]}{'...' if len(val_batch_gt[idx]) > 100 else ''}")
-                print(f"Rewards → Total: {reward_val:.3f}, Format: {format_reward_val:.3f}, Answer: {answer_reward_val:.3f}")
-            
-            print(f"{'='*80}\n")
+                print(
+                    f"Prompt: {val_batch_prompts[idx][:200]}{'...' if len(val_batch_prompts[idx]) > 200 else ''}"
+                )
+                print(
+                    f"Response: {val_responses[idx][:300]}{'...' if len(val_responses[idx]) > 300 else ''}"
+                )
+                print(
+                    f"Ground Truth: {val_batch_gt[idx][:100]}{'...' if len(val_batch_gt[idx]) > 100 else ''}"
+                )
+                print(
+                    f"Rewards → Total: {reward_val:.3f}, Format: {format_reward_val:.3f}, Answer: {answer_reward_val:.3f}"
+                )
+
+            print(f"{'=' * 80}\n")
             wandb.log({"eval/examples": examples_table}, step=optimizer_steps)
 
 
@@ -446,7 +474,7 @@ def train(
     sampling_temperature: float = 1.0,
     sampling_min_tokens: int = 4,
     sampling_max_tokens: int = 1024,
-    epochs_per_rollout_batch: int = 1,  # On-policy # TODO: why 1?
+    epochs_per_rollout_batch: int = 1,  # On-policy = 1
     train_batch_size: int = 256,  # On-policy
     loss_type: str = "reinforce_with_baseline",  # "no_baseline", "reinforce_with_baseline" "grpo_clip"
     loss_length_normalization: bool = True,
@@ -457,18 +485,27 @@ def train(
     print(f"Detected {num_gpus} GPU(s)")
     gradient_accumulation_steps: int = 128
 
+    if epochs_per_rollout_batch > 1 and loss_type != "grpo_clip":
+        raise Exception(
+            "this is prob very unstable, so double check it's what you want."
+        )
+
     if num_gpus == 1:
         vllm_device = "cuda:0"
         vllm_gpu_memory_utilization = 0.6
         # Reduce micro batch size and increase gradient accumulation to maintain effective batch size
-        adjusted_gradient_accumulation_steps = gradient_accumulation_steps * 2 # 1 batch size
+        adjusted_gradient_accumulation_steps = (
+            gradient_accumulation_steps * 2
+        )  # 1 batch size
         print(
             f"Adjusted gradient_accumulation_steps: {gradient_accumulation_steps} -> {adjusted_gradient_accumulation_steps}"
         )
     else:
         vllm_device = "cuda:1"
         vllm_gpu_memory_utilization = 0.85
-        adjusted_gradient_accumulation_steps = gradient_accumulation_steps // 4 # use cuda:0 more
+        adjusted_gradient_accumulation_steps = (
+            gradient_accumulation_steps // 4
+        )  # use cuda:0 more
         print("Multi-GPU detected: Using standard settings")
 
     # Logging frequencies
@@ -496,7 +533,7 @@ def train(
     lr_str = f"{max_lr:.0e}" if max_lr < 1e-3 else str(max_lr)
     std_str = "std" if use_std_normalization else "nostd"
     len_norm_str = "lenorm" if loss_length_normalization else "nolenorm"
-    base_run_name = f"lr-{lr_str}_gs-{group_size}_{std_str}_{len_norm_str}_loss-{loss_type}"
+    base_run_name = f"lr-{lr_str}_gs-{group_size}_ep-{epochs_per_rollout_batch}_{std_str}_{len_norm_str}_loss-{loss_type}"
     # If running under Ray Tune, append the trial name/id to make names unique
     trial_suffix = os.getenv("TUNE_TRIAL_NAME") or os.getenv("TUNE_TRIAL_ID") or ""
     run_name = f"{base_run_name}_{trial_suffix}" if trial_suffix else base_run_name
@@ -518,7 +555,7 @@ def train(
     )
     num_optimizer_steps = n_grpo_steps * epochs_per_rollout_batch
     # warmup_steps = max(50, int(0.05 * num_optimizer_steps)) # was 25% !!
-    warmup_steps = int(0.1 * num_optimizer_steps) # 10% by default?
+    warmup_steps = int(0.1 * num_optimizer_steps)  # 10% by default?
     scheduler = get_cosine_schedule_with_warmup(
         optimizer, warmup_steps, num_optimizer_steps
     )
@@ -628,19 +665,24 @@ def run_tune():
     try:
         import torch
         from ray import tune
+
         # Initialize Ray automatically; in local mode this is a no-op if already initialized
         import ray
+
         if not ray.is_initialized():
             ray.init(ignore_reinit_error=True)
 
         # Search space (minimal grid)
         search_space = {
-            "max_lr": tune.grid_search([2e-5]), # 2e-5, 3e-5 still allow for tunning, 2e-5 works well, didn't make a full run
-            # "group_size": tune.grid_search([4, 8, 16]),
+            # 2e-5, 3e-5 still allow for tunning, 2e-5 works well, didn't make a full run
+            "max_lr": tune.grid_search([2e-5]),
             "group_size": tune.grid_search([8]),
-            "use_std_normalization": tune.grid_search([True]),
-            "loss_type": tune.grid_search(["no_baseline", "reinforce_with_baseline"]),
+            # "group_size": tune.grid_search([8]),
+            # true makes easy/hard responses to have too much effect
+            "use_std_normalization": tune.grid_search([False]),
             "loss_length_normalization": tune.grid_search([False]),
+            "loss_type": tune.grid_search(["grpo_clip"]),
+            "epochs_per_rollout_batch": tune.grid_search([2, 3, 4, 5]),
             # "loss_type": tune.grid_search([
             #     "no_baseline",
             #     "reinforce_with_baseline",
@@ -656,12 +698,13 @@ def run_tune():
                 use_std_normalization=config["use_std_normalization"],
                 loss_type=config["loss_type"],
                 loss_length_normalization=config["loss_length_normalization"],
+                epochs_per_rollout_batch=config["epochs_per_rollout_batch"],
                 n_grpo_steps=70,
             )
 
-        # num_gpus = torch.cuda.device_count()
-        # resources = {"gpu": 2} if num_gpus > 1 else {"gpu": 1}
-        resources = {"gpu": 1} # in parallel is prob faster
+        num_gpus = torch.cuda.device_count()
+        resources = {"gpu": 2} if num_gpus > 1 else {"gpu": 1}
+        # resources = {"gpu": 1} # in parallel is prob faster
 
         tune.run(
             _train_fn,
@@ -680,9 +723,11 @@ def run_tune():
 
 if __name__ == "__main__":
     import sys
+
     if "--tune" in sys.argv:
         sys.argv = [arg for arg in sys.argv if arg != "--tune"]
         run_tune()
     else:
         import typer
+
         typer.run(train)
