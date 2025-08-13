@@ -508,7 +508,7 @@ def train(
     loss_length_normalization: bool = False,
     use_std_normalization: bool = False,
     max_lr: float = 2e-5,
-    cliprange: float = 0.2,  # only grpo_clip
+    cliprange: float = 0.4,  # only grpo_clip
     prompt_template: str = "r1_zero.prompt",  # "question_only.prompt"
 ):
     if epochs_per_rollout_batch > 1 and loss_type not in ["grpo_clip", "grpo_no_clip"]:
@@ -741,7 +741,7 @@ def run_tune():
             "loss_type": tune.grid_search(["grpo_clip"]),
             # somewhere between 3 and 4
             "epochs_per_rollout_batch": tune.grid_search([3]),
-            "cliprange": tune.grid_search([0.2]),  # default was 0.2, tried 0.1 0.3 0.4
+            "cliprange": tune.grid_search([0.4]), 
             # 0.4 performs best, but theory is it will plateau faster? hwo to determine this?
         }
         # TODO: prompt oblation, using {question} only vs r1, check reward function changes, check metrics and explain findings
@@ -754,6 +754,8 @@ def run_tune():
         #   experiment with kl divergence? not included here, check https://arxiv.org/abs/2503.20783, says no, but maybe
         #   should use all validation examples
         #   resouces: 4h 2xH100
+
+        # no clip ofc explodes like crazy
 
         def _train_fn(config):
             # Keep other defaults; override only what we're tuning
